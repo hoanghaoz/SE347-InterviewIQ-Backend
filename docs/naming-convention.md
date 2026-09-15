@@ -14,3 +14,7 @@
 |  📝  | **docs**     | Adds or updates documentation (README, diagrams, etc.).                         | `docs/ci`                                                |
 |  🔧  | **chore**    | Maintenance tasks, configurations, or dependency updates.                       | `chore/deps`                                             |
 |  🚀  | **perf**     | Code changes that improve performance.                                          | `perf/db: add index to Product table for faster queries` |
+
+### 3. Not to do
+
+You **MUST** not name your branch like this: `fix`, `fix/bug` , `pray-for-god`, `I hope it works`, ...
