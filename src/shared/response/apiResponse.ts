@@ -1,35 +1,27 @@
-export class ApiResponse<T> {
-  private status: number;
-  private success: boolean;
-  private data: T;
-  private message: string;
-  private timestamp: Date;
+export class ApiSuccessResponse<T> {
+  readonly statusCode: number;
+  readonly success: boolean = true;
+  readonly data: T;
+  readonly message: string;
+  readonly timestamp: string;
 
-  constructor(status: number, success: boolean, data: T, message: string) {
-    this.status = status;
-    this.success = success;
+  constructor(statusCode: number, data: T, message: string) {
+    this.statusCode = statusCode;
     this.data = data;
     this.message = message;
-    this.timestamp = new Date();
+    this.timestamp = new Date().toISOString();
   }
+}
 
-  public getStatus(): number {
-    return this.status;
-  }
+export class ApiErrorResponse {
+  readonly statusCode: number;
+  readonly success: boolean = false;
+  readonly message: string;
+  readonly timestamp: string;
 
-  public getSuccess(): boolean {
-    return this.success;
-  }
-
-  public getData(): T {
-    return this.data;
-  }
-
-  public getMessage(): string {
-    return this.message;
-  }
-
-  public getTimestamp(): Date {
-    return this.timestamp;
+  constructor(statusCode: number, message: string) {
+    this.statusCode = statusCode;
+    this.message = message;
+    this.timestamp = new Date().toISOString();
   }
 }
