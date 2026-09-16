@@ -1,6 +1,8 @@
+import { ErrorCode } from '../common/errorCode';
+
 export class ApiSuccessResponse<T> {
   readonly statusCode: number;
-  readonly success: boolean = true;
+  readonly success = true as const;
   readonly data: T;
   readonly message: string;
   readonly timestamp: string;
@@ -15,27 +17,30 @@ export class ApiSuccessResponse<T> {
 
 export class ApiErrorResponse {
   readonly statusCode: number;
-  readonly success: boolean = false;
-  readonly errors: ValidationError[];
+  readonly success = false as const;
+  readonly code: ErrorCode;
   readonly message: string;
+  readonly errors?: ValidationErrorDetail[];
   readonly path: string;
   readonly timestamp: string;
 
   constructor(
     statusCode: number,
-    errors: ValidationError[],
+    code: ErrorCode,
     message: string,
     path: string,
+    errors?: ValidationErrorDetail[],
   ) {
     this.statusCode = statusCode;
-    this.errors = errors;
+    this.code = code;
     this.message = message;
+    this.errors = errors;
     this.path = path;
     this.timestamp = new Date().toISOString();
   }
 }
 
-export type ValidationError = {
+export type ValidationErrorDetail = {
   field: string;
   messages: string[];
 };

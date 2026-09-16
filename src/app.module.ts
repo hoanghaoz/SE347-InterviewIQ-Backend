@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   MiddlewareConsumer,
   Module,
   NestModule,
@@ -10,6 +11,8 @@ import { APP_PIPE } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { LoggerMiddleware } from './shared/common/logger.middleware';
+import { ErrorCode } from './shared/common/errorCode';
+import { mapValidationErrors } from './shared/common/validation-error.mapper';
 import { PrismaModule } from './shared/infrastructure/database/prisma.module';
 
 @Module({
@@ -25,7 +28,16 @@ import { PrismaModule } from './shared/infrastructure/database/prisma.module';
     AppService,
     {
       provide: APP_PIPE,
-      useClass: ValidationPipe,
+      useFactory: () =>
+        new ValidationPipe({
+          whitelist: true,
+          exceptionFactory: (errors) =>
+            new BadRequestException({
+              code: ErrorCode.BadRequest,
+              message: 'Request validation failed',
+              errors: mapValidationErrors(errors),
+            }),
+        }),
     },
   ],
 })
