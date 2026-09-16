@@ -22,7 +22,7 @@ Use TypeScript, two-space indentation, and Prettier defaults. Keep controllers t
 
 ## API Response Contract
 
-All successful endpoints must return `ApiSuccessResponse<T>` from `src/shared/response/apiResponse.ts`, for example `new ApiSuccessResponse(HttpStatus.OK, dto, 'Room retrieved successfully')`. Do not handcraft response envelopes.
+Follow `docs/api-response-convention.md`. Successful endpoints must return `ApiSuccessResponse<T>`, for example `new ApiSuccessResponse(HttpStatus.OK, dto, 'Room retrieved successfully')`. Do not handcraft response envelopes.
 
 Services return `Result<T, AppError>`. Controllers convert failures with `toHttpException(error)`; they must not create `ApiErrorResponse` directly. `AllExceptionsFilter` owns the final error shape: `statusCode`, `success`, `code`, `message`, optional `errors`, `path`, and `timestamp`. Validation details use `{ field, messages }`. Never expose rejected values, database errors, stack traces, or internal exception messages.
 
