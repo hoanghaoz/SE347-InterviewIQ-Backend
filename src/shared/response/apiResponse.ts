@@ -16,12 +16,26 @@ export class ApiSuccessResponse<T> {
 export class ApiErrorResponse {
   readonly statusCode: number;
   readonly success: boolean = false;
+  readonly errors: ValidationError[];
   readonly message: string;
+  readonly path: string;
   readonly timestamp: string;
 
-  constructor(statusCode: number, message: string) {
+  constructor(
+    statusCode: number,
+    errors: ValidationError[],
+    message: string,
+    path: string,
+  ) {
     this.statusCode = statusCode;
+    this.errors = errors;
     this.message = message;
+    this.path = path;
     this.timestamp = new Date().toISOString();
   }
 }
+
+export type ValidationError = {
+  field: string;
+  messages: string[];
+};
