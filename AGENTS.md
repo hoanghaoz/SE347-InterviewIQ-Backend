@@ -2,35 +2,39 @@
 
 ## Project Structure & Module Organization
 
-This NestJS backend follows feature-based Clean Architecture. Place features in `src/modules/<feature>/`, divided into `api/`, `application/`, `domain/`, and `infrastructure/`. Shared utilities live in `src/shared/`; Prisma files are under `prisma/`. Unit tests sit beside source files as `*.spec.ts`; end-to-end tests live in `test/`. Read `docs/backend-architecture.md` and `docs/backend-code-style.md` before adding a module.
+Features live in `src/modules/<feature>/`, divided into `api/`, `application/`, `domain/`, and `infrastructure/`. Shared utilities live in `src/shared/`; Prisma files are under `prisma/`. Unit tests sit beside source files; e2e tests live in `test/`. Read `docs/backend-architecture.md` before adding a module.
 
 Dependencies must point inward: API to application to domain. Infrastructure implements domain contracts. Controllers and application services must not access Prisma directly.
 
 ## Build, Test, and Development Commands
 
-- `npm ci`: install locked dependencies using Node.js 24.
-- `npm run doctor`: verify Docker and environment variables.
-- `npx prisma generate`: generate the Prisma client after setup or schema changes.
+- `npm ci`: install locked dependencies with Node.js 24.
+- `npm run doctor`: verify the local environment.
+- `npx prisma generate`: regenerate the Prisma client.
 - `npm run start:dev`: run the API with watch mode; Swagger is at `/docs`.
 - `npm run build`: compile the NestJS application.
-- `npm run lint`: lint and fix supported issues; inspect the diff afterward.
-- `npm run format`: format TypeScript with Prettier.
+- `npm run lint` / `npm run format`: lint and format TypeScript; inspect fixes.
 - `npm test`, `npm run test:e2e`, `npm run test:cov`: run test suites.
-- `npm run scaffold -- interview-session`: generate a feature skeleton.
 
 ## Coding Style & Naming Conventions
 
-Use TypeScript, two-space indentation, and Prettier defaults. Keep controllers thin and return explicit DTOs. Use `Result<T, AppError>` for expected failures; throw Nest HTTP exceptions only in the API layer. Async service methods end in `Async`; repository methods use PascalCase (`GetUserByEmail`); abstract contracts use an `I` prefix (`IUserRepository`). Use kebab-case for module directories and camelCase for Prisma fields. Validate external input with `class-validator`.
+Use TypeScript, two-space indentation, and Prettier defaults. Keep controllers thin. Use `Result<T, AppError>` for expected failures; throw Nest exceptions only in the API layer. Async service methods end in `Async`; repository methods use PascalCase (`GetUserByEmail`); abstract contracts use an `I` prefix. Use kebab-case module directories and validate inputs with `class-validator`.
+
+## API Response Contract
+
+All successful endpoints must return `ApiSuccessResponse<T>` from `src/shared/response/apiResponse.ts`, for example `new ApiSuccessResponse(HttpStatus.OK, dto, 'Room retrieved successfully')`. Do not handcraft response envelopes.
+
+Services return `Result<T, AppError>`. Controllers convert failures with `toHttpException(error)`; they must not create `ApiErrorResponse` directly. `AllExceptionsFilter` owns the final error shape: `statusCode`, `success`, `code`, `message`, optional `errors`, `path`, and `timestamp`. Validation details use `{ field, messages }`. Never expose rejected values, database errors, stack traces, or internal exception messages.
 
 ## Testing Guidelines
 
-Jest is the test framework. Name unit tests `<subject>.spec.ts` and e2e tests `*.e2e-spec.ts`. Add focused tests for new behavior and regressions. Shared auth, error handling, database, or bootstrap changes require unit and e2e verification. No fixed coverage threshold is documented.
+Use Jest. Name unit tests `<subject>.spec.ts` and e2e tests `*.e2e-spec.ts`. Add focused regression tests. Shared auth, error, database, or bootstrap changes require unit and e2e verification.
 
 ## Commit & Pull Request Guidelines
 
-History uses Conventional Commit types such as `feat`, `fix`, and `docs`. Follow `<type>(<scope>): <short-description>`, for example `feat(interview-room): add room creation`. Use branches like `feat/interview-room`; never push directly to `main`.
+Follow `<type>(<scope>): <description>`, for example `feat(interview-room): add room creation`. Use branches like `feat/interview-room`; never push directly to `main`.
 
-Keep pull requests focused. Include purpose, linked issue, API or migration impact, and commands run. Add screenshots for relevant Swagger or UI changes. Review diffs for secrets and unrelated edits; wait for CI and required reviews.
+Keep PRs focused. Include purpose, linked issue, API or migration impact, and verification commands. Review for secrets and unrelated edits; wait for CI and reviews.
 
 ## Security & Configuration
 
