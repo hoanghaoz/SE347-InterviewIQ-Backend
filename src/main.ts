@@ -18,8 +18,8 @@ async function bootstrap() {
 
   app.useGlobalFilters(new AllExceptionsFilter());
   const options = new DocumentBuilder()
-    .setTitle('DevNotes API')
-    .setDescription('API documentation for DevNotes application')
+    .setTitle('MockMate API')
+    .setDescription('API documentation for MockMate application')
     .setVersion('1.0')
     .addTag('auth', 'Authentication related endpoints')
     .addBearerAuth()

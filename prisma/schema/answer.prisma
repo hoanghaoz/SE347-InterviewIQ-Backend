@@ -1,0 +1,15 @@
+model Answer {
+  id              Int      @id @default(autoincrement())
+  publicId        String   @unique @default(uuid()) @map("public_id") @db.Uuid
+  questionId      Int      @unique @map("question_id")
+  transcript      String?  @db.Text
+  videoUrl        String?  @map("video_url") @db.VarChar(500)
+  durationSeconds Int?     @map("duration_seconds")
+  emotionSummary  Json?    @map("emotion_summary")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@map("answers")
+}

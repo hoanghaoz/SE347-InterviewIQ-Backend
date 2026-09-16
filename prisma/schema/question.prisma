@@ -1,0 +1,17 @@
+model Question {
+  id         Int                @id @default(autoincrement())
+  publicId   String             @unique @default(uuid()) @map("public_id") @db.Uuid
+  sessionId  Int                @map("session_id")
+  content    String             @db.Text
+  orderIndex Int                @map("order_index")
+  domain     QuestionDomain
+  difficulty QuestionDifficulty @default(MEDIUM)
+  createdAt  DateTime           @default(now()) @map("created_at") @db.Timestamptz
+
+  session InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  answer  Answer?
+
+  @@index([sessionId])
+  @@unique([sessionId, orderIndex])
+  @@map("questions")
+}

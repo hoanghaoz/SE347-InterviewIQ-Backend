@@ -1,0 +1,52 @@
+enum UserRole {
+  USER
+  ADMIN
+
+  @@map("user_role")
+}
+
+enum ParseStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+
+  @@map("parse_status")
+}
+
+enum SessionStatus {
+  CREATED
+  IN_PROGRESS
+  SUBMITTED
+  SCORING
+  COMPLETED
+  FAILED
+  CANCELLED
+
+  @@map("session_status")
+}
+
+enum QuestionDomain {
+  TECHNICAL
+  BEHAVIORAL
+  SITUATIONAL
+
+  @@map("question_domain")
+}
+
+enum QuestionDifficulty {
+  EASY
+  MEDIUM
+  HARD
+
+  @@map("question_difficulty")
+}
+
+enum CheatEventType {
+  TAB_SWITCH
+  WINDOW_BLUR
+  FACE_MISSING
+  MULTIPLE_FACES
+
+  @@map("cheat_event_type")
+}
