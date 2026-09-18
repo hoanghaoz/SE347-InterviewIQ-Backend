@@ -169,9 +169,9 @@ export class Update${pascalName}RequestDto {}
 }
 
 function responseDtoTemplate(pascalName: string): string {
-  return `export type ${pascalName}ResponseDto = {
-  publicId: string;
-};
+  return `export class ${pascalName}ResponseDto {
+  publicId!: string;
+}
 `;
 }
 

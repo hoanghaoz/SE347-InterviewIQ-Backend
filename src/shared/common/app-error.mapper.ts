@@ -1,14 +1,20 @@
-import {
-  BadRequestException,
-  ConflictException,
-  ForbiddenException,
-  HttpException,
-  HttpStatus,
-  InternalServerErrorException,
-  NotFoundException,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { HttpException, HttpStatus } from '@nestjs/common';
 import { AppError, ErrorCode } from './errorCode';
+
+export interface HttpErrorPayload {
+  code: ErrorCode;
+  message: string;
+}
+
+const ERROR_STATUS_MAP: Record<ErrorCode, HttpStatus> = {
+  [ErrorCode.Conflict]: HttpStatus.CONFLICT,
+  [ErrorCode.NotFound]: HttpStatus.NOT_FOUND,
+  [ErrorCode.BadRequest]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.InternalServerError]: HttpStatus.INTERNAL_SERVER_ERROR,
+  [ErrorCode.TooManyRequests]: HttpStatus.TOO_MANY_REQUESTS,
+  [ErrorCode.Unauthorized]: HttpStatus.UNAUTHORIZED,
+  [ErrorCode.Forbidden]: HttpStatus.FORBIDDEN,
+};
 
 /**
  * Translates a domain/application `AppError` into the matching Nest HTTP
@@ -16,20 +22,10 @@ import { AppError, ErrorCode } from './errorCode';
  * of a `Result` becomes the correct HTTP status.
  */
 export function toHttpException(error: AppError): HttpException {
-  switch (error.code) {
-    case ErrorCode.Conflict:
-      return new ConflictException(error.message);
-    case ErrorCode.NotFound:
-      return new NotFoundException(error.message);
-    case ErrorCode.BadRequest:
-      return new BadRequestException(error.message);
-    case ErrorCode.Unauthorized:
-      return new UnauthorizedException(error.message);
-    case ErrorCode.Forbidden:
-      return new ForbiddenException(error.message);
-    case ErrorCode.TooManyRequests:
-      return new HttpException(error.message, HttpStatus.TOO_MANY_REQUESTS);
-    case ErrorCode.InternalServerError:
-      return new InternalServerErrorException(error.message);
-  }
+  const payload: HttpErrorPayload = {
+    code: error.code,
+    message: error.message,
+  };
+
+  return new HttpException(payload, ERROR_STATUS_MAP[error.code]);
 }

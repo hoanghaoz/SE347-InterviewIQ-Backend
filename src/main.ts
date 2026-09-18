@@ -2,7 +2,6 @@ import 'reflect-metadata';
 /**
  * This is the main entry point of the application. It sets up the NestJS application, applies global validation pipes, and configures Swagger for API documentation. Finally, it starts the server on the specified port.
  */
-import { ValidationPipe } from '@nestjs/common/pipes/validation.pipe';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
@@ -10,12 +9,6 @@ import { AllExceptionsFilter } from './shared/common/exceptions.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-    }),
-  );
-
   app.useGlobalFilters(new AllExceptionsFilter());
   const options = new DocumentBuilder()
     .setTitle('MockMate API')

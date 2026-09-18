@@ -1,0 +1,55 @@
+groups:
+  - name: interviewiq-alerts
+    rules:
+      - alert: TelemetryPipelineDown
+        expr: up{job="otel-collector"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'OpenTelemetry Collector {{ $labels.instance }} is down'
+          description: 'Prometheus cannot scrape the OpenTelemetry Collector for more than 1 minute'
+
+      - alert: BackendTelemetryMissing
+        expr: absent(nodejs_eventloop_utilization_ratio{service_name="interviewiq-api"}) == 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'InterviewIQ backend telemetry is missing'
+          description: 'No runtime metrics have been received from the backend after the Collector metric expiration window'
+
+      - alert: HighRequestLatency
+        expr: |
+          sum by (service_name) (
+            rate(http_server_request_duration_seconds_sum{service_name="interviewiq-api"}[5m])
+          )
+          /
+          sum by (service_name) (
+            rate(http_server_request_duration_seconds_count{service_name="interviewiq-api"}[5m])
+          ) > 2
+        for: 1m
+        keep_firing_for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'High request latency on {{ $labels.service_name }}'
+          description: 'Request latency is above 2 seconds'
+
+      - alert: RedisExporterDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Redis exporter {{ $labels.instance }} is down'
+          description: 'Prometheus cannot scrape Redis exporter for more than 1 minute'
+
+      - alert: RedisDown
+        expr: redis_up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Redis {{ $labels.instance }} is down'
+          description: 'Redis exporter cannot reach Redis for more than 1 minute'

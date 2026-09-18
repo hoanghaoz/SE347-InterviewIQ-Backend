@@ -1,0 +1,167 @@
+services:
+  interviewiq-api:
+    container_name: interviewiq-backend
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - '127.0.0.1:${API_PORT:-3000}:3000'
+
+    env_file:
+      - .env
+    environment:
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-interviewiq-api}
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: otlp
+      OTEL_LOGS_EXPORTER: none
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_NODE_RESOURCE_DETECTORS: env,host,os,serviceinstance,container
+      OTEL_LOG_LEVEL: ${OTEL_LOG_LEVEL:-info}
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
+    networks:
+      - interviewiq-network-be
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+
+  # PostgreSQL
+  database:
+    image: pgvector/pgvector:pg15
+    restart: unless-stopped
+    container_name: interview-iq-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    networks:
+      - interviewiq-network-be
+
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Redis
+  redis:
+    image: redis:8.6.1-alpine
+    container_name: interviewiq-cache
+    ports:
+      - '127.0.0.1:${REDIS_PORT:-6379}:6379'
+    networks:
+      - interviewiq-network-be
+    volumes:
+      - redis_data:/data
+
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # redis exporter for prometheus
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: redis-exporter
+    networks:
+      - interviewiq-network-be
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    container_name: otel-collector
+    ports:
+      - '127.0.0.1:${OTEL_PORT:-4317}:4317'
+    expose:
+      - '9464'
+    networks:
+      - interviewiq-network-be
+    volumes:
+      - ./monitoring/opentelemery/otel-collector-config.yml:/etc/otelcol/config.yaml:ro
+
+  # prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: interviewiq-prometheus
+    ports:
+      - '127.0.0.1:${PROMETHEUS_PORT:-9090}:9090'
+    networks:
+      - interviewiq-network-be
+      - monitoring
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      redis-exporter:
+        condition: service_started
+      otel-collector:
+        condition: service_started
+      alertmanager:
+        condition: service_started
+
+  # Alertmanager
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: interviewiq-alertmanager
+    entrypoint: ['/bin/sh', '/etc/alertmanager/entrypoint.sh']
+    env_file:
+      - .env
+    ports:
+      - '127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093'
+    networks:
+      - monitoring
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml.template:/etc/alertmanager/alertmanager.yml.template:ro
+      - ./monitoring/alertmanager/entrypoint.sh:/etc/alertmanager/entrypoint.sh:ro
+      - ./monitoring/alertmanager/templates:/etc/alertmanager/templates:ro
+      - alertmanager_data:/alertmanager
+
+  # grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: interviewiq-grafana
+    ports:
+      - '127.0.0.1:${GRAFANA_PORT:-3001}:3000'
+    networks:
+      - monitoring
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+    depends_on:
+      - prometheus
+
+networks:
+  interviewiq-network-be:
+    driver: bridge
+  monitoring:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
