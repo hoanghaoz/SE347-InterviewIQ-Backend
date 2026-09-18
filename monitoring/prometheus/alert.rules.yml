@@ -12,7 +12,7 @@ groups:
 
       - alert: BackendTelemetryMissing
         expr: absent(nodejs_eventloop_utilization_ratio{service_name="interviewiq-api"}) == 1
-        for: 1m
+        for: 2m
         labels:
           severity: critical
         annotations:
@@ -33,7 +33,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: 'High request latency on {{ $labels.instance }}'
+          summary: 'High request latency on {{ $labels.service_name }}'
           description: 'Request latency is above 2 seconds'
 
       - alert: RedisExporterDown

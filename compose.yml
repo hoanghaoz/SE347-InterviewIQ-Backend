@@ -116,6 +116,24 @@ services:
         condition: service_started
       otel-collector:
         condition: service_started
+      alertmanager:
+        condition: service_started
+
+  # Alertmanager
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: interviewiq-alertmanager
+    entrypoint: ['/bin/sh', '/etc/alertmanager/entrypoint.sh']
+    env_file:
+      - .env
+    ports:
+      - '127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093'
+    networks:
+      - monitoring
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml.template:/etc/alertmanager/alertmanager.yml.template:ro
+      - ./monitoring/alertmanager/entrypoint.sh:/etc/alertmanager/entrypoint.sh:ro
+      - alertmanager_data:/alertmanager
 
   # grafana
   grafana:
@@ -145,3 +163,4 @@ volumes:
   redis_data:
   prometheus_data:
   grafana_data:
+  alertmanager_data:
