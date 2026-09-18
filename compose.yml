@@ -96,7 +96,7 @@ services:
     networks:
       - interviewiq-network-be
     volumes:
-      - ./monitoring/opentelemery/otel-collector-config.yml:/etc/otelcol/config.yaml:ro
+      - ./monitoring/opentelemetry/collector.yml:/etc/otelcol/config.yaml:ro
 
   # prometheus
   prometheus:
