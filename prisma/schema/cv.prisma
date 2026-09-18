@@ -1,0 +1,23 @@
+model Cv {
+  id            Int         @id @default(autoincrement())
+  publicId      String      @unique @default(uuid()) @map("public_id") @db.Uuid
+  userId        Int         @map("user_id")
+  fileName      String      @map("file_name") @db.VarChar(255)
+  fileUrl       String      @map("file_url") @db.VarChar(500)
+  fileSize      Int         @map("file_size")
+  rawText       String?     @map("raw_text") @db.Text
+  parsedData    Json?       @map("parsed_data")
+  parseStatus   ParseStatus @default(PENDING) @map("parse_status")
+  parserVersion String?     @map("parser_version") @db.VarChar(50)
+  isActive      Boolean     @default(true) @map("is_active")
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime    @updatedAt @map("updated_at") @db.Timestamptz
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  interviewSessions InterviewSession[]
+
+  @@index([userId])
+  @@index([parseStatus])
+  @@index([userId, isActive])
+  @@map("cvs")
+}
