@@ -21,6 +21,7 @@ groups:
       - alert: HighRequestLatency
         expr: rate(http_request_duration_seconds_sum[1m]) / rate(http_request_duration_seconds_count[1m]) > 2.0
         for: 1m
+        keep_firing_for: 5m
         labels:
           severity: warning
         annotations:

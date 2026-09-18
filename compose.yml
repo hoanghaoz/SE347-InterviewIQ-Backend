@@ -1,5 +1,6 @@
 services:
   interviewiq-api:
+    container_name: interviewiq-backend
     build:
       context: .
       dockerfile: Dockerfile
