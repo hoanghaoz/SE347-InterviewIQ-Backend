@@ -10,6 +10,16 @@ processors:
 exporters:
   debug:
     verbosity: basic
+  prometheus:
+    endpoint: 0.0.0.0:9464
+    enable_open_metrics: true
+    metric_expiration: 5m
+    resource_constant_labels:
+      included:
+        - service.name
+        - service.instance.id
+        - service.version
+        - deployment.environment.name
 
 service:
   pipelines:
@@ -18,6 +28,10 @@ service:
       processors: [batch]
       exporters: [debug]
     metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, prometheus]
+    logs:
       receivers: [otlp]
       processors: [batch]
       exporters: [debug]

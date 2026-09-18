@@ -16,7 +16,7 @@ services:
       OTEL_LOGS_EXPORTER: none
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
-      OTEL_NODE_RESOURCE_DETECTORS: env,host,os,process,serviceinstance,container
+      OTEL_NODE_RESOURCE_DETECTORS: env,host,os,serviceinstance,container
       OTEL_LOG_LEVEL: ${OTEL_LOG_LEVEL:-info}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
     networks:
@@ -27,8 +27,6 @@ services:
       redis:
         condition: service_healthy
       otel-collector:
-        condition: service_started
-      redis-exporter:
         condition: service_started
 
   # PostgreSQL
@@ -62,7 +60,7 @@ services:
     image: redis:8.6.1-alpine
     container_name: interviewiq-cache
     ports:
-      - '6379:6379'
+      - '127.0.0.1:${REDIS_PORT:-6379}:6379'
     networks:
       - interviewiq-network-be
     volumes:
@@ -82,7 +80,7 @@ services:
     networks:
       - interviewiq-network-be
     environment:
-      REDIS_ADDR: redis://interviewiq-cache:6379
+      REDIS_ADDR: redis://redis:6379
     depends_on:
       redis:
         condition: service_healthy
@@ -93,6 +91,8 @@ services:
     container_name: otel-collector
     ports:
       - '127.0.0.1:${OTEL_PORT:-4317}:4317'
+    expose:
+      - '9464'
     networks:
       - interviewiq-network-be
     volumes:
@@ -110,24 +110,27 @@ services:
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/prometheus/alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
-      - prometheus_data:/var/lib/prometheus
+      - prometheus_data:/prometheus
     depends_on:
-      - redis-exporter
+      redis-exporter:
+        condition: service_started
+      otel-collector:
+        condition: service_started
 
   # grafana
   grafana:
     image: grafana/grafana:latest
     container_name: interviewiq-grafana
     ports:
-      - '127.0.0.1:${GRAFANA_PORT:-3000}:3000'
+      - '127.0.0.1:${GRAFANA_PORT:-3001}:3000'
     networks:
-      - interviewiq-network-be
       - monitoring
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
     environment:
-      - GF_SECURITY_ADMIN_USER=${Grafana__Admin__User:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${Grafana__Admin__Password:-admin}
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
     depends_on:
       - prometheus
 

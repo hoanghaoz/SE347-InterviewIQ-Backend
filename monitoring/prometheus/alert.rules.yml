@@ -1,25 +1,33 @@
 groups:
   - name: interviewiq-alerts
     rules:
-      - alert: PrometheusDown
-        expr: up{job="prometheus"} == 0
+      - alert: TelemetryPipelineDown
+        expr: up{job="otel-collector"} == 0
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: 'Prometheus {{ $labels.instance }} is down'
-          description: 'Prometheus is not reachable for than 1 minute'
-      - alert: ServerDown
-        expr: up{job="interviewiq-backend"} == 0
+          summary: 'OpenTelemetry Collector {{ $labels.instance }} is down'
+          description: 'Prometheus cannot scrape the OpenTelemetry Collector for more than 1 minute'
+
+      - alert: BackendTelemetryMissing
+        expr: absent(nodejs_eventloop_utilization_ratio{service_name="interviewiq-api"}) == 1
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: 'Server {{ $labels.instance }} is down'
-          description: 'Server is not reachable for than 1 minute'
+          summary: 'InterviewIQ backend telemetry is missing'
+          description: 'No runtime metrics have been received from the backend after the Collector metric expiration window'
 
       - alert: HighRequestLatency
-        expr: rate(http_request_duration_seconds_sum[1m]) / rate(http_request_duration_seconds_count[1m]) > 2.0
+        expr: |
+          sum by (service_name) (
+            rate(http_server_request_duration_seconds_sum{service_name="interviewiq-api"}[5m])
+          )
+          /
+          sum by (service_name) (
+            rate(http_server_request_duration_seconds_count{service_name="interviewiq-api"}[5m])
+          ) > 2
         for: 1m
         keep_firing_for: 5m
         labels:
@@ -28,11 +36,20 @@ groups:
           summary: 'High request latency on {{ $labels.instance }}'
           description: 'Request latency is above 2 seconds'
 
-      - alert: RedisDown
+      - alert: RedisExporterDown
         expr: up{job="redis"} == 0
         for: 1m
         labels:
           severity: critical
         annotations:
+          summary: 'Redis exporter {{ $labels.instance }} is down'
+          description: 'Prometheus cannot scrape Redis exporter for more than 1 minute'
+
+      - alert: RedisDown
+        expr: redis_up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
           summary: 'Redis {{ $labels.instance }} is down'
-          description: 'Redis is not reachable for than 1 minute'
+          description: 'Redis exporter cannot reach Redis for more than 1 minute'
