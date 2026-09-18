@@ -11,8 +11,12 @@ services:
     networks:
       - interviewiq-network-be
     depends_on:
-      -
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
+  # PostgreSQL
   database:
     image: pgvector/pgvector:pg15
     restart: unless-stopped
@@ -37,6 +41,40 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  # Redis
+  redis:
+    image: redis:8.6.1-alpine
+    ports:
+      - '6379:6379'
+    networks:
+      - interviewiq-network-be
+    volumes:
+      - redis_data:/data
+
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    container_name: otel-collector
+    ports:
+      - '127.0.0.1:${OTEL_PORT:-4317}:4317'
+    networks:
+      - interviewiq-network-be
+    volumes:
+      - ./otel-collector-config.yml:/etc/otel-collector-config.yml
+
+
 networks:
   interviewiq-network-be:
     driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
