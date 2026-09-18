@@ -96,7 +96,7 @@ services:
     networks:
       - interviewiq-network-be
     volumes:
-      - ./otel-collector-config.yml:/etc/otelcol/config.yaml:ro
+      - ./monitoring/opentelemery/otel-collector-config.yml:/etc/otelcol/config.yaml:ro
 
   # prometheus
   prometheus:
@@ -133,6 +133,7 @@ services:
     volumes:
       - ./monitoring/alertmanager/alertmanager.yml.template:/etc/alertmanager/alertmanager.yml.template:ro
       - ./monitoring/alertmanager/entrypoint.sh:/etc/alertmanager/entrypoint.sh:ro
+      - ./monitoring/alertmanager/templates:/etc/alertmanager/templates:ro
       - alertmanager_data:/alertmanager
 
   # grafana
