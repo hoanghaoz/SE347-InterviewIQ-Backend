@@ -1,0 +1,37 @@
+groups:
+  - name: interviewiq-alerts
+    rules:
+      - alert: PrometheusDown
+        expr: up{job="prometheus"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Prometheus {{ $labels.instance }} is down'
+          description: 'Prometheus is not reachable for than 1 minute'
+      - alert: ServerDown
+        expr: up{job="interviewiq-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Server {{ $labels.instance }} is down'
+          description: 'Server is not reachable for than 1 minute'
+
+      - alert: HighRequestLatency
+        expr: rate(http_request_duration_seconds_sum[1m]) / rate(http_request_duration_seconds_count[1m]) > 2.0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'High request latency on {{ $labels.instance }}'
+          description: 'Request latency is above 2 seconds'
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Redis {{ $labels.instance }} is down'
+          description: 'Redis is not reachable for than 1 minute'

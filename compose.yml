@@ -8,6 +8,16 @@ services:
 
     env_file:
       - .env
+    environment:
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-interviewiq-api}
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: otlp
+      OTEL_LOGS_EXPORTER: none
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_NODE_RESOURCE_DETECTORS: env,host,os,process,serviceinstance,container
+      OTEL_LOG_LEVEL: ${OTEL_LOG_LEVEL:-info}
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
     networks:
       - interviewiq-network-be
     depends_on:
@@ -15,6 +25,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
 
   # PostgreSQL
   database:
@@ -68,7 +80,7 @@ services:
     networks:
       - interviewiq-network-be
     volumes:
-      - ./otel-collector-config.yml:/etc/otel-collector-config.yml
+      - ./otel-collector-config.yml:/etc/otelcol/config.yaml:ro
 
 
 networks:
