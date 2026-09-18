@@ -28,6 +28,8 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
+      redis-exporter:
+        condition: service_started
 
   # PostgreSQL
   database:
