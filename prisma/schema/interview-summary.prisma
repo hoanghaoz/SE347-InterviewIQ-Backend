@@ -1,0 +1,16 @@
+model InterviewSummary {
+  id              Int      @id @default(autoincrement())
+  publicId        String   @unique @default(uuid()) @map("public_id") @db.Uuid
+  sessionId       Int      @unique @map("session_id")
+  overallFeedback String   @map("overall_feedback") @db.Text
+  strengths       Json
+  improvements    Json
+  scoringModel    String   @map("scoring_model") @db.VarChar(100)
+  promptVersion   String?  @map("prompt_version") @db.VarChar(50)
+  generatedAt     DateTime @default(now()) @map("generated_at") @db.Timestamptz
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  session InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("interview_summaries")
+}

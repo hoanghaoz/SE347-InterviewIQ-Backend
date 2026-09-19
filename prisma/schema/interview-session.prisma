@@ -1,0 +1,29 @@
+model InterviewSession {
+  id              Int           @id @default(autoincrement())
+  publicId        String        @unique @default(uuid()) @map("public_id") @db.Uuid
+  userId          Int           @map("user_id")
+  cvId            Int?          @map("cv_id")
+  title           String        @db.VarChar(255)
+  jobDescription  String?       @map("job_description") @db.Text
+  status          SessionStatus @default(CREATED)
+  totalQuestions  Int           @default(5) @map("total_questions")
+  durationSeconds Int?          @map("duration_seconds")
+  startedAt       DateTime?     @map("started_at") @db.Timestamptz
+  submittedAt     DateTime?     @map("submitted_at") @db.Timestamptz
+  completedAt     DateTime?     @map("completed_at") @db.Timestamptz
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cv               Cv?               @relation(fields: [cvId], references: [id], onDelete: SetNull)
+  questions        Question[]
+  score            Score?
+  interviewSummary InterviewSummary?
+  cheatLogs        CheatLog[]
+
+  @@index([userId])
+  @@index([cvId])
+  @@index([status])
+  @@index([userId, status])
+  @@map("interview_sessions")
+}

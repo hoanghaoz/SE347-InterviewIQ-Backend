@@ -9,9 +9,10 @@ const databaseUrl =
   'postgresql://user:password@localhost:5432/mydb';
 
 export default defineConfig({
-  schema: './prisma/schema.prisma',
+  schema: './prisma/schema',
   migrations: {
     path: './prisma/migrations',
+    seed: 'npx tsx prisma/seed.ts',
   },
   datasource: {
     url: databaseUrl, // Use the session-mode pooler for migrations to avoid issues with long-running transactions in the transaction-mode pooler

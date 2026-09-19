@@ -11,8 +11,8 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.useGlobalFilters(new AllExceptionsFilter());
   const options = new DocumentBuilder()
-    .setTitle('InterviewIQ API')
-    .setDescription('API documentation for InterviewIQ application')
+    .setTitle('MockMate API')
+    .setDescription('API documentation for MockMate application')
     .setVersion('1.0')
     .addTag('auth', 'Authentication related endpoints')
     .addBearerAuth()
