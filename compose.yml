@@ -153,6 +153,30 @@ services:
     depends_on:
       - prometheus
 
+  # grafana alloy
+  grafana-alloy:
+    image: grafana/alloy:latest
+    container_name: interviewiq-grafana-alloy
+    ports:
+      - '127.0.0.1:${GRAFANA_ALLOY_PORT:-4201}:4201'
+    networks:
+      - monitoring
+    volumes:
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy
+    depends_on:
+      -
+
+  # loki
+  loki:
+    image: grafana/loki:latest
+    container_name: interviewiq-loki
+    ports:
+      - '127.0.0.1:${LOKI_PORT:-3100}:3100'
+    networks:
+      - monitoring
+    volumes:
+      -
+
 networks:
   interviewiq-network-be:
     driver: bridge
