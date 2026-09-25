@@ -6,6 +6,7 @@ model InterviewSession {
   title           String        @db.VarChar(255)
   jobDescription  String?       @map("job_description") @db.Text
   status          SessionStatus @default(CREATED)
+  cvSnapshot      Json          @map("cv_snapshot")
   totalQuestions  Int           @default(5) @map("total_questions")
   durationSeconds Int?          @map("duration_seconds")
   startedAt       DateTime?     @map("started_at") @db.Timestamptz
