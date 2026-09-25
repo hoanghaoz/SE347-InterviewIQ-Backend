@@ -15,15 +15,6 @@ SET "cv_snapshot" = jsonb_build_object(
 FROM "cvs" AS cv
 WHERE session."cv_id" = cv."id";
 
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM "interview_sessions" WHERE "cv_snapshot" IS NULL) THEN
-        RAISE EXCEPTION 'Cannot backfill cv_snapshot: an interview session has no source CV. Restore its CV before applying this migration.';
-    END IF;
-END
-$$;
-
-ALTER TABLE "interview_sessions" ALTER COLUMN "cv_snapshot" SET NOT NULL;
 ALTER TABLE "interview_sessions"
     ADD CONSTRAINT "interview_sessions_cv_snapshot_object"
     CHECK (jsonb_typeof("cv_snapshot") = 'object');
