@@ -163,8 +163,6 @@ services:
       - monitoring
     volumes:
       - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy
-    depends_on:
-      -
 
   # loki
   loki:
@@ -174,8 +172,7 @@ services:
       - '127.0.0.1:${LOKI_PORT:-3100}:3100'
     networks:
       - monitoring
-    volumes:
-      -
+
 
 networks:
   interviewiq-network-be:

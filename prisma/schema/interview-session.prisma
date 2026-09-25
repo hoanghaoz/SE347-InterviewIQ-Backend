@@ -3,7 +3,7 @@ model InterviewSession {
   publicId        String        @unique @default(uuid()) @map("public_id") @db.Uuid
   userId          Int           @map("user_id")
   cvId            Int?          @map("cv_id")
-  cvSnapshot      Json          @map("cv_snapshot")
+  cvSnapshot      Json?         @map("cv_snapshot")
   title           String        @db.VarChar(255)
   jobDescription  String?       @map("job_description") @db.Text
   status          SessionStatus @default(CREATED)

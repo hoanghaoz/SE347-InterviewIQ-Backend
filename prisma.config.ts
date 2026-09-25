@@ -6,7 +6,7 @@ import { defineConfig } from 'prisma/config';
 const databaseUrl =
   process.env.DIRECT_URL ??
   process.env.DATABASE_URL ??
-  'postgresql://user:password@localhost:5432/mydb';
+  'postgresql://user:password@localhost:5432/interviewiq-db';
 
 export default defineConfig({
   schema: './prisma/schema',
