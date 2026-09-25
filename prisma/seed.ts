@@ -141,6 +141,15 @@ async function main() {
     data: {
       userId: testUser.id,
       cvId: completedCv.id,
+      cvSnapshot: {
+        sourceCvPublicId: completedCv.publicId,
+        fileName: completedCv.fileName,
+        fileUrl: completedCv.fileUrl,
+        fileSize: completedCv.fileSize,
+        rawText: completedCv.rawText,
+        parsedData: completedCv.parsedData,
+        parserVersion: completedCv.parserVersion,
+      },
       title: 'Thực hành phỏng vấn vị trí Backend Engineer (NestJS/PostgreSQL)',
       jobDescription:
         'Yêu cầu: Thành thạo TypeScript, NestJS framework, thiết kế cơ sở dữ liệu PostgreSQL chuẩn hóa, nắm vững caching với Redis và kiến trúc Microservices cơ bản.',
