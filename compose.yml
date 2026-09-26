@@ -116,8 +116,6 @@ services:
         condition: service_started
       otel-collector:
         condition: service_started
-      alertmanager:
-        condition: service_started
 
   # Alertmanager
   alertmanager:
@@ -172,6 +170,18 @@ services:
       - '127.0.0.1:${LOKI_PORT:-3100}:3100'
     networks:
       - monitoring
+
+  # jaeger
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: interviewiq-jaeger
+    ports:
+      - '127.0.0.1:${JAEGER_PORT:-16686}:16686'
+    networks:
+      - monitoring
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+
 
 
 networks:

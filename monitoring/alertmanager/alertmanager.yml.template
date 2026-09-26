@@ -1,7 +1,7 @@
 global:
   resolve_timeout: 5m
-  smtp_smarthost: 'smtp.gmail.com:587'
-  smtp_from: '__SMTP_USERNAME__'
+  smtp_smarthost: '__SMTP_SMARTHOST__'
+  smtp_from: '__SMTP_FROM__'
   smtp_auth_username: '__SMTP_USERNAME__'
   smtp_auth_password_file: '/tmp/alertmanager-smtp-password'
   smtp_require_tls: true

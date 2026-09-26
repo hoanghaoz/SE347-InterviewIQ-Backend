@@ -1,0 +1,28 @@
+ otelcol.receiver.otlp "default" {
+   http {}
+   grpc {}
+
+   output {
+    metrics = [otelcol.processor.batch.example.input]
+    logs    = [otelcol.processor.batch.example.input]
+    traces  = [otelcol.processor.batch.example.input]
+   }
+ }
+
+ otelcol.processor.batch "example" {
+  output {
+    metrics = [otelcol.exporters.loki.loki.input]
+    logs    = [otelcol.exporters.loki.loki.input]
+    traces  = [otelcol.exporters.loki.loki.input]
+  }
+}
+
+otelcol.exporters.loki "loki" {
+  forward_to = [loki.write.local]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://localhost:3100/loki/api/v1/push"
+  }
+}

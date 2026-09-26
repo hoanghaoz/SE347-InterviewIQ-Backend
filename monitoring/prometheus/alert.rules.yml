@@ -21,20 +21,26 @@ groups:
 
       - alert: HighRequestLatency
         expr: |
-          sum by (service_name) (
-            rate(http_server_request_duration_seconds_sum{service_name="interviewiq-api"}[5m])
+          (
+            sum by (service_name) (
+              rate(http_server_request_duration_seconds_sum{service_name="interviewiq-api"}[5m])
+            )
+            /
+            sum by (service_name) (
+              rate(http_server_request_duration_seconds_count{service_name="interviewiq-api"}[5m])
+            ) > 2
           )
-          /
+          and on (service_name)
           sum by (service_name) (
-            rate(http_server_request_duration_seconds_count{service_name="interviewiq-api"}[5m])
-          ) > 2
+            increase(http_server_request_duration_seconds_count{service_name="interviewiq-api"}[5m])
+          ) >= 20
         for: 1m
         keep_firing_for: 5m
         labels:
           severity: warning
         annotations:
           summary: 'High request latency on {{ $labels.service_name }}'
-          description: 'Request latency is above 2 seconds'
+          description: 'Average request latency is above 2 seconds with at least 20 requests in 5 minutes'
 
       - alert: RedisExporterDown
         expr: up{job="redis"} == 0
@@ -53,3 +59,25 @@ groups:
         annotations:
           summary: 'Redis {{ $labels.instance }} is down'
           description: 'Redis exporter cannot reach Redis for more than 1 minute'
+
+      - alert: HTTPErrorRate
+        expr: |
+          (
+            sum by (service_name) (
+              rate(http_server_request_duration_seconds_count{service_name="interviewiq-api",http_response_status_code=~"5.."}[5m])
+            )
+            /
+            sum by (service_name) (
+              rate(http_server_request_duration_seconds_count{service_name="interviewiq-api"}[5m])
+            ) > 0.05
+          )
+          and on (service_name)
+          sum by (service_name) (
+            increase(http_server_request_duration_seconds_count{service_name="interviewiq-api"}[5m])
+          ) >= 20
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'High HTTP 5xx rate on {{ $labels.service_name }}'
+          description: 'More than 5% of requests failed with HTTP 5xx among at least 20 requests in 5 minutes'
