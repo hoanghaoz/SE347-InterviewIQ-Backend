@@ -1,19 +1,13 @@
-import {
-  Body,
-  Controller,
-  HttpCode,
-  HttpStatus,
-  Post,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { toHttpException } from '../../../shared/common/app-error.mapper';
-import { JwtAuthGuard } from '../../../shared/common/jwt.guard';
 import type { JwtPayload } from '../../../shared/common/jwt.payload.interface';
 import { User } from '../../../shared/decorators/user.decorator';
 import { ApiSuccessResponse } from '../../../shared/response/apiResponse';
 import { CreateInterviewRequestDto } from '../application/dtos/interview.request.dto';
 import { InterviewResponseDto } from '../application/dtos/interview.response.dto';
 import { IInterviewService } from '../application/interfaces/interview.service.interface';
+import { Auth } from 'src/shared/decorators/auth.decorator';
+import { CommonUserRole } from 'src/shared/common/commonEnum';
 
 @Controller('api/interview')
 export class InterviewController {
@@ -21,7 +15,7 @@ export class InterviewController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @UseGuards(JwtAuthGuard)
+  @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
   async createInterviewSessionAsync(
     @User() user: JwtPayload,
     @Body() request: CreateInterviewRequestDto,
