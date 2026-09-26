@@ -13,15 +13,17 @@ import { IInterviewService } from '../src/modules/interview/application/interfac
 import { AllExceptionsFilter } from '../src/shared/common/exceptions.filter';
 import { AppError, ErrorCode } from '../src/shared/common/errorCode';
 import { JwtAuthGuard } from '../src/shared/common/jwt.guard';
+import { RolesGuard } from '../src/shared/decorators/roles.guard';
 import { mapValidationErrors } from '../src/shared/common/validation-error.mapper';
 
 describe('InterviewController (e2e)', () => {
   let app: INestApplication<App>;
   let token: string;
+  let jwtService: JwtService;
   const createInterviewSessionAsync = jest.fn();
   const cvPublicId = '00000000-0000-4000-8000-000000000002';
   const userPublicId = '00000000-0000-4000-8000-000000000001';
-  const route = '/api/interview';
+  const route = '/api/interview-session';
 
   beforeEach(async () => {
     createInterviewSessionAsync.mockReset();
@@ -30,6 +32,7 @@ describe('InterviewController (e2e)', () => {
       controllers: [InterviewController],
       providers: [
         JwtAuthGuard,
+        RolesGuard,
         {
           provide: IInterviewService,
           useValue: { createInterviewSessionAsync },
@@ -37,7 +40,8 @@ describe('InterviewController (e2e)', () => {
       ],
     }).compile();
 
-    token = module.get(JwtService).sign({
+    jwtService = module.get(JwtService);
+    token = jwtService.sign({
       sub: userPublicId,
       email: 'user@example.com',
       role: 'USER',
@@ -141,6 +145,28 @@ describe('InterviewController (e2e)', () => {
       statusCode: 401,
       success: false,
       code: ErrorCode.Unauthorized,
+      path: route,
+    });
+    expect(createInterviewSessionAsync).not.toHaveBeenCalled();
+  });
+
+  it('rejects a token without an allowed role', async () => {
+    const viewerToken = jwtService.sign({
+      sub: userPublicId,
+      email: 'viewer@example.com',
+      role: 'VIEWER',
+    });
+
+    const response = await request(app.getHttpServer())
+      .post(route)
+      .set('Authorization', `Bearer ${viewerToken}`)
+      .send({ cvPublicId, title: 'Backend interview' })
+      .expect(403);
+
+    expect(response.body).toMatchObject({
+      statusCode: 403,
+      success: false,
+      code: ErrorCode.Forbidden,
       path: route,
     });
     expect(createInterviewSessionAsync).not.toHaveBeenCalled();

@@ -7,8 +7,7 @@ import { JwtAuthGuard } from '../common/jwt.guard';
 
 export function Auth(roles: CommonUserRole[]) {
   return applyDecorators(
-    UseGuards(RolesGuard),
-    UseGuards(JwtAuthGuard),
+    UseGuards(JwtAuthGuard, RolesGuard),
     ApiBearerAuth(),
     Roles(roles),
     ApiUnauthorizedResponse({ description: 'Unauthorized' }),

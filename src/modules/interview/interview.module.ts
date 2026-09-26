@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { JwtAuthGuard } from '../../shared/common/jwt.guard';
+import { RolesGuard } from '../../shared/decorators/roles.guard';
 import { CvModule } from '../cv/cv.module';
 import { InterviewController } from './api/interview.controller';
 import { IInterviewService } from './application/interfaces/interview.service.interface';
@@ -23,6 +24,7 @@ import { InterviewRepository } from './infrastructure/interview.repo';
   controllers: [InterviewController],
   providers: [
     JwtAuthGuard,
+    RolesGuard,
     {
       provide: IInterviewService,
       useClass: InterviewService,

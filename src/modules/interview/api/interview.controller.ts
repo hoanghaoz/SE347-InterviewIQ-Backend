@@ -6,8 +6,8 @@ import { ApiSuccessResponse } from '../../../shared/response/apiResponse';
 import { CreateInterviewRequestDto } from '../application/dtos/interview.request.dto';
 import { InterviewResponseDto } from '../application/dtos/interview.response.dto';
 import { IInterviewService } from '../application/interfaces/interview.service.interface';
-import { Auth } from 'src/shared/decorators/auth.decorator';
-import { CommonUserRole } from 'src/shared/common/commonEnum';
+import { Auth } from '../../../shared/decorators/auth.decorator';
+import { CommonUserRole } from '../../../shared/common/commonEnum';
 
 @Controller('api/interview-session')
 export class InterviewController {
