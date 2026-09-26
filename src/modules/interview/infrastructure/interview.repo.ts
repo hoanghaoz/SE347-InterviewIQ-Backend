@@ -18,12 +18,8 @@ export class InterviewRepository implements IInterviewRepository {
           title: newSession.title,
           jobDescription: newSession.jobDescription,
           status: mapStatusToPrisma(newSession.status),
-          user: { connect: { publicId: newSession.userPublicId } },
-          cv: {
-            connect: {
-              publicId: newSession.cvPublicId,
-            },
-          },
+          userId: newSession.userId,
+          cvId: newSession.cvId,
         },
         select: { publicId: true },
       });

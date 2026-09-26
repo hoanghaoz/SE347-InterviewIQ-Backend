@@ -26,8 +26,6 @@ export type InterviewSessionCreateParams = Omit<
   InterviewSessionGetParams,
   | 'id'
   | 'publicId'
-  | 'userId'
-  | 'cvId'
   | 'totalQuestion'
   | 'durationSeconds'
   | 'startedAt'
@@ -36,10 +34,7 @@ export type InterviewSessionCreateParams = Omit<
   | 'createdAt'
   | 'updatedAt'
   | 'status'
-> & {
-  readonly userPublicId: string;
-  readonly cvPublicId: string;
-};
+>;
 
 export class Interview {
   private constructor(
@@ -99,11 +94,11 @@ export class Interview {
     return this.params.status;
   }
 
-  get cvPublicId(): string {
-    return this.params.cvPublicId;
+  get cvId(): number {
+    return this.params.cvId;
   }
 
-  get userPublicId(): string {
-    return this.params.userPublicId;
+  get userId(): number {
+    return this.params.userId;
   }
 }

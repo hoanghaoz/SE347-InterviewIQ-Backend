@@ -18,8 +18,8 @@ describe('InterviewRepository', () => {
 
   it('returns the publicId from the newly created session', async () => {
     const interview = Interview.create({
-      userPublicId: 'user-public-id',
-      cvPublicId: 'cv-public-id',
+      userId: 1,
+      cvId: 2,
       title: 'Backend interview',
       jobDescription: null,
     });
@@ -38,13 +38,8 @@ describe('InterviewRepository', () => {
         title: 'Backend interview',
         jobDescription: null,
         status: 'CREATED',
-        user: { connect: { publicId: 'user-public-id' } },
-        cv: {
-          connect: {
-            publicId: 'cv-public-id',
-            user: { is: { publicId: 'user-public-id' } },
-          },
-        },
+        userId: 1,
+        cvId: 2,
       },
       select: { publicId: true },
     });
@@ -52,8 +47,8 @@ describe('InterviewRepository', () => {
 
   it('returns a safe error when Prisma rejects the write', async () => {
     const interview = Interview.create({
-      userPublicId: 'user-public-id',
-      cvPublicId: 'cv-public-id',
+      userId: 1,
+      cvId: 2,
       title: 'Backend interview',
       jobDescription: null,
     });
