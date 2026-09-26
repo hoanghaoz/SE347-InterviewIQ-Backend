@@ -26,6 +26,8 @@ export type InterviewSessionCreateParams = Omit<
   InterviewSessionGetParams,
   | 'id'
   | 'publicId'
+  | 'userId'
+  | 'cvId'
   | 'totalQuestion'
   | 'durationSeconds'
   | 'startedAt'
@@ -33,10 +35,18 @@ export type InterviewSessionCreateParams = Omit<
   | 'completedAt'
   | 'createdAt'
   | 'updatedAt'
->;
+  | 'status'
+> & {
+  readonly userPublicId: string;
+  readonly cvPublicId: string;
+};
 
 export class Interview {
-  private constructor(private params: InterviewSessionCreateParams) {}
+  private constructor(
+    private readonly params: InterviewSessionCreateParams & {
+      readonly status: CommonSessionStatus;
+    },
+  ) {}
 
   static create(
     params: InterviewSessionCreateParams,
@@ -46,7 +56,9 @@ export class Interview {
       return err(validation.error);
     }
 
-    return ok(new Interview(params));
+    return ok(
+      new Interview({ ...params, status: CommonSessionStatus.CREATED }),
+    );
   }
 
   private static validate(
@@ -73,15 +85,25 @@ export class Interview {
       );
     }
 
-    if (!Object.values(CommonSessionStatus).includes(params.status)) {
-      return err(
-        new InterviewDomainErrorValidation(
-          InterviewDomainError.InvalidStatus,
-          'Invalid interview status.',
-        ),
-      );
-    }
-
     return ok(undefined);
+  }
+  get title(): string {
+    return this.params.title;
+  }
+
+  get jobDescription(): string | null {
+    return this.params.jobDescription;
+  }
+
+  get status(): CommonSessionStatus {
+    return this.params.status;
+  }
+
+  get cvPublicId(): string {
+    return this.params.cvPublicId;
+  }
+
+  get userPublicId(): string {
+    return this.params.userPublicId;
   }
 }

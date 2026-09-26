@@ -1,4 +1,4 @@
-import { SessionStatus } from 'generated/prisma/enums';
+import { SessionStatus } from '../../../../generated/prisma/enums';
 import { CommonSessionStatus } from '../domain/enums/interview-enum';
 
 const statusToPrisma: Record<CommonSessionStatus, SessionStatus> = {

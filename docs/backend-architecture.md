@@ -68,7 +68,7 @@ Example:
 
 ```ts
 export abstract class IUserRepository {
-  abstract GetUserByEmail(email: string): Promise<Result<User | null, Error>>;
+  abstract getUserByEmail(email: string): Promise<Result<User | null, Error>>;
 }
 ```
 

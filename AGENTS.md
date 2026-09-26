@@ -18,7 +18,7 @@ Dependencies must point inward: API to application to domain. Infrastructure imp
 
 ## Coding Style & Naming Conventions
 
-Use TypeScript, two-space indentation, and Prettier defaults. Keep controllers thin. Use `Result<T, AppError>` for expected failures; throw Nest exceptions only in the API layer. Async service methods end in `Async`; repository methods use PascalCase (`GetUserByEmail`); abstract contracts use an `I` prefix. Use kebab-case module directories and validate inputs with `class-validator`.
+Use TypeScript, two-space indentation, and Prettier defaults. Keep controllers thin. Use `Result<T, AppError>` for expected failures; throw Nest exceptions only in the API layer. Async service methods end in `Async`; repository methods use camelCase (`createInterviewSession`); abstract contracts use an `I` prefix. Use kebab-case module directories and validate inputs with `class-validator`.
 
 ## API Response Contract
 
