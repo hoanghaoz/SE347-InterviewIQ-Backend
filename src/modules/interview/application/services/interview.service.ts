@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { IInterviewService } from '../interfaces/interview.service.interface';
-import { err, Result, ok } from 'neverthrow';
-import { AppError, ErrorCode } from 'src/shared/common/errorCode';
+import { err, ok, type Result } from 'neverthrow';
+import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
 import { CreateInterviewRequestDto } from '../dtos/interview.request.dto';
 import { IInterviewRepository } from '../../domain/repositories/interview.repo.interface';
-import { ICvRepository } from 'src/modules/cv/domain/repositories/cv.repo.interface';
+import { ICvRepository } from '../../../cv/domain/repositories/cv.repo.interface';
 import { Interview } from '../../domain/entities/interview.entity';
 
 @Injectable()
@@ -27,19 +27,24 @@ export class InterviewService implements IInterviewService {
       );
     }
     if (!authorizeResult.value) {
-      return err(new AppError(ErrorCode.Unauthorized, 'Unauthorize'));
+      return err(
+        new AppError(ErrorCode.NotFound, 'CV not found or unavailable'),
+      );
     }
 
     const validateInterviewRequest = Interview.create({
       userId: authorizeResult.value.userId,
       cvId: authorizeResult.value.cvId,
       title: request.title,
-      jobDescription: request.jobDescription,
+      jobDescription: request.jobDescription ?? null,
     });
 
     if (validateInterviewRequest.isErr()) {
       return err(
-        new AppError(ErrorCode.BadRequest, 'Failed to create interview'),
+        new AppError(
+          ErrorCode.BadRequest,
+          validateInterviewRequest.error.message,
+        ),
       );
     }
 
