@@ -5,7 +5,7 @@
 Follow the existing naming even when it is not idiomatic TypeScript:
 
 - Async service methods use `Async` suffix: `loginAsync`, `registerAsync`.
-- Repository/provider methods use PascalCase: `GetUserByEmail`, `AddUser`, `GenerateAccessToken`.
+- Repository/provider methods use camelCase: `createInterviewSession`, `getUserByEmail`, `generateAccessToken`.
 - Interfaces are abstract classes prefixed with `I`: `IAuthService`, `IUserRepository`, `IPasswordHasher`.
 - DTOs end with `Dto`: `LoginDto`, `RegisterDto`.
 - Entities are singular domain names: `User`.
@@ -99,7 +99,7 @@ Rules:
 - Repository contracts live in `domain/repositories/`.
 - Repositories return domain entities, primitives, or DTO-like read models. Do not return raw Prisma models to application services unless explicitly intended.
 - Use `publicId` for external identifiers. Avoid exposing internal numeric `id` to API clients.
-- Use Prisma relation writes when creating aggregate-related records, example: `UserRepository.AddUser` does when creating a default `Profile`.
+- Use Prisma relation writes when creating aggregate-related records.
 - Catch Prisma errors and return `err(new Error(...))`.
 
 ## Commands
