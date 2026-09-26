@@ -9,7 +9,7 @@ import { IInterviewService } from '../application/interfaces/interview.service.i
 import { Auth } from 'src/shared/decorators/auth.decorator';
 import { CommonUserRole } from 'src/shared/common/commonEnum';
 
-@Controller('api/interview')
+@Controller('api/interview-session')
 export class InterviewController {
   constructor(private readonly interviewService: IInterviewService) {}
 
