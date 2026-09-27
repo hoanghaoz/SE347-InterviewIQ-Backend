@@ -13,7 +13,7 @@ services:
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-interviewiq-api}
       OTEL_TRACES_EXPORTER: otlp
       OTEL_METRICS_EXPORTER: otlp
-      OTEL_LOGS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: otlp
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       OTEL_NODE_RESOURCE_DETECTORS: env,host,os,serviceinstance,container
@@ -91,12 +91,14 @@ services:
     container_name: otel-collector
     ports:
       - '127.0.0.1:${OTEL_PORT:-4317}:4317'
-    expose:
-      - '9464'
     networks:
       - interviewiq-network-be
+      - monitoring
     volumes:
       - ./monitoring/opentelemetry/collector.yml:/etc/otelcol/config.yaml:ro
+    depends_on:
+      grafana-alloy:
+        condition: service_started
 
   # prometheus
   prometheus:
@@ -104,6 +106,10 @@ services:
     container_name: interviewiq-prometheus
     ports:
       - '127.0.0.1:${PROMETHEUS_PORT:-9090}:9090'
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-remote-write-receiver'
     networks:
       - interviewiq-network-be
       - monitoring
@@ -115,8 +121,6 @@ services:
       redis-exporter:
         condition: service_started
       otel-collector:
-        condition: service_started
-      alertmanager:
         condition: service_started
 
   # Alertmanager
@@ -159,10 +163,16 @@ services:
     container_name: interviewiq-grafana-alloy
     ports:
       - '127.0.0.1:${GRAFANA_ALLOY_PORT:-4201}:4201'
+    command:
+      - run
+      - '--server.http.listen-addr=0.0.0.0:4201'
+      - '--storage.path=/var/lib/alloy/data'
+      - /etc/alloy/config.alloy
     networks:
       - monitoring
     volumes:
-      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy_data:/var/lib/alloy/data
 
   # loki
   loki:
@@ -172,6 +182,18 @@ services:
       - '127.0.0.1:${LOKI_PORT:-3100}:3100'
     networks:
       - monitoring
+
+  # jaeger
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: interviewiq-jaeger
+    ports:
+      - '127.0.0.1:${JAEGER_PORT:-16686}:16686'
+    networks:
+      - monitoring
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+
 
 
 networks:
@@ -186,3 +208,4 @@ volumes:
   prometheus_data:
   grafana_data:
   alertmanager_data:
+  alloy_data:

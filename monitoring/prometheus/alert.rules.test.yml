@@ -1,0 +1,145 @@
+rule_files:
+  - alert.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: healthy API and Redis do not alert
+    interval: 1m
+    input_series:
+      - series: 'nodejs_eventloop_utilization_ratio{service_name="interviewiq-api"}'
+        values: '0.2+0x12'
+      - series: 'up{job="alloy",instance="grafana-alloy:4201"}'
+        values: '1+0x12'
+      - series: 'up{job="redis",instance="redis-exporter:9121"}'
+        values: '1+0x12'
+      - series: 'redis_up{job="redis",instance="redis-exporter:9121"}'
+        values: '1+0x12'
+      - series: 'http_server_request_duration_seconds_count{service_name="interviewiq-api",http_response_status_code="200"}'
+        values: '0+10x12'
+      - series: 'http_server_request_duration_seconds_sum{service_name="interviewiq-api",http_response_status_code="200"}'
+        values: '0+5x12'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: BackendTelemetryMissing
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: HighRequestLatency
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: HTTPErrorRate
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: RedisDown
+        exp_alerts: []
+
+  - name: sustained slow API requests alert above traffic floor
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{service_name="interviewiq-api",http_response_status_code="200"}'
+        values: '0+10x12'
+      - series: 'http_server_request_duration_seconds_sum{service_name="interviewiq-api",http_response_status_code="200"}'
+        values: '0+30x12'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HighRequestLatency
+        exp_alerts:
+          - exp_labels:
+              service_name: interviewiq-api
+              severity: warning
+            exp_annotations:
+              summary: 'High request latency on interviewiq-api'
+              description: 'Average request latency is above 2 seconds with at least 20 requests in 5 minutes'
+
+  - name: low traffic does not trigger API alerts
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{service_name="interviewiq-api",http_response_status_code="500"}'
+        values: '0+1x12'
+      - series: 'http_server_request_duration_seconds_sum{service_name="interviewiq-api",http_response_status_code="500"}'
+        values: '0+3x12'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HighRequestLatency
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: HTTPErrorRate
+        exp_alerts: []
+
+  - name: sustained 5xx rate alerts above traffic floor
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{service_name="interviewiq-api",http_response_status_code="200"}'
+        values: '0+9x12'
+      - series: 'http_server_request_duration_seconds_count{service_name="interviewiq-api",http_response_status_code="500"}'
+        values: '0+1x12'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HTTPErrorRate
+        exp_alerts:
+          - exp_labels:
+              service_name: interviewiq-api
+              severity: warning
+            exp_annotations:
+              summary: 'High HTTP 5xx rate on interviewiq-api'
+              description: 'More than 5% of requests failed with HTTP 5xx among at least 20 requests in 5 minutes'
+
+  - name: missing API and unavailable scrape targets alert
+    interval: 1m
+    input_series:
+      - series: 'up{job="alloy",instance="grafana-alloy:4201"}'
+        values: '0+0x12'
+      - series: 'up{job="redis",instance="redis-exporter:9121"}'
+        values: '0+0x12'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: BackendTelemetryMissing
+        exp_alerts:
+          - exp_labels:
+              service_name: interviewiq-api
+              severity: critical
+            exp_annotations:
+              summary: 'InterviewIQ backend telemetry is missing'
+              description: 'The backend runtime metric is absent and the alert has remained active for 2 minutes'
+      - eval_time: 10m
+        alertname: TelemetryPipelineDown
+        exp_alerts:
+          - exp_labels:
+              job: alloy
+              instance: grafana-alloy:4201
+              severity: critical
+            exp_annotations:
+              summary: 'Grafana Alloy grafana-alloy:4201 is down'
+              description: 'Prometheus cannot scrape Grafana Alloy for more than 1 minute'
+      - eval_time: 10m
+        alertname: RedisExporterDown
+        exp_alerts:
+          - exp_labels:
+              job: redis
+              instance: redis-exporter:9121
+              severity: critical
+            exp_annotations:
+              summary: 'Redis exporter redis-exporter:9121 is down'
+              description: 'Prometheus cannot scrape Redis exporter for more than 1 minute'
+
+  - name: Redis connection failure is distinct from exporter failure
+    interval: 1m
+    input_series:
+      - series: 'up{job="redis",instance="redis-exporter:9121"}'
+        values: '1+0x12'
+      - series: 'redis_up{job="redis",instance="redis-exporter:9121"}'
+        values: '0+0x12'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: RedisDown
+        exp_alerts:
+          - exp_labels:
+              job: redis
+              instance: redis-exporter:9121
+              severity: critical
+            exp_annotations:
+              summary: 'Redis redis-exporter:9121 is down'
+              description: 'Redis exporter cannot reach Redis for more than 1 minute'
+      - eval_time: 10m
+        alertname: RedisExporterDown
+        exp_alerts: []

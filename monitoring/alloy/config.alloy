@@ -1,0 +1,75 @@
+otelcol.receiver.otlp "default" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+
+  output {
+    metrics = [otelcol.processor.batch.default.input]
+    logs    = [otelcol.processor.batch.default.input]
+    traces  = [otelcol.processor.batch.default.input]
+  }
+}
+
+otelcol.processor.batch "default" {
+  output {
+    metrics = [otelcol.processor.transform.metric_labels.input]
+    logs    = [otelcol.processor.attributes.loki_labels.input]
+    traces  = [otelcol.exporter.otlp.jaeger.input]
+  }
+}
+
+otelcol.processor.transform "metric_labels" {
+  error_mode = "ignore"
+
+  metric_statements {
+    context = "datapoint"
+    statements = [
+      `set(datapoint.attributes["service.name"], resource.attributes["service.name"]) where resource.attributes["service.name"] != nil`,
+    ]
+  }
+
+  output {
+    metrics = [otelcol.exporter.prometheus.default.input]
+  }
+}
+
+otelcol.exporter.prometheus "default" {
+  forward_to = [prometheus.remote_write.local.receiver]
+}
+
+prometheus.remote_write "local" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}
+
+otelcol.processor.attributes "loki_labels" {
+  action {
+    key    = "loki.attribute.labels"
+    action = "insert"
+    value  = "event.domain, event.name"
+  }
+
+  output {
+    logs = [otelcol.exporter.loki.local.input]
+  }
+}
+
+otelcol.exporter.loki "local" {
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+otelcol.exporter.otlp "jaeger" {
+  client {
+    endpoint = "jaeger:4317"
+    tls {
+      insecure = true
+    }
+  }
+}
