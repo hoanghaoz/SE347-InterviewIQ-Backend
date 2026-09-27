@@ -2,13 +2,13 @@ groups:
   - name: interviewiq-alerts
     rules:
       - alert: TelemetryPipelineDown
-        expr: up{job="otel-collector"} == 0
+        expr: up{job="alloy"} == 0
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: 'OpenTelemetry Collector {{ $labels.instance }} is down'
-          description: 'Prometheus cannot scrape the OpenTelemetry Collector for more than 1 minute'
+          summary: 'Grafana Alloy {{ $labels.instance }} is down'
+          description: 'Prometheus cannot scrape Grafana Alloy for more than 1 minute'
 
       - alert: BackendTelemetryMissing
         expr: absent(nodejs_eventloop_utilization_ratio{service_name="interviewiq-api"}) == 1
@@ -17,7 +17,7 @@ groups:
           severity: critical
         annotations:
           summary: 'InterviewIQ backend telemetry is missing'
-          description: 'No runtime metrics have been received from the backend after the Collector metric expiration window'
+          description: 'The backend runtime metric is absent and the alert has remained active for 2 minutes'
 
       - alert: HighRequestLatency
         expr: |

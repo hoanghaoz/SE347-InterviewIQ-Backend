@@ -1,6 +1,6 @@
 # Metrics and alerts
 
-The API exports OpenTelemetry metrics to the Collector. Prometheus scrapes the Collector and Redis exporter every 15 seconds; Alertmanager sends firing and resolved alerts by email.
+The API exports OpenTelemetry traces, metrics, and logs to the Collector over OTLP/gRPC. The Collector forwards all three signals to Alloy on the internal port `4317`. Alloy sends traces to Jaeger, metrics to Prometheus by remote write, and logs to Loki. Prometheus scrapes Alloy's internal metrics on port `4201` and the Redis exporter every 15 seconds; Alertmanager sends firing and resolved alerts by email.
 
 ## SMTP configuration
 
@@ -23,7 +23,7 @@ Prometheus can collect metrics even when Alertmanager has not been configured. O
 Open Prometheus at `http://localhost:9090` (or `PROMETHEUS_PORT`) and check:
 
 ```promql
-up{job="otel-collector"}
+up{job="alloy"}
 nodejs_eventloop_utilization_ratio{service_name="interviewiq-api"}
 http_server_request_duration_seconds_count{service_name="interviewiq-api"}
 up{job="redis"}
@@ -34,7 +34,7 @@ redis_memory_used_bytes{job="redis"}
 
 Send an HTTP request to the API before checking its request histogram. The API runtime metric may take about a minute to appear after startup. View firing and pending alerts in Prometheus at `/alerts` or Alertmanager at `http://localhost:9093` (or `ALERTMANAGER_PORT`).
 
-The API latency alert uses a 5-minute average above 2 seconds for 1 minute; the 5xx alert uses a rate above 5% for 2 minutes. Both require at least 20 requests in the 5-minute window. The Collector and Redis availability alerts require 1 minute. Missing API runtime telemetry alerts after the Collector's 5-minute metric expiration and an additional 2 minutes.
+The API latency alert uses a 5-minute average above 2 seconds for 1 minute; the 5xx alert uses a rate above 5% for 2 minutes. Both require at least 20 requests in the 5-minute window. The Alloy and Redis availability alerts require 1 minute. Missing API runtime telemetry alerts after Prometheus marks the metric absent and that condition holds for 2 minutes.
 
 ## Validate configuration and rules
 

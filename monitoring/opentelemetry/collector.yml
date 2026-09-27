@@ -8,30 +8,22 @@ processors:
   batch:
 
 exporters:
-  debug:
-    verbosity: basic
-  prometheus:
-    endpoint: 0.0.0.0:9464
-    enable_open_metrics: true
-    metric_expiration: 5m
-    resource_constant_labels:
-      included:
-        - service.name
-        - service.instance.id
-        - service.version
-        - deployment.environment.name
+  otlp_grpc/alloy:
+    endpoint: grafana-alloy:4317
+    tls:
+      insecure: true
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [otlp_grpc/alloy]
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug, prometheus]
+      exporters: [otlp_grpc/alloy]
     logs:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [otlp_grpc/alloy]

@@ -9,7 +9,7 @@ tests:
     input_series:
       - series: 'nodejs_eventloop_utilization_ratio{service_name="interviewiq-api"}'
         values: '0.2+0x12'
-      - series: 'up{job="otel-collector",instance="otel-collector:9464"}'
+      - series: 'up{job="alloy",instance="grafana-alloy:4201"}'
         values: '1+0x12'
       - series: 'up{job="redis",instance="redis-exporter:9121"}'
         values: '1+0x12'
@@ -87,7 +87,7 @@ tests:
   - name: missing API and unavailable scrape targets alert
     interval: 1m
     input_series:
-      - series: 'up{job="otel-collector",instance="otel-collector:9464"}'
+      - series: 'up{job="alloy",instance="grafana-alloy:4201"}'
         values: '0+0x12'
       - series: 'up{job="redis",instance="redis-exporter:9121"}'
         values: '0+0x12'
@@ -100,17 +100,17 @@ tests:
               severity: critical
             exp_annotations:
               summary: 'InterviewIQ backend telemetry is missing'
-              description: 'No runtime metrics have been received from the backend after the Collector metric expiration window'
+              description: 'The backend runtime metric is absent and the alert has remained active for 2 minutes'
       - eval_time: 10m
         alertname: TelemetryPipelineDown
         exp_alerts:
           - exp_labels:
-              job: otel-collector
-              instance: otel-collector:9464
+              job: alloy
+              instance: grafana-alloy:4201
               severity: critical
             exp_annotations:
-              summary: 'OpenTelemetry Collector otel-collector:9464 is down'
-              description: 'Prometheus cannot scrape the OpenTelemetry Collector for more than 1 minute'
+              summary: 'Grafana Alloy grafana-alloy:4201 is down'
+              description: 'Prometheus cannot scrape Grafana Alloy for more than 1 minute'
       - eval_time: 10m
         alertname: RedisExporterDown
         exp_alerts:
