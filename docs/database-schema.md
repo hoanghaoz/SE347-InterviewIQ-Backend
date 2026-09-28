@@ -67,6 +67,7 @@ erDiagram
         int user_id FK
         varchar file_name
         varchar file_url
+        varchar cloudinary_public_id UK
         int file_size
         text raw_text
         jsonb parsed_data
@@ -185,7 +186,8 @@ Quản lý file hồ sơ ứng viên tải lên hệ thống và dữ liệu tr�
 - **`public_id`** (`UUID`, UNIQUE).
 - **`user_id`** (`INT`, FK → `users.id`, ON DELETE CASCADE).
 - **`file_name`** (`VARCHAR(255)`): Tên file gốc (ví dụ: `resume.pdf`).
-- **`file_url`** (`VARCHAR(500)`): URL file lưu trên Cloud Object Storage (S3 / Supabase Storage).
+- **`file_url`** (`VARCHAR(500)`): URL file lưu trên Cloudinary (`secure_url`).
+- **`cloudinary_public_id`** (`VARCHAR(255)`, UNIQUE): `public_id` của file trên Cloudinary, dạng `cvs/<user public_id>/<uuid>`. Dùng để xóa/thay file (Sprint 5).
 - **`file_size`** (`INT`): Dung lượng file (bytes, CHECK > 0).
 - **`raw_text`** (`TEXT`, Nullable): Nội dung văn bản thô bóc tách từ PDF.
 - **`parsed_data`** (`JSONB`, Nullable): Dữ liệu cấu trúc hóa trích xuất từ CV (kỹ năng, kinh nghiệm, học vấn).
