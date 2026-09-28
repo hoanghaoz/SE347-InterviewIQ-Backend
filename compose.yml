@@ -182,6 +182,11 @@ services:
       - '127.0.0.1:${LOKI_PORT:-3100}:3100'
     networks:
       - monitoring
+    command:
+      - "-config.file=/etc/loki/config.yml"
+    volumes:
+      - ./monitoring/loki/config.yml:/etc/loki/config.yml:ro
+      - loki_data:/var/lib/loki/data:rw
 
   # jaeger
   jaeger:
@@ -209,3 +214,4 @@ volumes:
   grafana_data:
   alertmanager_data:
   alloy_data:
+  loki_data:
