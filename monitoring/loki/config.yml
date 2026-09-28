@@ -14,8 +14,8 @@ common:
   replication_factor: 1
   storage:
     filesystem:
-      chunks_directory: /var/lib/loki/chunks
-      rules_directory: /var/lib/loki/rules
+      chunks_directory: /var/lib/loki/data/chunks
+      rules_directory: /var/lib/loki/data/rules
   ring:
     kvstore:
       store: inmemory
