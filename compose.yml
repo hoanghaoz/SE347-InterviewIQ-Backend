@@ -19,6 +19,7 @@ services:
       OTEL_NODE_RESOURCE_DETECTORS: env,host,os,serviceinstance,container
       OTEL_LOG_LEVEL: ${OTEL_LOG_LEVEL:-info}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
+      REDIS_URL: redis://redis:6379
     networks:
       - interviewiq-network-be
     depends_on:
