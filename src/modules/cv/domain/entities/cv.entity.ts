@@ -1,6 +1,10 @@
 import { ParseStatus } from '../enums/cv.enum';
+import { CvParsedData } from '../types/cv-parsed-data.type';
 import { ok, err, Result } from 'neverthrow';
-import { CvDomainError, CvDomainErrorValidation } from '../errors/cv-domain.error';
+import {
+  CvDomainError,
+  CvDomainErrorValidation,
+} from '../errors/cv-domain.error';
 
 const MAX_FILE_NAME_LENGTH = 255;
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
@@ -11,30 +15,34 @@ export type CvGetParams = {
   readonly userId: number;
   readonly fileName: string;
   readonly fileUrl: string;
+  readonly cloudinaryPublicId: string;
   readonly fileSize: number;
   readonly rawText: string | null;
-  readonly parsedData: unknown;
+  readonly parsedData: CvParsedData | null;
   readonly parseStatus: ParseStatus;
   readonly parserVersion: string | null;
   readonly isActive: boolean;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 };
-export type CvProps = Omit<CvGetParams, 'id' | 'publicId' | 'createdAt' | 'updatedAt'> 
-& Partial<Pick<CvGetParams,'id' | 'publicId' | 'createdAt' | 'updatedAt'>>;
-export type CvCreateParams = Pick<CvGetParams,
- 'userId' | 'fileName' | 'fileUrl' | 'fileSize'>;
+export type CvProps = Omit<
+  CvGetParams,
+  'id' | 'publicId' | 'createdAt' | 'updatedAt'
+> &
+  Partial<Pick<CvGetParams, 'id' | 'publicId' | 'createdAt' | 'updatedAt'>>;
+export type CvCreateParams = Pick<
+  CvGetParams,
+  'userId' | 'fileName' | 'fileUrl' | 'cloudinaryPublicId' | 'fileSize'
+>;
 
 export class Cv {
-  private constructor (
-    private readonly params: CvProps 
-  ) {}
+  private constructor(private readonly params: CvProps) {}
   /**
    * Creates a new CV instance.
    * @param params - The parameters for creating the CV.
    * @returns A Result containing the new CV instance or an error.
    */
-  static create(params: CvCreateParams): Result<Cv, CvDomainErrorValidation>{
+  static create(params: CvCreateParams): Result<Cv, CvDomainErrorValidation> {
     const validation = Cv.validate(params);
     if (validation.isErr()) {
       return err(validation.error);
@@ -55,44 +63,51 @@ export class Cv {
     return new Cv(params);
   }
 
-  private static validate(params: CvCreateParams): Result<void, CvDomainErrorValidation> {
+  private static validate(
+    params: CvCreateParams,
+  ): Result<void, CvDomainErrorValidation> {
     if (params.fileName.trim() === '') {
       return err(
         new CvDomainErrorValidation(
-          CvDomainError.FileNameIsNull, "File name cannot be null or empty."
-        )
+          CvDomainError.FileNameIsNull,
+          'File name cannot be null or empty.',
+        ),
       );
     }
 
     if (params.fileName.length > MAX_FILE_NAME_LENGTH) {
       return err(
         new CvDomainErrorValidation(
-          CvDomainError.FileNameTooLong, `File name cannot exceed ${MAX_FILE_NAME_LENGTH} characters.`
-        )
+          CvDomainError.FileNameTooLong,
+          `File name cannot exceed ${MAX_FILE_NAME_LENGTH} characters.`,
+        ),
       );
     }
 
     if (!Number.isInteger(params.fileSize)) {
       return err(
         new CvDomainErrorValidation(
-          CvDomainError.FileSizeNotInt, "File size must be an integer."
-        )
+          CvDomainError.FileSizeNotInt,
+          'File size must be an integer.',
+        ),
       );
     }
 
     if (params.fileSize > MAX_FILE_SIZE_BYTES) {
       return err(
         new CvDomainErrorValidation(
-          CvDomainError.FileSizeTooLarge, `File size cannot exceed ${MAX_FILE_SIZE_BYTES} bytes.`
-        )
+          CvDomainError.FileSizeTooLarge,
+          `File size cannot exceed ${MAX_FILE_SIZE_BYTES} bytes.`,
+        ),
       );
     }
 
     if (params.fileSize <= 0) {
       return err(
         new CvDomainErrorValidation(
-          CvDomainError.FileSizeTooSmall, "File size must be greater than zero."
-      )
+          CvDomainError.FileSizeTooSmall,
+          'File size must be greater than zero.',
+        ),
       );
     }
 
@@ -107,6 +122,10 @@ export class Cv {
     return this.params.fileUrl;
   }
 
+  get cloudinaryPublicId(): string {
+    return this.params.cloudinaryPublicId;
+  }
+
   get fileSize(): number {
     return this.params.fileSize;
   }
@@ -117,5 +136,38 @@ export class Cv {
 
   get userId(): number {
     return this.params.userId;
+  }
+
+  get rawText(): string | null {
+    return this.params.rawText;
+  }
+
+  get parsedData(): CvParsedData | null {
+    return this.params.parsedData;
+  }
+
+  get parserVersion(): string | null {
+    return this.params.parserVersion;
+  }
+
+  get isActive(): boolean {
+    return this.params.isActive;
+  }
+
+  // Group A: undefined until the CV has been saved.
+  get id(): number | undefined {
+    return this.params.id;
+  }
+
+  get publicId(): string | undefined {
+    return this.params.publicId;
+  }
+
+  get createdAt(): Date | undefined {
+    return this.params.createdAt;
+  }
+
+  get updatedAt(): Date | undefined {
+    return this.params.updatedAt;
   }
 }
