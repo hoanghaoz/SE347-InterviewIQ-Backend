@@ -11,6 +11,7 @@ import {
   CheatEventType,
 } from '../generated/prisma/client';
 import { Pool } from 'pg';
+import type { CvParsedData } from '../src/modules/cv/domain/types/cv-parsed-data.type';
 import * as bcrypt from 'bcrypt';
 
 const connectionString = process.env.DATABASE_URL;
@@ -74,6 +75,7 @@ async function main() {
       userId: testUser.id,
       fileName: 'software_engineer_cv.pdf',
       fileUrl: 'https://storage.mockmate.dev/cvs/software_engineer_cv.pdf',
+      cloudinaryPublicId: 'seed/software_engineer_cv',
       fileSize: 102400,
       rawText:
         'Nguyễn Văn A - Backend Engineer. Kinh nghiệm 2 năm với NestJS, PostgreSQL, Redis, Docker. Sinh viên Kỹ thuật Phần mềm ĐHQG-HCM.',
@@ -110,7 +112,7 @@ async function main() {
             role: 'Backend Engineer',
           },
         ],
-      },
+      } satisfies CvParsedData, // build fails if the seed drifts from the shared shape
       parseStatus: ParseStatus.COMPLETED,
       parserVersion: 'v1.0.0',
       isActive: true,
@@ -122,6 +124,7 @@ async function main() {
       userId: testUser.id,
       fileName: 'frontend_resume.pdf',
       fileUrl: 'https://storage.mockmate.dev/cvs/frontend_resume.pdf',
+      cloudinaryPublicId: 'seed/frontend_resume',
       fileSize: 85400,
       rawText: null,
       parsedData: Prisma.DbNull,
