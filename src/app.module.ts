@@ -16,8 +16,8 @@ import { mapValidationErrors } from './shared/common/validation-error.mapper';
 import { PrismaModule } from './shared/infrastructure/database/prisma.module';
 import { InterviewModule } from './modules/interview/interview.module';
 import { CvModule } from './modules/cv/cv.module';
-import { RedisService } from './shared/infrastructure/redis/redis.service';
-
+import { RedisModule } from './shared/infrastructure/redis/redis.module';
+import { AuthModule } from './modules/authentication/auth.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -27,7 +27,8 @@ import { RedisService } from './shared/infrastructure/redis/redis.service';
     ConfigModule,
     InterviewModule,
     CvModule,
-    RedisService,
+    RedisModule,
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [

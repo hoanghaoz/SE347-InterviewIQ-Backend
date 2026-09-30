@@ -5,7 +5,7 @@ import { RedisService } from 'src/shared/infrastructure/redis/redis.service';
 
 @Injectable()
 export class RedisEmailOtpStore implements IEmailOtpStore {
-  private readonly logger = new Logger(IEmailOtpStore.name);
+  private readonly logger = new Logger(RedisEmailOtpStore.name);
 
   constructor(private readonly redisService: RedisService) {}
 
@@ -22,17 +22,17 @@ export class RedisEmailOtpStore implements IEmailOtpStore {
       return ok(undefined);
     } catch (error) {
       this.logger.error(`Failed to save OTP: ${(error as Error).message}`);
-      return err(new Error('Failed'));
+      return err(new Error('Failed to save OTP.'));
     }
   }
 
   public async findOtp(email: string): Promise<Result<string | null, Error>> {
     try {
-      await this.redisService.get(this.buildKey(email));
-      return ok(email ?? null);
+      const otpHash = await this.redisService.get(this.buildKey(email));
+      return ok(otpHash);
     } catch (error) {
       this.logger.error(`Failed to get OTP: ${(error as Error).message}`);
-      return err(new Error('Failed'));
+      return err(new Error('Failed to find OTP.'));
     }
   }
 
@@ -42,7 +42,7 @@ export class RedisEmailOtpStore implements IEmailOtpStore {
       return ok(undefined);
     } catch (error) {
       this.logger.error(`Failed to delete OTP: ${(error as Error).message}`);
-      return err(new Error('Failed'));
+      return err(new Error('Failed to delete OTP.'));
     }
   }
 
@@ -51,12 +51,12 @@ export class RedisEmailOtpStore implements IEmailOtpStore {
   ): Promise<Result<number | null, Error>> {
     try {
       const ttl = await this.redisService.ttl(this.buildKey(email));
-      // Redis: -2 = key không tồn tại, -1 = key không có expire
+      // Redis trả -2 khi key không tồn tại, -1 khi key không có expiry
       if (ttl < 0) return ok(null);
-      return ok(ttl); // giây
+      return ok(ttl);
     } catch (error) {
       this.logger.error(`Failed to get OTP TTL: ${(error as Error).message}`);
-      return err(new Error('Failed'));
+      return err(new Error('Failed to get OTP remaining TTL.'));
     }
   }
 }
