@@ -12,5 +12,7 @@ export abstract class IEmailOtpStore {
   /** Xóa OTP của email (sau khi verify thành công). */
   abstract deleteOtp(email: string): Promise<Result<void, Error>>;
   /** Số giây còn lại trước khi OTP hết hạn. Trả 0 nếu không tồn tại. */
-  abstract getRemainingTtl(email: string): Promise<Result<number, Error>>;
+  abstract getRemainingTtl(
+    email: string,
+  ): Promise<Result<number | null, Error>>;
 }

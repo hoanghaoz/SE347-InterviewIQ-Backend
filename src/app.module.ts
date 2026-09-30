@@ -16,6 +16,7 @@ import { mapValidationErrors } from './shared/common/validation-error.mapper';
 import { PrismaModule } from './shared/infrastructure/database/prisma.module';
 import { InterviewModule } from './modules/interview/interview.module';
 import { CvModule } from './modules/cv/cv.module';
+import { RedisService } from './shared/infrastructure/redis/redis.service';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { CvModule } from './modules/cv/cv.module';
     ConfigModule,
     InterviewModule,
     CvModule,
+    RedisService,
   ],
   controllers: [AppController],
   providers: [
