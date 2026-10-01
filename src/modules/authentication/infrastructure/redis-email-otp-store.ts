@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { err, ok, Result } from 'neverthrow';
 import { IEmailOtpStore } from '../domain/repositories/email-otp-store.interface';
-import { RedisService } from 'src/shared/infrastructure/redis/redis.service';
+import { RedisService } from '../../../shared/infrastructure/redis/redis.service';
 
 @Injectable()
 export class RedisEmailOtpStore implements IEmailOtpStore {
