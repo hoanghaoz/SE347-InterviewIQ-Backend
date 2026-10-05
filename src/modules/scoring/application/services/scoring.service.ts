@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { err, ok, Result } from 'neverthrow';
-import { AppError, ErrorCode } from 'src/shared/common/errorCode';
+import { CommonUserRole } from '../../../../shared/common/commonEnum';
+import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
 import { ScoringJobData } from '../dtos/scoring.request.dto';
+import { ScoringJobStatusResponseDto } from '../dtos/scoring.response.dto';
 import { IScoringQueue } from '../interfaces/scoring.queue.interface';
 import {
   EnqueueResult,
@@ -37,5 +39,38 @@ export class ScoringService implements IScoringService {
     this.logger.log(`Scoring job enqueued: ${jobId} for session ${sessionId}`);
 
     return ok({ jobId, status: 'QUEUED' });
+  }
+
+  async getJobStatusAsync(
+    jobId: string,
+    userId: string,
+    userRole?: string,
+  ): Promise<Result<ScoringJobStatusResponseDto, AppError>> {
+    const job = await this.scoringQueue.getJob(jobId);
+    if (!job) {
+      return err(
+        new AppError(
+          ErrorCode.NotFound,
+          `Scoring job with id '${jobId}' not found`,
+        ),
+      );
+    }
+
+    if (userRole !== CommonUserRole.ADMIN && job.data.userId !== userId) {
+      return err(
+        new AppError(
+          ErrorCode.Forbidden,
+          'You are not authorized to view this scoring job',
+        ),
+      );
+    }
+
+    return ok({
+      jobId: job.id,
+      sessionId: job.data.sessionId,
+      status: job.status,
+      createdAt: job.createdOn.toISOString(),
+      completedAt: job.completedOn ? job.completedOn.toISOString() : null,
+    });
   }
 }
