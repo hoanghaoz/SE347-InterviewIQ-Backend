@@ -16,6 +16,7 @@ import { mapValidationErrors } from './shared/common/validation-error.mapper';
 import { PrismaModule } from './shared/infrastructure/database/prisma.module';
 import { InterviewModule } from './modules/interview/interview.module';
 import { CvModule } from './modules/cv/cv.module';
+import { ScoringModule } from './modules/scoring/scoring.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { CvModule } from './modules/cv/cv.module';
     ConfigModule,
     InterviewModule,
     CvModule,
+    ScoringModule,
   ],
   controllers: [AppController],
   providers: [
