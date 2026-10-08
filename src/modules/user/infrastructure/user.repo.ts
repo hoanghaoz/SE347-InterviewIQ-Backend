@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { err, ok, Result } from 'neverthrow';
-import { PrismaService } from 'src/shared/infrastructure/database/prisma.service';
+import { PrismaService } from '../../../shared/infrastructure/database/prisma.service';
 import { IUserRepository } from '../domain/repositories/user.repo.interface';
 
 @Injectable()
