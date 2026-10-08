@@ -1,4 +1,4 @@
-import { Module } from 'node_modules/@nestjs/common';
+import { Module } from '@nestjs/common';
 import { IUserRepository } from './domain/repositories/user.repo.interface';
 import { UserRepository } from './infrastructure/user.repo';
 
