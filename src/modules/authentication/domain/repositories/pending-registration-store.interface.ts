@@ -3,7 +3,7 @@ import { PendingRegistration } from '../entities/pending-registration.entity';
 
 export abstract class IPendingRegistrationStore {
   abstract savePendingRegistration(
-    data: any,
+    data: PendingRegistration,
     ttlSeconds: number,
   ): Promise<Result<void, Error>>;
 
