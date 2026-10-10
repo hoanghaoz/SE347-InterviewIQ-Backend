@@ -1,0 +1,12 @@
+[1mdiff --git a/compose.yml b/compose.yml[m
+[1mindex a15a7c7..2cdce91 100644[m
+[1m--- a/compose.yml[m
+[1m+++ b/compose.yml[m
+[36m@@ -19,6 +19,7 @@[m [mservices:[m
+       OTEL_NODE_RESOURCE_DETECTORS: env,host,os,serviceinstance,container[m
+       OTEL_LOG_LEVEL: ${OTEL_LOG_LEVEL:-info}[m
+       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}[m
+[32m+[m[32m      REDIS_URL: redis://redis:6379[m
+     networks:[m
+       - interviewiq-network-be[m
+     depends_on:[m
