@@ -27,6 +27,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_started
       otel-collector:
         condition: service_started
 
@@ -73,6 +75,16 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  # Mailpit: SMTP giả cho dev, xem mail tại http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: interviewiq-mailpit
+    ports:
+      - '127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025'
+      - '127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025'
+    networks:
+      - interviewiq-network-be
 
   # redis exporter for prometheus
   redis-exporter:
