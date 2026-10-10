@@ -1,8 +1,7 @@
 import bcrypt from 'bcrypt';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { IPasswordHasher } from '../domain/repositories/password-hasher.interface';
 import { Result, ok, err } from 'neverthrow';
-import { Logger } from 'node_modules/@nestjs/common/services/logger.service';
 
 const SALT_ROUNDS = 10;
 
