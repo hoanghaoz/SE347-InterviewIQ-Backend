@@ -10,10 +10,11 @@ import { IEmailSender } from './domain/repositories/email-sender.interface';
 import { AuthService } from './application/services/auth.service';
 import { IAuthService } from './application/interfaces/auth.service.interface';
 import { UserModule } from '../user/user.module';
+import { AuthController } from './api/auth.controller';
 
 @Module({
   imports: [UserModule],
-  controllers: [],
+  controllers: [AuthController],
   providers: [
     {
       provide: IEmailOtpStore,
