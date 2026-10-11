@@ -1,5 +1,9 @@
 import { Inject, Module, OnModuleDestroy } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { JwtModule } from '@nestjs/jwt';
 import { PgBoss } from 'pg-boss';
+import { JwtAuthGuard } from '../../shared/common/jwt.guard';
+import { RolesGuard } from '../../shared/decorators/roles.guard';
 import { ScoringController } from './api/scoring.controller';
 import { IScoringQueue } from './application/interfaces/scoring.queue.interface';
 import { IScoringService } from './application/interfaces/scoring.service.interface';
@@ -12,8 +16,19 @@ import { ScoringQueueService } from './infrastructure/queue/scoring-queue.servic
 import { ScoringWorkerService } from './infrastructure/queue/scoring-worker.service';
 
 @Module({
+  imports: [
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get<string>('JWT_SECRET'),
+      }),
+    }),
+  ],
   controllers: [ScoringController],
   providers: [
+    JwtAuthGuard,
+    RolesGuard,
     PgBossProvider,
     {
       provide: IScoringQueue,
