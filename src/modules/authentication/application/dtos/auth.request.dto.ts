@@ -3,6 +3,7 @@ import {
   IsEmail,
   IsNotEmpty,
   IsString,
+  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -28,4 +29,21 @@ export class RegisterDto {
   @IsNotEmpty({ message: 'Full name is required' })
   @MaxLength(100, { message: 'Full name must not exceed 100 characters' })
   fullName!: string;
+}
+
+export class VerifyRegistrationDto {
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsEmail({}, { message: 'Invalid email format' })
+  @IsNotEmpty({ message: 'Email is required' })
+  email!: string;
+
+  // String (không phải number) để giữ số 0 ở đầu, ví dụ "012345"
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString({ message: 'OTP must be a string' })
+  @Matches(/^\d{6}$/, { message: 'OTP must be exactly 6 digits' })
+  otp!: string;
 }
