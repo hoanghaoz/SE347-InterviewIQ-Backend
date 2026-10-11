@@ -8,12 +8,20 @@ describe('RedisEmailOtpStore', () => {
   const set = jest.fn();
   const del = jest.fn();
   const ttl = jest.fn();
+  const incrementWithTtl = jest.fn();
 
-  const redisService = { get, set, del, ttl } as unknown as RedisService;
+  const redisService = {
+    get,
+    set,
+    del,
+    ttl,
+    incrementWithTtl,
+  } as unknown as RedisService;
   const store = new RedisEmailOtpStore(redisService);
 
   const email = 'a@x.com';
   const key = 'auth:otp:register:a@x.com';
+  const attemptsKey = 'auth:otp:failed-attempts:a@x.com';
 
   beforeEach(() => {
     jest.resetAllMocks();
@@ -92,6 +100,47 @@ describe('RedisEmailOtpStore', () => {
     });
   });
 
+  describe('incrementFailedAttempts', () => {
+    it('increments the attempts counter with the given ttl and returns the new count', async () => {
+      incrementWithTtl.mockResolvedValue(3);
+
+      const result = await store.incrementFailedAttempts(email, 300);
+
+      if (result.isErr()) throw result.error;
+      expect(result.value).toBe(3);
+      expect(incrementWithTtl).toHaveBeenCalledWith(attemptsKey, 300);
+    });
+
+    it('normalizes the email to a trimmed lowercase key', async () => {
+      incrementWithTtl.mockResolvedValue(1);
+
+      await store.incrementFailedAttempts('  A@X.com ', 300);
+
+      expect(incrementWithTtl).toHaveBeenCalledWith(attemptsKey, 300);
+    });
+  });
+
+  describe('resetFailedAttempts', () => {
+    it('deletes only the attempts counter, not the otp itself', async () => {
+      del.mockResolvedValue(undefined);
+
+      const result = await store.resetFailedAttempts(email);
+
+      expect(result.isOk()).toBe(true);
+      expect(del).toHaveBeenCalledTimes(1);
+      expect(del).toHaveBeenCalledWith(attemptsKey);
+      expect(del).not.toHaveBeenCalledWith(key);
+    });
+
+    it('normalizes the email to a trimmed lowercase key', async () => {
+      del.mockResolvedValue(undefined);
+
+      await store.resetFailedAttempts('  A@X.com ');
+
+      expect(del).toHaveBeenCalledWith(attemptsKey);
+    });
+  });
+
   describe('when redis fails', () => {
     it.each<{
       method: string;
@@ -109,6 +158,16 @@ describe('RedisEmailOtpStore', () => {
         method: 'getRemainingTtl',
         mock: ttl,
         call: () => store.getRemainingTtl(email),
+      },
+      {
+        method: 'incrementFailedAttempts',
+        mock: incrementWithTtl,
+        call: () => store.incrementFailedAttempts(email, 300),
+      },
+      {
+        method: 'resetFailedAttempts',
+        mock: del,
+        call: () => store.resetFailedAttempts(email),
       },
     ])('returns a safe error from $method', async ({ mock, call }) => {
       mock.mockRejectedValue(new Error('redis internal detail'));

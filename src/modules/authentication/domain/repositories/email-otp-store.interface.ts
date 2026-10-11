@@ -15,4 +15,11 @@ export abstract class IEmailOtpStore {
   abstract getRemainingTtl(
     email: string,
   ): Promise<Result<number | null, Error>>;
+
+  abstract incrementFailedAttempts(
+    email: string,
+    ttlSeconds: number,
+  ): Promise<Result<number, Error>>;
+
+  abstract resetFailedAttempts(email: string): Promise<Result<void, Error>>;
 }

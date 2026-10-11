@@ -59,4 +59,40 @@ export class RedisEmailOtpStore implements IEmailOtpStore {
       return err(new Error('Failed to get OTP remaining TTL.'));
     }
   }
+
+  private buildFailedAttemptsKey(email: string): string {
+    return `auth:otp:failed-attempts:${email.trim().toLowerCase()}`;
+  }
+
+  public async incrementFailedAttempts(
+    email: string,
+    ttlSeconds: number,
+  ): Promise<Result<number, Error>> {
+    try {
+      const count = await this.redisService.incrementWithTtl(
+        this.buildFailedAttemptsKey(email),
+        ttlSeconds,
+      );
+      return ok(count);
+    } catch (error) {
+      this.logger.error(
+        `Failed to increment failed attempts: ${(error as Error).message}`,
+      );
+      return err(new Error('Failed to increment failed attempts.'));
+    }
+  }
+
+  public async resetFailedAttempts(
+    email: string,
+  ): Promise<Result<void, Error>> {
+    try {
+      await this.redisService.del(this.buildFailedAttemptsKey(email));
+      return ok(undefined);
+    } catch (error) {
+      this.logger.error(
+        `Failed to reset failed attempts: ${(error as Error).message}`,
+      );
+      return err(new Error('Failed to reset failed attempts.'));
+    }
+  }
 }
