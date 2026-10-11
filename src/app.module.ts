@@ -17,6 +17,7 @@ import { PrismaModule } from './shared/infrastructure/database/prisma.module';
 import { InterviewModule } from './modules/interview/interview.module';
 import { CvModule } from './modules/cv/cv.module';
 import { ScoringModule } from './modules/scoring/scoring.module';
+import { LlmPlaygroundModule } from './modules/llm-playground/llm-playground.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { ScoringModule } from './modules/scoring/scoring.module';
     InterviewModule,
     CvModule,
     ScoringModule,
+    LlmPlaygroundModule,
   ],
   controllers: [AppController],
   providers: [
