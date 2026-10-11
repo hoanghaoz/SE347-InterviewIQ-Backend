@@ -24,4 +24,21 @@ export class UserRepository implements IUserRepository {
       return err(new Error('Failed to find user'));
     }
   }
+
+  async createUser(
+    email: string,
+    passwordHash: string,
+    fullName: string,
+  ): Promise<Result<{ id: number }, Error>> {
+    try {
+      const newUser = await this.prismaService.user.create({
+        data: { email, passwordHash, fullName },
+        select: { id: true },
+      });
+      return ok({ id: newUser.id });
+    } catch (error) {
+      this.logger.error('Error occurred while creating user', error);
+      return err(new Error('Failed to create user'));
+    }
+  }
 }
