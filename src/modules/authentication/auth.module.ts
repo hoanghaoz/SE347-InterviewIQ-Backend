@@ -16,6 +16,8 @@ import { IAccessTokenIssuer } from './domain/repositories/access-token-issuer.in
 import { JwtAccessTokenIssuer } from './infrastructure/jwt-access-token-issuer';
 import { ITokenHasher } from './domain/repositories/token-hasher.interface';
 import { Sha256TokenHasher } from './infrastructure/sha256-token-hasher';
+import { IRefreshTokenRepository } from './domain/repositories/refresh-token.repo.interface';
+import { RefreshTokenRepository } from './infrastructure/refresh-token.repo';
 
 @Module({
   // JwtAccessTokenIssuer tự truyền secret/expiresIn khi ký nên không cấu hình ở đây
@@ -49,6 +51,10 @@ import { Sha256TokenHasher } from './infrastructure/sha256-token-hasher';
     {
       provide: ITokenHasher,
       useClass: Sha256TokenHasher,
+    },
+    {
+      provide: IRefreshTokenRepository,
+      useClass: RefreshTokenRepository,
     },
   ],
   exports: [
