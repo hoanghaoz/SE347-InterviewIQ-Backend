@@ -2,13 +2,57 @@ name: Backend CI
 
 on:
   pull_request:
-    branches: [develop, main]
+    branches: [main]
   push:
-    branches: [develop, main]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: backend-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  HUSKY: '0'
 
 jobs:
-  ci:
+  detect-change:
+    name: Scan Docker inputs
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      backend_changed: ${{ steps.filter.outputs.backend_code }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Filter changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          base: ${{ github.ref }}
+          filters: |
+            backend_code:
+              - 'src/**'
+              - 'scripts/**'
+              - 'prisma/**'
+              - 'prisma.config.ts'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig*.json'
+              - 'nest-cli.json'
+              - 'Dockerfile'
+              - '.dockerignore'
+              - '.github/workflows/backend_ci.yml'
+              - '.github/workflows/docker_ci.yml'
+              - 'monitoring/**'
+
+  ci:
+    name: Backend checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout source code
@@ -26,11 +70,105 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Validate Prisma
+        run: npx prisma validate
+
       - name: Generate Prisma
         run: npx prisma generate
 
       - name: Run lint
-        run: npm run lint
+        run: npm run lint:check
+
+      - name: Action lint
+        run: |
+          bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color -format '{{range $err := .}}::error file={{$err.Filepath}},line={{$err.Line}},col={{$err.Column}}::{{$err.Message}}%0A```%0A{{replace $err.Snippet "\\n" "%0A"}}%0A```\n{{end}}' -ignore 'SC2016:'
+
+        shell: bash
+
+      - name: Run test
+        run: npm test -- --ci --runInBand
 
       - name: Build project
         run: npm run build
+
+      - name: Validate Docker Compose
+        shell: bash
+        run: |
+          cat > .env <<'EOF'
+          POSTGRES_USER=ci
+          POSTGRES_PASSWORD=ci-password
+          POSTGRES_DB=fitwork_ci
+          REDIS_PASSWORD=ci-password
+          REDIS_PORT=6379
+          EOF
+
+          docker compose -f compose.yml config --quiet
+
+  integration:
+    name: PostgreSQL integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: interviewiq_seed_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d interviewiq_seed_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/interviewiq_seed_test
+      SEED_TEST_DATABASE_URL: postgresql://ci:ci@localhost:5432/interviewiq_test
+      PERF_TEST_DATABASE_URL: postgresql://ci:ci@localhost:5432/interviewiq_perf_test
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma
+        run: npx prisma generate
+
+      - name: Create separate performance test database
+        run: psql "$SEED_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'CREATE DATABASE interviewiq_perf_test;'
+
+      - name: Apply migrations to seed test database
+        run: npx prisma migrate deploy
+
+      - name: Apply migrations to performance test database
+        env:
+          DATABASE_URL: ${{ env.PERF_TEST_DATABASE_URL }}
+        run: npx prisma migrate deploy
+
+      - name: Run seed integration tests
+        run: npm run test:seed -- --ci
+
+      - name: Run performance tooling and search integration tests
+        run: npm run test:perf -- --ci
+
+  docker:
+    name: Docker
+    needs: [ci, integration, detect-change]
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.base_ref == 'main' && needs.detect-change.outputs.backend_changed == 'true')
+    uses: ./.github/workflows/docker_ci.yml
+    with:
+      publish: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
