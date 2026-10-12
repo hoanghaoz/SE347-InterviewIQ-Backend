@@ -1,4 +1,4 @@
-# Upload and save an interview answer
+# Upload answers and submit an interview session
 
 Each question has one `Answer`. The browser uploads its recorded video directly to Cloudinary, then submits the asset ID and transcript to the API. Saving an answer does not enqueue scoring. After every answer has been saved, use the session submission endpoint to enqueue scoring for the whole interview.
 
@@ -107,6 +107,92 @@ Only advance to the next question after this save succeeds. Invalid input/assets
 
 ## 4. Submit the interview session
 
-When all answers have been saved, call the existing `POST /api/interview-session/:sessionPublicId/submit`. Its HTTP 202 response includes sessionPublicId, jobId and status QUEUED. The frontend can poll `GET /api/scoring/jobs/:jobId/status`.
+After all answer saves have succeeded, submit the whole session to start asynchronous scoring. This endpoint is implemented in [InterviewController](../src/modules/interview/api/interview.controller.ts).
+
+```http
+POST /api/interview-session/:sessionPublicId/submit
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+The bearer token must have USER or ADMIN role. In either case, the session and CV must belong to the authenticated user; ADMIN does not bypass ownership for submission. `sessionPublicId` is the session's public UUID.
+
+### Request body
+
+```json
+{
+  "cvPublicId": "22222222-2222-4222-8222-222222222222",
+  "totalQuestions": 5,
+  "durationSeconds": 420
+}
+```
+
+| Field             | Required | Validation and meaning                                                          |
+| ----------------- | -------- | ------------------------------------------------------------------------------- |
+| `cvPublicId`      | Yes      | UUID of the user's CV associated with this session. A different CV returns 404. |
+| `totalQuestions`  | Yes      | Integer >= 1; total question count reported by the frontend.                    |
+| `durationSeconds` | Yes      | Integer >= 0; total session duration in seconds reported by the frontend.       |
+
+Send numbers as JSON numbers. The server currently stores these supplied metrics without deriving them from `Answer` records or checking that every question has an answer. The frontend should wait for every answer PUT to succeed before submitting.
+
+The server authorizes the CV and session, then saves `totalQuestions`, `durationSeconds`, the authorized CV snapshot in `cvSnapshot`, and a server-generated `submittedAt`. It sets the session status to SUBMITTED before enqueueing scoring. The frontend does not supply `cvSnapshot` or `submittedAt`.
+
+### Success response: 202 Accepted
+
+```json
+{
+  "statusCode": 202,
+  "success": true,
+  "data": {
+    "sessionPublicId": "11111111-1111-4111-8111-111111111111",
+    "jobId": "33333333-3333-4333-8333-333333333333",
+    "status": "QUEUED"
+  },
+  "message": "Interview session submitted successfully",
+  "timestamp": "2026-10-12T10:00:00.000Z"
+}
+```
+
+HTTP 202 means the submission has been saved and a scoring job has been enqueued; scoring may still be running. `data.status` describes the scoring job, while the saved session status is SUBMITTED. Keep `jobId` to track that job.
+
+### Errors and retries
+
+| HTTP status | Meaning                                                                                                                          |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| 400         | Invalid path UUID or request body, including missing fields, fractional metrics, `totalQuestions < 1`, or `durationSeconds < 0`. |
+| 401         | Missing or invalid bearer token.                                                                                                 |
+| 403         | Authenticated role is not USER or ADMIN.                                                                                         |
+| 404         | CV is unavailable, or the session does not belong to this user and CV.                                                           |
+| 409         | Session is outside CREATED, IN_PROGRESS, or SUBMITTED; or an active scoring job for the session is already queued.               |
+| 500         | CV/session authorization, persistence, or scoring enqueue failed. Internal failure details are sanitized.                        |
+
+Errors use the [shared API error envelope](./api-response-convention.md).
+
+Submission is allowed in CREATED, IN_PROGRESS, and SUBMITTED. A retry that passes authorization and the state guard updates the supplied metrics, CV snapshot, and submission timestamp again. Queue deduplication rejects duplicate active jobs with 409; this response does not include an existing `jobId`.
+
+If enqueueing fails after the save, the session remains SUBMITTED and its answers cannot be edited. Retry this endpoint to enqueue scoring again; answer re-uploads are unnecessary. A 500 can also occur before persistence, so the frontend must not assume every failed submission was saved.
+
+### Track scoring progress
+
+Use the returned `jobId` with the authenticated status endpoint:
+
+```http
+GET /api/scoring/jobs/:jobId/status
+Authorization: Bearer <token>
+```
+
+Its HTTP 200 success envelope contains:
+
+```json
+{
+  "jobId": "33333333-3333-4333-8333-333333333333",
+  "sessionId": "11111111-1111-4111-8111-111111111111",
+  "status": "PROCESSING",
+  "createdAt": "2026-10-12T10:00:00.000Z",
+  "completedAt": null
+}
+```
+
+The example above is the response's `data` object. `sessionId` is the session public UUID. Job status is QUEUED, PROCESSING, COMPLETED, or FAILED. Poll while QUEUED/PROCESSING and stop on COMPLETED/FAILED; the status response contains job metadata, not interview scores.
 
 No schema change or migration is needed for this flow.
