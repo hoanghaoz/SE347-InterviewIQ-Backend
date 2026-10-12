@@ -1,4 +1,5 @@
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
+import type { CvSnapshot } from '../../cv/domain/repositories/cv.repo.interface';
 import { InterviewSubmissionConflictError } from '../domain/errors/interview-domain.error';
 import { Interview } from '../domain/entities/interview.entity';
 import { CommonSessionStatus } from '../domain/enums/interview-enum';
@@ -113,13 +114,34 @@ describe('InterviewRepository', () => {
   });
 
   describe('submitInterviewSession', () => {
+    const cvSnapshot: CvSnapshot = {
+      sourceCvPublicId: '00000000-0000-4000-8000-000000000002',
+      fileName: 'cv.pdf',
+      fileUrl: 'https://example.com/cv.pdf',
+      fileSize: 1024,
+      rawText: 'Backend developer',
+      parserVersion: 'v1',
+      parsedData: {
+        summary: null,
+        skills: {
+          languages: ['TypeScript'],
+          frameworks: [],
+          databases: ['PostgreSQL'],
+          tools: [],
+        },
+        experiences: [],
+        education: [],
+        projects: [],
+      },
+    };
     const data = {
       totalQuestions: 7,
       durationSeconds: 0,
       submittedAt: new Date('2026-10-12T10:00:00.000Z'),
+      cvSnapshot,
     };
 
-    it('saves supplied metrics and timestamp as SUBMITTED with an allowed-state guard', async () => {
+    it('saves supplied metrics, CV snapshot and timestamp as SUBMITTED with an allowed-state guard', async () => {
       update.mockResolvedValue({ publicId: 'session-public-id' });
       const result = await repository.submitInterviewSession(
         'session-public-id',
@@ -138,6 +160,7 @@ describe('InterviewRepository', () => {
           durationSeconds: 0,
           submittedAt: new Date('2026-10-12T10:00:00.000Z'),
           status: 'SUBMITTED',
+          cvSnapshot,
         },
         select: { publicId: true },
       });

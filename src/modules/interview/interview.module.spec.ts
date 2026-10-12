@@ -90,6 +90,21 @@ describe('InterviewModule', () => {
       );
       expect(result).toEqual(ok(undefined));
       expect(update).toHaveBeenCalledTimes(1);
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            cvSnapshot: {
+              sourceCvPublicId: 'cv-public-id',
+              fileName: 'cv.pdf',
+              fileUrl: 'https://example.com/cv.pdf',
+              fileSize: 1024,
+              rawText: null,
+              parsedData: null,
+              parserVersion: null,
+            },
+          }) as unknown,
+        }),
+      );
       expect(boss.send).toHaveBeenCalledWith(
         'scoring-jobs',
         {

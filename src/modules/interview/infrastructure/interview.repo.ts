@@ -33,6 +33,7 @@ export class InterviewRepository implements IInterviewRepository {
           },
         },
         data: {
+          cvSnapshot: data.cvSnapshot,
           totalQuestions: data.totalQuestions,
           durationSeconds: data.durationSeconds,
           submittedAt: data.submittedAt,

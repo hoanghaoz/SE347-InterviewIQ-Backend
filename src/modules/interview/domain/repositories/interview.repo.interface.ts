@@ -1,5 +1,6 @@
 import type { Result } from 'neverthrow';
 import { Interview } from '../entities/interview.entity';
+import type { CvSnapshot } from '../../../cv/domain/repositories/cv.repo.interface';
 
 export type InterviewSessionData = {
   sessionId: number;
@@ -14,6 +15,7 @@ export type InterviewSessionAuthorizeResult = {
 };
 
 export type SubmitInterviewSessionData = {
+  cvSnapshot: CvSnapshot;
   totalQuestions: number;
   durationSeconds: number;
   submittedAt: Date;

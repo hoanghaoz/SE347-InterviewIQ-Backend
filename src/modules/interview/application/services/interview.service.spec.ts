@@ -204,7 +204,7 @@ describe('InterviewService', () => {
       expect(enqueueAsync).not.toHaveBeenCalled();
     });
 
-    it('authorizes public IDs, saves metrics and time, then enqueues with public IDs', async () => {
+    it('authorizes public IDs, saves metrics, CV snapshot and time, then enqueues with public IDs', async () => {
       const result = await submit();
       expect(result.isOk()).toBe(true);
       if (result.isErr()) throw result.error;
@@ -219,6 +219,7 @@ describe('InterviewService', () => {
         totalQuestions: 7,
         durationSeconds: 120,
         submittedAt,
+        cvSnapshot: authorizedCv.snapshot,
       });
       expect(enqueueAsync).toHaveBeenCalledWith(sessionPublicId, userPublicId);
     });

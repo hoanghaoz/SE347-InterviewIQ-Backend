@@ -62,6 +62,7 @@ export class InterviewService implements IInterviewService {
     const submitResult = await this.interviewRepo.submitInterviewSession(
       sessionPublicId,
       {
+        cvSnapshot: cvAuthorizeResult.value.snapshot,
         totalQuestions: request.totalQuestions,
         durationSeconds: request.durationSeconds,
         submittedAt: new Date(),
