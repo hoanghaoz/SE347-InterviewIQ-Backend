@@ -1,28 +1,58 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { err, ok, Result } from 'neverthrow';
+import { SessionStatus } from '../../../../../generated/prisma/enums';
 import { CommonUserRole } from '../../../../shared/common/commonEnum';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
 import { ScoringJobData } from '../dtos/scoring.request.dto';
-import { ScoringJobStatusResponseDto } from '../dtos/scoring.response.dto';
+import {
+  ScoringJobStatusResponseDto,
+  SessionResultResponseDto,
+} from '../dtos/scoring.response.dto';
 import { IScoringQueue } from '../interfaces/scoring.queue.interface';
 import {
   EnqueueResult,
   IScoringService,
 } from '../interfaces/scoring.service.interface';
+import { IScoringRepository } from '../../domain/repositories/scoring.repo.interface';
+import { mapToSessionResultDto } from '../../infrastructure/scoring-mapper';
 
 @Injectable()
 export class ScoringService implements IScoringService {
   private readonly logger = new Logger(ScoringService.name);
 
-  constructor(private readonly scoringQueue: IScoringQueue) {}
+  constructor(
+    private readonly scoringQueue: IScoringQueue,
+    private readonly scoringRepo: IScoringRepository,
+  ) {}
 
   async enqueueAsync(
     sessionId: string,
     userId: string,
   ): Promise<Result<EnqueueResult, AppError>> {
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    if (!sessionId || !uuidRegex.test(sessionId.trim())) {
+      return err(
+        new AppError(
+          ErrorCode.BadRequest,
+          `Invalid sessionId '${sessionId}': must be a valid UUID`,
+        ),
+      );
+    }
+
+    if (!userId || !uuidRegex.test(userId.trim())) {
+      return err(
+        new AppError(
+          ErrorCode.BadRequest,
+          `Invalid userId '${userId}': must be a valid UUID`,
+        ),
+      );
+    }
+
     const jobData: ScoringJobData = {
-      sessionId,
-      userId,
+      sessionId: sessionId.trim(),
+      userId: userId.trim(),
       enqueuedAt: new Date().toISOString(),
     };
 
@@ -72,5 +102,80 @@ export class ScoringService implements IScoringService {
       createdAt: job.createdOn.toISOString(),
       completedAt: job.completedOn ? job.completedOn.toISOString() : null,
     });
+  }
+
+  async getSessionResultAsync(
+    sessionId: string,
+    userId: string,
+    userRole?: string,
+  ): Promise<Result<SessionResultResponseDto, AppError>> {
+    const ownerResult = await this.scoringRepo.getSessionOwnerUserId(sessionId);
+    if (ownerResult.isErr()) {
+      return err(
+        new AppError(
+          ErrorCode.InternalServerError,
+          'Failed to retrieve session information',
+        ),
+      );
+    }
+
+    const sessionInfo = ownerResult.value;
+    if (!sessionInfo) {
+      return err(
+        new AppError(
+          ErrorCode.NotFound,
+          `Interview session with id '${sessionId}' not found`,
+        ),
+      );
+    }
+
+    if (
+      userRole !== CommonUserRole.ADMIN &&
+      sessionInfo.ownerPublicId !== userId
+    ) {
+      return err(
+        new AppError(
+          ErrorCode.Forbidden,
+          'You are not authorized to view the result of this session',
+        ),
+      );
+    }
+
+    if (sessionInfo.sessionStatus !== SessionStatus.COMPLETED) {
+      return err(
+        new AppError(
+          ErrorCode.BadRequest,
+          `Session scoring is not completed (current status: ${sessionInfo.sessionStatus})`,
+        ),
+      );
+    }
+
+    const result = await this.scoringRepo.findSessionResult(sessionId);
+    if (result.isErr()) {
+      return err(
+        new AppError(
+          ErrorCode.InternalServerError,
+          'Failed to retrieve scoring result',
+        ),
+      );
+    }
+
+    const scoringResult = result.value;
+    if (!scoringResult) {
+      return err(
+        new AppError(
+          ErrorCode.NotFound,
+          `Scoring result for session '${sessionId}' not found`,
+        ),
+      );
+    }
+
+    const dto = mapToSessionResultDto(
+      sessionId,
+      scoringResult.score,
+      scoringResult.summary,
+    );
+
+    return ok(dto);
   }
 }
