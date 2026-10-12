@@ -77,7 +77,7 @@ Content-Type: application/json
 }
 ```
 
-`cloudinaryPublicId` must match the scope of this user, session, and question and end in the upload UUID issued by signing. `transcript` is a required string of at most 50,000 characters; an empty string is allowed for a silent answer. This API stores the frontend's transcript and does not perform speech-to-text.
+`cloudinaryPublicId` is a required, nonempty string of at most 255 characters. It must match the scope of this user, session, and question and end in the upload UUID issued by signing. `transcript` is a required string of at most 50,000 characters; an empty string is allowed for a silent answer. This API stores the frontend's transcript and does not perform speech-to-text.
 
 Do not send videoUrl or durationSeconds: the backend reads trusted metadata from Cloudinary and verifies format, size, video dimensions and duration. Fractional video durations are rounded up to whole seconds for the existing integer column.
 
@@ -181,18 +181,115 @@ GET /api/scoring/jobs/:jobId/status
 Authorization: Bearer <token>
 ```
 
-Its HTTP 200 success envelope contains:
+Its full HTTP 200 success response is:
 
 ```json
 {
-  "jobId": "33333333-3333-4333-8333-333333333333",
-  "sessionId": "11111111-1111-4111-8111-111111111111",
-  "status": "PROCESSING",
-  "createdAt": "2026-10-12T10:00:00.000Z",
-  "completedAt": null
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "jobId": "33333333-3333-4333-8333-333333333333",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "status": "PROCESSING",
+    "createdAt": "2026-10-12T10:00:00.000Z",
+    "completedAt": null
+  },
+  "message": "Job status retrieved successfully",
+  "timestamp": "2026-10-12T10:00:01.000Z"
 }
 ```
 
-The example above is the response's `data` object. `sessionId` is the session public UUID. Job status is QUEUED, PROCESSING, COMPLETED, or FAILED. Poll while QUEUED/PROCESSING and stop on COMPLETED/FAILED; the status response contains job metadata, not interview scores.
+`sessionId` is the session public UUID. Job status is QUEUED, PROCESSING, COMPLETED, or FAILED. Poll while QUEUED/PROCESSING and stop on COMPLETED/FAILED; the status response contains job metadata, not interview scores. `completedAt` is always present and is null when the queue has no completion timestamp; use `status` to determine success or failure.
+
+USER can read only their own scoring jobs; ADMIN can read any job. Invalid `jobId` returns 400, missing/invalid authentication returns 401, unauthorized roles or another user's job return 403, a missing job returns 404, and unexpected infrastructure failures return a sanitized 500.
 
 No schema change or migration is needed for this flow.
+
+## Frontend contracts (copyable)
+
+All three endpoints below require `Authorization: Bearer <token>` with USER or ADMIN role. Path parameters are UUID strings. All success `data` fields are required; only scoring `completedAt` is nullable. Date strings use ISO 8601 UTC. The signed upload `timestamp` is a Unix timestamp in seconds, while the envelope `timestamp` is a date string.
+
+```ts
+export type ApiSuccessResponse<T, S extends number = number> = {
+  statusCode: S;
+  success: true;
+  data: T;
+  message: string;
+  timestamp: string; // ISO 8601 UTC
+};
+
+export type ApiErrorResponse = {
+  statusCode: number;
+  success: false;
+  code: string;
+  message: string;
+  errors?: Array<{ field: string; messages: string[] }>;
+  path: string;
+  timestamp: string; // ISO 8601 UTC
+};
+
+// POST /api/interview-session/:sessionPublicId/questions/:questionPublicId/answer/signed-params
+// Request body: none. Success: HTTP 200.
+export type InterviewVideoSignedParams = {
+  uploadUrl: string; // POST multipart/form-data to this Cloudinary URL
+  apiKey: string; // Public key; this is not the API secret
+  timestamp: number; // Unix seconds; forward unchanged
+  signature: string;
+  cloudinaryPublicId: string; // Full scoped asset ID, not just the upload UUID
+  resourceType: 'video';
+  allowedFormats: string; // Currently "mp4,webm"; forward unchanged
+  overwrite: false;
+  maxFileSizeBytes: number; // Currently 104857600 (100 MiB)
+};
+export type SignedParamsResponse = ApiSuccessResponse<
+  InterviewVideoSignedParams,
+  200
+>;
+
+// PUT /api/interview-session/:sessionPublicId/questions/:questionPublicId/answer
+// Request Content-Type: application/json. Success: HTTP 200.
+export type SaveInterviewAnswerRequest = {
+  cloudinaryPublicId: string; // Required, nonempty, <=255 chars; uploaded asset.public_id
+  transcript: string; // Required, <=50000 chars; empty string allowed
+};
+export type InterviewAnswer = {
+  publicId: string; // Answer public UUID; unchanged by retry/upsert
+  questionPublicId: string; // Question public UUID from the URL
+  videoUrl: string; // HTTPS delivery URL verified by the backend
+  transcript: string;
+  durationSeconds: number; // Positive integer; ceil(provider video duration)
+  createdAt: string; // ISO 8601 UTC; original creation time
+  updatedAt: string; // ISO 8601 UTC; latest save time
+};
+export type SaveAnswerResponse = ApiSuccessResponse<InterviewAnswer, 200>;
+
+// GET /api/scoring/jobs/:jobId/status
+// Request body: none. jobId comes from the submit response. Success: HTTP 200.
+export type ScoringJobStatus = 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+export type ScoringJob = {
+  jobId: string; // Scoring job UUID
+  sessionId: string; // Session public UUID (field is named sessionId here)
+  status: ScoringJobStatus;
+  createdAt: string; // ISO 8601 UTC
+  completedAt: string | null; // ISO 8601 UTC when available; never omitted
+};
+export type ScoringStatusResponse = ApiSuccessResponse<ScoringJob, 200>;
+```
+
+Cloudinary multipart field mapping (do not send the entire signed-params JSON as the upload body):
+
+| FormData field    | Value from frontend/backend                   |
+| ----------------- | --------------------------------------------- |
+| `file`            | Recorded File/Blob, with an MP4/WebM filename |
+| `api_key`         | `params.apiKey`                               |
+| `timestamp`       | `String(params.timestamp)`                    |
+| `signature`       | `params.signature`                            |
+| `public_id`       | `params.cloudinaryPublicId`                   |
+| `allowed_formats` | `params.allowedFormats`                       |
+| `overwrite`       | `String(params.overwrite)` ("false")          |
+
+`resourceType` is already reflected in `uploadUrl`; `maxFileSizeBytes` is for pre-upload size validation. Neither is an extra FormData field. On upload success, use Cloudinary's `public_id` as the save request's `cloudinaryPublicId`; the backend obtains `videoUrl` and `durationSeconds` itself.
+
+Success messages are `Video upload params signed`, `Interview answer saved successfully`, and `Job status retrieved successfully`, respectively. Signed params and answer save can return 400/401/403/404/409/500. Scoring status can return 400/401/403/404/500. Handle errors with `ApiErrorResponse`; validation details are in the optional `errors` array.
+
+Keep the submit response's `jobId` and poll scoring status while QUEUED/PROCESSING. COMPLETED and FAILED end polling. Answer saving does not start scoring; submit the session after all answer PUTs succeed. A scoring job response does not contain scores or summaries.
