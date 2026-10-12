@@ -4,6 +4,7 @@ import {
   Logger,
   ValidationPipe,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { randomUUID, type UUID } from 'crypto';
 import { err, ok } from 'neverthrow';
@@ -19,6 +20,10 @@ import { IPendingRegistrationStore } from '../src/modules/authentication/domain/
 import { BcryptPasswordHasher } from '../src/modules/authentication/infrastructure/bcrypt-password-hasher';
 import { RedisEmailOtpStore } from '../src/modules/authentication/infrastructure/redis-email-otp-store';
 import { RedisPendingRegistrationStore } from '../src/modules/authentication/infrastructure/redis-pending-registration-store';
+import { IAccessTokenIssuer } from '../src/modules/authentication/domain/repositories/access-token-issuer.interface';
+import { IRefreshTokenRepository } from '../src/modules/authentication/domain/repositories/refresh-token.repo.interface';
+import { ITokenHasher } from '../src/modules/authentication/domain/repositories/token-hasher.interface';
+import { Sha256TokenHasher } from '../src/modules/authentication/infrastructure/sha256-token-hasher';
 import {
   CreateUserData,
   IUserRepository,
@@ -150,6 +155,20 @@ describe('AuthController (e2e)', () => {
         { provide: RedisService, useValue: redis },
         { provide: IUserRepository, useValue: users },
         { provide: IEmailSender, useValue: mailer },
+        // Login chưa có e2e: stub để AuthService khởi tạo được
+        {
+          provide: IAccessTokenIssuer,
+          useValue: { issueAccessToken: jest.fn() },
+        },
+        { provide: ITokenHasher, useClass: Sha256TokenHasher },
+        {
+          provide: IRefreshTokenRepository,
+          useValue: { createRefreshToken: jest.fn() },
+        },
+        {
+          provide: ConfigService,
+          useValue: { getOrThrow: () => '604800' },
+        },
       ],
     }).compile();
 

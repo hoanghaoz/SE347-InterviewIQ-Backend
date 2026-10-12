@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { err, ok } from 'neverthrow';
 import { ErrorCode } from '../../../../shared/common/errorCode';
 import { UserAlreadyExistsError } from '../../../user/domain/repositories/user.repo.interface';
@@ -30,6 +31,20 @@ describe('AuthService', () => {
     incrementFailedAttempts: jest.fn(),
     resetFailedAttempts: jest.fn(),
   };
+  const accessTokenIssuer = {
+    issueAccessToken: jest.fn(),
+  };
+  const tokenHasher = {
+    generateToken: jest.fn(),
+    hashToken: jest.fn(),
+  };
+  const refreshTokenRepository = {
+    createRefreshToken: jest.fn(),
+  };
+  // ConfigService có private member nên phải ép kiểu
+  const configService = {
+    getOrThrow: jest.fn().mockReturnValue('604800'),
+  } as unknown as ConfigService;
 
   // Các object mock khớp cấu trúc của contract nên truyền thẳng được, không cần ép kiểu
   const service = new AuthService(
@@ -38,6 +53,10 @@ describe('AuthService', () => {
     emailSender,
     pendingStore,
     otpStore,
+    accessTokenIssuer,
+    tokenHasher,
+    refreshTokenRepository,
+    configService,
   );
 
   const email = 'a@x.com';
