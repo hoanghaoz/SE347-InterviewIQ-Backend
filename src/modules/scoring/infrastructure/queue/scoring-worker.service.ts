@@ -18,6 +18,8 @@ export class ScoringWorkerService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    // pg-boss >= 10 yêu cầu queue tồn tại trước khi work/send (idempotent)
+    await this.boss.createQueue(SCORING_QUEUE_NAME);
     await this.boss.work<ScoringJobData>(
       SCORING_QUEUE_NAME,
       { localConcurrency: 2 },

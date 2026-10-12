@@ -16,6 +16,8 @@ import { mapValidationErrors } from './shared/common/validation-error.mapper';
 import { PrismaModule } from './shared/infrastructure/database/prisma.module';
 import { InterviewModule } from './modules/interview/interview.module';
 import { CvModule } from './modules/cv/cv.module';
+import { RedisModule } from './shared/infrastructure/redis/redis.module';
+import { AuthModule } from './modules/authentication/auth.module';
 import { ScoringModule } from './modules/scoring/scoring.module';
 
 @Module({
@@ -27,6 +29,8 @@ import { ScoringModule } from './modules/scoring/scoring.module';
     ConfigModule,
     InterviewModule,
     CvModule,
+    RedisModule,
+    AuthModule,
     ScoringModule,
   ],
   controllers: [AppController],
