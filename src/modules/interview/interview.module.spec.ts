@@ -10,6 +10,8 @@ import { InterviewService } from './application/services/interview.service';
 import { IInterviewRepository } from './domain/repositories/interview.repo.interface';
 import { InterviewRepository } from './infrastructure/interview.repo';
 import { InterviewModule } from './interview.module';
+import { IInterviewAnswerService } from './application/interfaces/interview-answer.service.interface';
+import { IInterviewVideoStorage } from './application/interfaces/interview-video-storage.interface';
 
 jest.mock('../../shared/infrastructure/database/prisma.service', () => ({
   PrismaService: class {},
@@ -120,6 +122,113 @@ describe('InterviewModule', () => {
         },
         expect.objectContaining({ singletonKey: 'session-public-id' }),
       );
+    } finally {
+      await module.close();
+    }
+  });
+  it('resolves the video and answer providers and saves an answer without enqueueing scoring', async () => {
+    const userId = '00000000-0000-4000-8000-000000000001';
+    const sessionId = '00000000-0000-4000-8000-000000000002';
+    const questionId = '00000000-0000-4000-8000-000000000003';
+    const video = {
+      url: 'https://res.cloudinary.com/demo/video/upload/v1/answer.webm',
+      format: 'webm',
+      bytes: 1024,
+      durationSeconds: 12.25,
+      width: 640,
+      height: 480,
+    };
+    const boss = {
+      createQueue: jest.fn(),
+      work: jest.fn(),
+      send: jest.fn(),
+      stop: jest.fn(),
+    };
+    const upsert = jest.fn().mockResolvedValue({
+      publicId: 'answer-id',
+      createdAt: new Date('2026-10-12T10:00:00Z'),
+      updatedAt: new Date('2026-10-12T10:00:00Z'),
+    });
+    const tx = {
+      interviewSession: {
+        findUnique: jest.fn().mockResolvedValue({ id: 3, userId: 1 }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      question: { findUnique: jest.fn().mockResolvedValue({ id: 4 }) },
+      answer: { upsert },
+    };
+    const prisma = {
+      question: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ session: { status: 'CREATED' } }),
+      },
+      $transaction: jest.fn(
+        (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+      ),
+    };
+    const storage: IInterviewVideoStorage = {
+      createSignedUpload: jest.fn((cloudinaryPublicId: string) =>
+        ok({
+          uploadUrl: 'https://api.cloudinary.com/v1_1/demo/video/upload',
+          cloudinaryPublicId,
+          apiKey: 'key',
+          timestamp: 123,
+          signature: 'signature',
+          resourceType: 'video' as const,
+          allowedFormats: 'mp4,webm',
+          overwrite: false as const,
+          maxFileSizeBytes: 104857600,
+        }),
+      ),
+      getVideo: jest.fn().mockResolvedValue(ok(video)),
+    };
+    const module = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({
+          isGlobal: true,
+          ignoreEnvFile: true,
+          load: [() => ({ JWT_SECRET: 'test-secret' })],
+        }),
+        PrismaModule,
+        InterviewModule,
+      ],
+    })
+      .overrideProvider(PrismaService)
+      .useValue(prisma)
+      .overrideProvider(PG_BOSS_TOKEN)
+      .useValue(boss)
+      .overrideProvider(IInterviewVideoStorage)
+      .useValue(storage)
+      .compile();
+    try {
+      await module.init();
+      const service = module.get(IInterviewAnswerService);
+      const signed = await service.createSignedParamsAsync(
+        userId,
+        sessionId,
+        questionId,
+      );
+      if (signed.isErr()) throw signed.error;
+      const saved = await service.saveAnswerAsync(
+        userId,
+        sessionId,
+        questionId,
+        {
+          cloudinaryPublicId: signed.value.cloudinaryPublicId,
+          transcript: 'My answer',
+        },
+      );
+      if (saved.isErr()) throw saved.error;
+      expect(saved.value).toMatchObject({
+        publicId: 'answer-id',
+        questionPublicId: questionId,
+        videoUrl: video.url,
+        durationSeconds: 13,
+        transcript: 'My answer',
+      });
+      expect(upsert).toHaveBeenCalledTimes(1);
+      expect(boss.send).not.toHaveBeenCalled();
     } finally {
       await module.close();
     }

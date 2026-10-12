@@ -10,9 +10,17 @@ import { IInterviewService } from './application/interfaces/interview.service.in
 import { InterviewService } from './application/services/interview.service';
 import { IInterviewRepository } from './domain/repositories/interview.repo.interface';
 import { InterviewRepository } from './infrastructure/interview.repo';
+import { InterviewAnswerController } from './api/interview-answer.controller';
+import { IInterviewAnswerService } from './application/interfaces/interview-answer.service.interface';
+import { IInterviewVideoStorage } from './application/interfaces/interview-video-storage.interface';
+import { InterviewAnswerService } from './application/services/interview-answer.service';
+import { IInterviewAnswerRepository } from './domain/repositories/interview-answer.repo.interface';
+import { CloudinaryInterviewVideoStorage } from './infrastructure/cloudinary-interview-video-storage';
+import { InterviewAnswerRepository } from './infrastructure/interview-answer.repo';
 
 @Module({
   imports: [
+    ConfigModule,
     CvModule,
     ScoringModule,
     JwtModule.registerAsync({
@@ -23,10 +31,19 @@ import { InterviewRepository } from './infrastructure/interview.repo';
       }),
     }),
   ],
-  controllers: [InterviewController],
+  controllers: [InterviewController, InterviewAnswerController],
   providers: [
     JwtAuthGuard,
     RolesGuard,
+    { provide: IInterviewAnswerService, useClass: InterviewAnswerService },
+    {
+      provide: IInterviewAnswerRepository,
+      useClass: InterviewAnswerRepository,
+    },
+    {
+      provide: IInterviewVideoStorage,
+      useClass: CloudinaryInterviewVideoStorage,
+    },
     {
       provide: IInterviewService,
       useClass: InterviewService,
@@ -36,6 +53,6 @@ import { InterviewRepository } from './infrastructure/interview.repo';
       useClass: InterviewRepository,
     },
   ],
-  exports: [IInterviewService, IInterviewRepository],
+  exports: [IInterviewService, IInterviewRepository, IInterviewAnswerService],
 })
 export class InterviewModule {}
