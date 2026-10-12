@@ -8,6 +8,7 @@ describe('AuthService', () => {
   const userRepository = {
     getUserByEmail: jest.fn(),
     createUser: jest.fn(),
+    getUserCredentialsByEmail: jest.fn(),
   };
   const passwordHasher = {
     hash: jest.fn(),

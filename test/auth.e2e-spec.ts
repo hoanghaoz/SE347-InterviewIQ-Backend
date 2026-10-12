@@ -5,6 +5,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { randomUUID, type UUID } from 'crypto';
 import { err, ok } from 'neverthrow';
 import request from 'supertest';
 import type { App } from 'supertest/types';
@@ -23,6 +24,7 @@ import {
   IUserRepository,
   UserAlreadyExistsError,
 } from '../src/modules/user/domain/repositories/user.repo.interface';
+import { CommonUserRole } from '../src/shared/common/commonEnum';
 import { AllExceptionsFilter } from '../src/shared/common/exceptions.filter';
 import { ErrorCode } from '../src/shared/common/errorCode';
 import { mapValidationErrors } from '../src/shared/common/validation-error.mapper';
@@ -58,7 +60,10 @@ class InMemoryRedis {
 }
 
 class InMemoryUserRepository implements IUserRepository {
-  readonly users = new Map<string, CreateUserData & { id: number }>();
+  readonly users = new Map<
+    string,
+    CreateUserData & { id: number; publicId: UUID }
+  >();
 
   getUserByEmail(email: string) {
     const user = this.users.get(email);
@@ -69,8 +74,24 @@ class InMemoryUserRepository implements IUserRepository {
       return Promise.resolve(err(new UserAlreadyExistsError()));
     }
     const id = this.users.size + 1;
-    this.users.set(data.email, { ...data, id });
+    this.users.set(data.email, { ...data, id, publicId: randomUUID() });
     return Promise.resolve(ok({ id }));
+  }
+  getUserCredentialsByEmail(email: string) {
+    const user = this.users.get(email);
+    return Promise.resolve(
+      ok(
+        user
+          ? {
+              id: user.id,
+              publicId: user.publicId,
+              email: user.email,
+              role: CommonUserRole.USER,
+              passwordHash: user.passwordHash,
+            }
+          : null,
+      ),
+    );
   }
 }
 
