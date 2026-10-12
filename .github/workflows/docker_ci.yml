@@ -1,0 +1,73 @@
+name: Docker CI & Push
+
+on:
+  workflow_call:
+    inputs:
+      publish:
+        description: Publish the image after all backend checks pass
+        required: true
+        type: boolean
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    name: Docker Build & Push
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 1. Cài đặt Buildx để tận dụng cache
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 2. Đăng nhập Docker Hub
+      - name: Login to Docker Hub
+        if: inputs.publish && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Check current main commit
+        if: inputs.publish && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: main-head
+        shell: bash
+        run: |
+          main_sha="$(git ls-remote --exit-code origin refs/heads/main | cut -f1)"
+          if [ "$main_sha" = "$GITHUB_SHA" ]; then
+            echo 'is_current=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'is_current=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Docker Meta
+        if: inputs.publish && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/fitwork-be-nestjs-api
+          tags: |
+            type=raw,value=latest,enable=${{ steps.main-head.outputs.is_current == 'true' }}
+            type=sha,format=long
+
+      # 3. Build và Push
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile # Đường dẫn file Dockerfile
+          push: ${{ inputs.publish && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.meta.outputs.tags }} # Lấy kết quả của Docker Meta
+          labels: ${{ steps.meta.outputs.labels }}
+          # Bật Cache để lần sau build nhanh hơn
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
