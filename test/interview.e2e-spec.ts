@@ -181,11 +181,16 @@ describe('InterviewController (e2e)', () => {
   describe('submission', () => {
     const submitRoute = `${route}/${sessionPublicId}/submit`;
     const payload = { cvPublicId, totalQuestions: 5, durationSeconds: 120 };
+    const metadata = {
+      sessionPublicId,
+      jobId: '00000000-0000-4000-8000-000000000004',
+      status: 'QUEUED' as const,
+    };
 
     it.each(['USER', 'ADMIN'])(
       'returns the success envelope and forwards the path UUID for %s',
       async (role) => {
-        submitInterviewSessionAsync.mockResolvedValue(ok(undefined));
+        submitInterviewSessionAsync.mockResolvedValue(ok(metadata));
         const roleToken = jwtService.sign({
           sub: userPublicId,
           email: 'user@example.com',
@@ -195,11 +200,11 @@ describe('InterviewController (e2e)', () => {
           .post(submitRoute)
           .set('Authorization', `Bearer ${roleToken}`)
           .send(payload)
-          .expect(200);
+          .expect(202);
         expect(response.body).toMatchObject({
-          statusCode: 200,
+          statusCode: 202,
           success: true,
-          data: null,
+          data: metadata,
           message: 'Interview session submitted successfully',
           timestamp: expect.any(String) as unknown,
         });
@@ -212,12 +217,12 @@ describe('InterviewController (e2e)', () => {
     );
 
     it('accepts one question and zero duration', async () => {
-      submitInterviewSessionAsync.mockResolvedValue(ok(undefined));
+      submitInterviewSessionAsync.mockResolvedValue(ok(metadata));
       await request(app.getHttpServer())
         .post(submitRoute)
         .set('Authorization', `Bearer ${token}`)
         .send({ ...payload, totalQuestions: 1, durationSeconds: 0 })
-        .expect(200);
+        .expect(202);
     });
 
     it.each([

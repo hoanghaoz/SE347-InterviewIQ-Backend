@@ -4,6 +4,7 @@ import {
   CreateInterviewRequestDto,
   SubmitInterviewSessionRequestDto,
 } from '../dtos/interview.request.dto';
+import { SubmitInterviewSessionResponseDto } from '../dtos/interview.response.dto';
 
 export abstract class IInterviewService {
   abstract createInterviewSessionAsync(
@@ -15,5 +16,5 @@ export abstract class IInterviewService {
     userPublicId: string,
     sessionPublicId: string,
     request: SubmitInterviewSessionRequestDto,
-  ): Promise<Result<undefined, AppError>>;
+  ): Promise<Result<SubmitInterviewSessionResponseDto, AppError>>;
 }

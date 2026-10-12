@@ -208,7 +208,11 @@ describe('InterviewService', () => {
       const result = await submit();
       expect(result.isOk()).toBe(true);
       if (result.isErr()) throw result.error;
-      expect(result.value).toBeUndefined();
+      expect(result.value).toEqual({
+        sessionPublicId,
+        jobId: 'job-id',
+        status: 'QUEUED',
+      });
       expect(authorizeUserCv).toHaveBeenCalledWith(userPublicId, cvPublicId);
       expect(authorizeInterviewSession).toHaveBeenCalledWith(
         sessionPublicId,
@@ -222,6 +226,23 @@ describe('InterviewService', () => {
         cvSnapshot: authorizedCv.snapshot,
       });
       expect(enqueueAsync).toHaveBeenCalledWith(sessionPublicId, userPublicId);
+    });
+
+    it('returns the job ID supplied by scoring', async () => {
+      enqueueAsync.mockResolvedValue(
+        ok({
+          jobId: '00000000-0000-4000-8000-000000000004',
+          status: 'QUEUED',
+        }),
+      );
+      const result = await submit();
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) throw result.error;
+      expect(result.value).toEqual({
+        sessionPublicId,
+        jobId: '00000000-0000-4000-8000-000000000004',
+        status: 'QUEUED',
+      });
     });
 
     it('waits for persistence to finish before enqueueing', async () => {

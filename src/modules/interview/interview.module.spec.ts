@@ -88,7 +88,13 @@ describe('InterviewModule', () => {
           durationSeconds: 120,
         },
       );
-      expect(result).toEqual(ok(undefined));
+      expect(result).toEqual(
+        ok({
+          sessionPublicId: 'session-public-id',
+          jobId: 'job-id',
+          status: 'QUEUED',
+        }),
+      );
       expect(update).toHaveBeenCalledTimes(1);
       expect(update).toHaveBeenCalledWith(
         expect.objectContaining({

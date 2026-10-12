@@ -6,6 +6,7 @@ import {
   CreateInterviewRequestDto,
   SubmitInterviewSessionRequestDto,
 } from '../dtos/interview.request.dto';
+import { SubmitInterviewSessionResponseDto } from '../dtos/interview.response.dto';
 import { IInterviewRepository } from '../../domain/repositories/interview.repo.interface';
 import { ICvRepository } from '../../../cv/domain/repositories/cv.repo.interface';
 import { Interview } from '../../domain/entities/interview.entity';
@@ -23,7 +24,7 @@ export class InterviewService implements IInterviewService {
     userPublicId: string,
     sessionPublicId: string,
     request: SubmitInterviewSessionRequestDto,
-  ): Promise<Result<undefined, AppError>> {
+  ): Promise<Result<SubmitInterviewSessionResponseDto, AppError>> {
     const [cvAuthorizeResult, sessionAuthorizeResult] = await Promise.all([
       this.cvRepo.authorizeUserCv(userPublicId, request.cvPublicId),
       this.interviewRepo.authorizeInterviewSession(
@@ -88,6 +89,11 @@ export class InterviewService implements IInterviewService {
         userPublicId,
       );
       if (enqueueResult.isErr()) return err(enqueueResult.error);
+      return ok({
+        sessionPublicId,
+        jobId: enqueueResult.value.jobId,
+        status: enqueueResult.value.status,
+      });
     } catch {
       return err(
         new AppError(
@@ -96,7 +102,6 @@ export class InterviewService implements IInterviewService {
         ),
       );
     }
-    return ok(undefined);
   }
   async createInterviewSessionAsync(
     userPublicId: string,

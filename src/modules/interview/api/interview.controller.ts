@@ -15,7 +15,10 @@ import {
   CreateInterviewRequestDto,
   SubmitInterviewSessionRequestDto,
 } from '../application/dtos/interview.request.dto';
-import { InterviewResponseDto } from '../application/dtos/interview.response.dto';
+import {
+  InterviewResponseDto,
+  SubmitInterviewSessionResponseDto,
+} from '../application/dtos/interview.response.dto';
 import { IInterviewService } from '../application/interfaces/interview.service.interface';
 import { Auth } from '../../../shared/decorators/auth.decorator';
 import { CommonUserRole } from '../../../shared/common/commonEnum';
@@ -25,23 +28,23 @@ export class InterviewController {
   constructor(private readonly interviewService: IInterviewService) {}
 
   @Post(':sessionPublicId/submit')
-  @HttpCode(HttpStatus.OK)
+  @HttpCode(HttpStatus.ACCEPTED)
   @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
   async submitInterviewSessionAsync(
     @User() user: JwtPayload,
     @Param('sessionPublicId', ParseUUIDPipe) sessionPublicId: string,
     @Body() request: SubmitInterviewSessionRequestDto,
-  ): Promise<ApiSuccessResponse<null>> {
+  ): Promise<ApiSuccessResponse<SubmitInterviewSessionResponseDto>> {
     const result = await this.interviewService.submitInterviewSessionAsync(
       user.sub,
       sessionPublicId,
       request,
     );
     return result.match(
-      () =>
-        new ApiSuccessResponse<null>(
-          HttpStatus.OK,
-          null,
+      (data) =>
+        new ApiSuccessResponse(
+          HttpStatus.ACCEPTED,
+          data,
           'Interview session submitted successfully',
         ),
       (error) => {
