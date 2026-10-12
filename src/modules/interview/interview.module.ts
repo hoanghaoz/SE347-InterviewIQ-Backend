@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { JwtAuthGuard } from '../../shared/common/jwt.guard';
 import { RolesGuard } from '../../shared/decorators/roles.guard';
 import { CvModule } from '../cv/cv.module';
+import { ScoringModule } from '../scoring/scoring.module';
 import { InterviewController } from './api/interview.controller';
 import { IInterviewService } from './application/interfaces/interview.service.interface';
 import { InterviewService } from './application/services/interview.service';
@@ -13,6 +14,7 @@ import { InterviewRepository } from './infrastructure/interview.repo';
 @Module({
   imports: [
     CvModule,
+    ScoringModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

@@ -21,12 +21,15 @@ describe('InterviewController (e2e)', () => {
   let token: string;
   let jwtService: JwtService;
   const createInterviewSessionAsync = jest.fn();
+  const submitInterviewSessionAsync = jest.fn();
+  const sessionPublicId = '00000000-0000-4000-8000-000000000003';
   const cvPublicId = '00000000-0000-4000-8000-000000000002';
   const userPublicId = '00000000-0000-4000-8000-000000000001';
   const route = '/api/interview-session';
 
   beforeEach(async () => {
     createInterviewSessionAsync.mockReset();
+    submitInterviewSessionAsync.mockReset();
     const module = await Test.createTestingModule({
       imports: [JwtModule.register({ secret: 'test-secret' })],
       controllers: [InterviewController],
@@ -35,7 +38,10 @@ describe('InterviewController (e2e)', () => {
         RolesGuard,
         {
           provide: IInterviewService,
-          useValue: { createInterviewSessionAsync },
+          useValue: {
+            createInterviewSessionAsync,
+            submitInterviewSessionAsync,
+          },
         },
       ],
     }).compile();
@@ -80,7 +86,7 @@ describe('InterviewController (e2e)', () => {
       message: 'Interview session created successfully',
     });
     const body = response.body as unknown as Record<string, unknown>;
-    expect(body.timestamp).toEqual(expect.any(String));
+    expect(body.timestamp).toEqual(expect.any(String) as unknown);
     expect(createInterviewSessionAsync).toHaveBeenCalledWith(
       userPublicId,
       expect.objectContaining({ cvPublicId, title: 'Backend interview' }),
@@ -170,5 +176,161 @@ describe('InterviewController (e2e)', () => {
       path: route,
     });
     expect(createInterviewSessionAsync).not.toHaveBeenCalled();
+  });
+
+  describe('submission', () => {
+    const submitRoute = `${route}/${sessionPublicId}/submit`;
+    const payload = { cvPublicId, totalQuestions: 5, durationSeconds: 120 };
+
+    it.each(['USER', 'ADMIN'])(
+      'returns the success envelope and forwards the path UUID for %s',
+      async (role) => {
+        submitInterviewSessionAsync.mockResolvedValue(ok(undefined));
+        const roleToken = jwtService.sign({
+          sub: userPublicId,
+          email: 'user@example.com',
+          role,
+        });
+        const response = await request(app.getHttpServer())
+          .post(submitRoute)
+          .set('Authorization', `Bearer ${roleToken}`)
+          .send(payload)
+          .expect(200);
+        expect(response.body).toMatchObject({
+          statusCode: 200,
+          success: true,
+          data: null,
+          message: 'Interview session submitted successfully',
+          timestamp: expect.any(String) as unknown,
+        });
+        expect(submitInterviewSessionAsync).toHaveBeenCalledWith(
+          userPublicId,
+          sessionPublicId,
+          payload,
+        );
+      },
+    );
+
+    it('accepts one question and zero duration', async () => {
+      submitInterviewSessionAsync.mockResolvedValue(ok(undefined));
+      await request(app.getHttpServer())
+        .post(submitRoute)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ ...payload, totalQuestions: 1, durationSeconds: 0 })
+        .expect(200);
+    });
+
+    it.each([
+      ['totalQuestions', 0],
+      ['totalQuestions', -1],
+      ['totalQuestions', 1.5],
+      ['totalQuestions', '5'],
+      ['totalQuestions', null],
+      ['totalQuestions', undefined],
+      ['durationSeconds', -1],
+      ['durationSeconds', 1.5],
+      ['durationSeconds', '120'],
+      ['durationSeconds', null],
+      ['durationSeconds', undefined],
+      ['cvPublicId', 'invalid'],
+    ])(
+      'rejects invalid %s value %s with safe validation details',
+      async (field, value) => {
+        const response = await request(app.getHttpServer())
+          .post(submitRoute)
+          .set('Authorization', `Bearer ${token}`)
+          .send({ ...payload, [field]: value })
+          .expect(400);
+        expect(response.body).toMatchObject({
+          statusCode: 400,
+          success: false,
+          code: ErrorCode.BadRequest,
+          path: submitRoute,
+        });
+        const body = response.body as Record<string, unknown>;
+        expect(body.errors).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              field,
+              messages: expect.any(Array) as unknown,
+            }),
+          ]),
+        );
+        expect(JSON.stringify(body.errors)).not.toContain('"value"');
+        expect(submitInterviewSessionAsync).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects an invalid path UUID before invoking the service', async () => {
+      await request(app.getHttpServer())
+        .post(`${route}/invalid/submit`)
+        .set('Authorization', `Bearer ${token}`)
+        .send(payload)
+        .expect(400);
+      expect(submitInterviewSessionAsync).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [ErrorCode.NotFound, 404, 'Interview session not found or unavailable'],
+      [
+        ErrorCode.Conflict,
+        409,
+        'Interview session cannot be submitted in its current state',
+      ],
+      [
+        ErrorCode.InternalServerError,
+        500,
+        'Failed to submit interview session',
+      ],
+    ])('maps a service %s error to HTTP %s', async (code, status, message) => {
+      submitInterviewSessionAsync.mockResolvedValue(
+        err(new AppError(code, message)),
+      );
+      const response = await request(app.getHttpServer())
+        .post(submitRoute)
+        .set('Authorization', `Bearer ${token}`)
+        .send(payload)
+        .expect(status);
+      expect(response.body).toMatchObject({
+        statusCode: status,
+        success: false,
+        code,
+        path: submitRoute,
+        timestamp: expect.any(String) as unknown,
+      });
+      if (status !== 500)
+        expect((response.body as Record<string, unknown>).message).toBe(
+          message,
+        );
+    });
+
+    it('requires authentication', async () => {
+      const response = await request(app.getHttpServer())
+        .post(submitRoute)
+        .send(payload)
+        .expect(401);
+      expect(response.body).toMatchObject({
+        success: false,
+        code: ErrorCode.Unauthorized,
+      });
+      expect(submitInterviewSessionAsync).not.toHaveBeenCalled();
+    });
+
+    it('rejects roles other than USER or ADMIN', async () => {
+      const viewerToken = jwtService.sign({
+        sub: userPublicId,
+        role: 'VIEWER',
+      });
+      const response = await request(app.getHttpServer())
+        .post(submitRoute)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .send(payload)
+        .expect(403);
+      expect(response.body).toMatchObject({
+        success: false,
+        code: ErrorCode.Forbidden,
+      });
+      expect(submitInterviewSessionAsync).not.toHaveBeenCalled();
+    });
   });
 });
