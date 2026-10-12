@@ -11,6 +11,8 @@ import { AuthService } from './application/services/auth.service';
 import { IAuthService } from './application/interfaces/auth.service.interface';
 import { UserModule } from '../user/user.module';
 import { AuthController } from './api/auth.controller';
+import { IAccessTokenIssuer } from './domain/repositories/access-token-issuer.interface';
+import { JwtAccessTokenIssuer } from './infrastructure/jwt-access-token-issuer';
 
 @Module({
   imports: [UserModule],
@@ -36,6 +38,10 @@ import { AuthController } from './api/auth.controller';
       provide: IAuthService,
       useClass: AuthService,
     },
+    {
+      provide: IAccessTokenIssuer,
+      useClass: JwtAccessTokenIssuer,
+    },
   ],
   exports: [
     IEmailOtpStore,
@@ -43,6 +49,7 @@ import { AuthController } from './api/auth.controller';
     IPasswordHasher,
     IEmailSender,
     IAuthService,
+    IAccessTokenIssuer,
   ],
 })
 export class AuthModule {}
