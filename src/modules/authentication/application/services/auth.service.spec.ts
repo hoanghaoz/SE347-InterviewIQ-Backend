@@ -1,6 +1,8 @@
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { randomUUID } from 'crypto';
 import { err, ok } from 'neverthrow';
+import { CommonUserRole } from '../../../../shared/common/commonEnum';
 import { ErrorCode } from '../../../../shared/common/errorCode';
 import { UserAlreadyExistsError } from '../../../user/domain/repositories/user.repo.interface';
 import { AuthService } from './auth.service';
@@ -332,5 +334,161 @@ describe('AuthService', () => {
       expect(result.error.code).toBe(ErrorCode.InternalServerError);
       expect(result.error.message).not.toContain('internal detail');
     });
+  });
+
+  describe('constructor', () => {
+    const buildService = (getOrThrow: () => string) =>
+      new AuthService(
+        userRepository,
+        passwordHasher,
+        emailSender,
+        pendingStore,
+        otpStore,
+        accessTokenIssuer,
+        tokenHasher,
+        refreshTokenRepository,
+        { getOrThrow } as unknown as ConfigService,
+      );
+
+    it('throws when JWT_REFRESH_EXPIRES_IN is missing', () => {
+      expect(() =>
+        buildService(() => {
+          throw new TypeError('Missing JWT_REFRESH_EXPIRES_IN');
+        }),
+      ).toThrow();
+    });
+
+    it.each(['abc', '0', '-5', '1.5'])(
+      'throws when JWT_REFRESH_EXPIRES_IN is %p',
+      (value) => {
+        expect(() => buildService(() => value)).toThrow(
+          'JWT_REFRESH_EXPIRES_IN must be a positive integer',
+        );
+      },
+    );
+  });
+
+  describe('loginAsync', () => {
+    const request = { email, password: 'Str0ngPass' };
+    const user = {
+      id: 7,
+      publicId: randomUUID(),
+      email,
+      role: CommonUserRole.USER,
+      passwordHash: 'stored-hash',
+    };
+
+    // Mặc định mọi bước đều thành công; từng test ghi đè bước cần làm hỏng
+    beforeEach(() => {
+      userRepository.getUserCredentialsByEmail.mockResolvedValue(ok(user));
+      passwordHasher.compare.mockResolvedValue(ok(true));
+      accessTokenIssuer.issueAccessToken.mockResolvedValue(ok('access.jwt'));
+      tokenHasher.generateToken.mockReturnValue('raw-refresh');
+      tokenHasher.hashToken.mockImplementation((raw: string) => `sha:${raw}`);
+      refreshTokenRepository.createRefreshToken.mockResolvedValue(
+        ok(undefined),
+      );
+    });
+
+    it('returns both tokens and stores only the refresh token hash with the configured ttl', async () => {
+      const now = 1_760_000_000_000;
+      const dateNow = jest.spyOn(Date, 'now').mockReturnValue(now);
+
+      const result = await service.loginAsync(request);
+      dateNow.mockRestore();
+
+      if (result.isErr()) throw result.error;
+      expect(result.value).toEqual({
+        accessToken: 'access.jwt',
+        refreshToken: 'raw-refresh',
+      });
+      expect(refreshTokenRepository.createRefreshToken).toHaveBeenCalledWith({
+        userId: 7,
+        tokenHash: 'sha:raw-refresh',
+        expiresAt: new Date(now + 604800 * 1000),
+      });
+    });
+
+    it('checks the password against the stored hash', async () => {
+      await service.loginAsync(request);
+
+      expect(passwordHasher.compare).toHaveBeenCalledWith(
+        'Str0ngPass',
+        'stored-hash',
+      );
+    });
+
+    it('signs the access token with only the public id and role', async () => {
+      await service.loginAsync(request);
+
+      expect(accessTokenIssuer.issueAccessToken).toHaveBeenCalledWith({
+        sub: user.publicId,
+        role: CommonUserRole.USER,
+      });
+    });
+
+    it('still runs bcrypt against a dummy hash when the email is unknown', async () => {
+      userRepository.getUserCredentialsByEmail.mockResolvedValue(ok(null));
+      passwordHasher.compare.mockResolvedValue(ok(false));
+
+      const result = await service.loginAsync(request);
+
+      if (result.isOk()) throw new Error('Expected an error result');
+      expect(result.error.code).toBe(ErrorCode.Unauthorized);
+      expect(passwordHasher.compare).toHaveBeenCalledWith(
+        'Str0ngPass',
+        expect.stringMatching(/^\$2b\$10\$/),
+      );
+      expect(accessTokenIssuer.issueAccessToken).not.toHaveBeenCalled();
+      expect(refreshTokenRepository.createRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it('returns Unauthorized and issues no tokens when the password is wrong', async () => {
+      passwordHasher.compare.mockResolvedValue(ok(false));
+
+      const result = await service.loginAsync(request);
+
+      if (result.isOk()) throw new Error('Expected an error result');
+      expect(result.error.code).toBe(ErrorCode.Unauthorized);
+      expect(accessTokenIssuer.issueAccessToken).not.toHaveBeenCalled();
+      expect(refreshTokenRepository.createRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it('returns the same error for an unknown email and a wrong password', async () => {
+      userRepository.getUserCredentialsByEmail.mockResolvedValue(ok(null));
+      passwordHasher.compare.mockResolvedValue(ok(false));
+      const unknownEmail = await service.loginAsync(request);
+
+      userRepository.getUserCredentialsByEmail.mockResolvedValue(ok(user));
+      const wrongPassword = await service.loginAsync(request);
+
+      if (unknownEmail.isOk() || wrongPassword.isOk()) {
+        throw new Error('Expected error results');
+      }
+      expect(unknownEmail.error.code).toBe(wrongPassword.error.code);
+      expect(unknownEmail.error.message).toBe(wrongPassword.error.message);
+      expect(unknownEmail.error.message).toBe('Invalid email or password');
+    });
+
+    it.each([
+      ['looking up the user', () => userRepository.getUserCredentialsByEmail],
+      ['comparing the password', () => passwordHasher.compare],
+      ['issuing the access token', () => accessTokenIssuer.issueAccessToken],
+      [
+        'saving the refresh token',
+        () => refreshTokenRepository.createRefreshToken,
+      ],
+    ])(
+      'returns a safe InternalServerError when %s fails',
+      async (_step, getMock) => {
+        getMock().mockResolvedValue(err(new Error('internal detail')));
+
+        const result = await service.loginAsync(request);
+
+        if (result.isOk()) throw new Error('Expected an error result');
+        expect(result.error.code).toBe(ErrorCode.InternalServerError);
+        expect(result.error.message).not.toContain('internal detail');
+      },
+    );
   });
 });
