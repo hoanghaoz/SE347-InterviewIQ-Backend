@@ -112,24 +112,28 @@ describe('ScoringService', () => {
       }
     });
 
-    it('should return BadRequest error when sessionId is not a valid UUID', async () => {
-      const result = await service.enqueueAsync('invalid-uuid', mockUserId);
+    it('should return BadRequest error when sessionId is empty', async () => {
+      const result = await service.enqueueAsync('   ', mockUserId);
 
       expect(result.isErr()).toBe(true);
       if (result.isErr()) {
         expect(result.error.code).toBe(ErrorCode.BadRequest);
-        expect(result.error.message).toContain('Invalid sessionId');
+        expect(result.error.message).toContain(
+          'sessionId must be a non-empty string',
+        );
       }
       expect(enqueueMock).not.toHaveBeenCalled();
     });
 
-    it('should return BadRequest error when userId is not a valid UUID', async () => {
-      const result = await service.enqueueAsync(mockSessionId, 'not-a-uuid');
+    it('should return BadRequest error when userId is empty', async () => {
+      const result = await service.enqueueAsync(mockSessionId, '');
 
       expect(result.isErr()).toBe(true);
       if (result.isErr()) {
         expect(result.error.code).toBe(ErrorCode.BadRequest);
-        expect(result.error.message).toContain('Invalid userId');
+        expect(result.error.message).toContain(
+          'userId must be a non-empty string',
+        );
       }
       expect(enqueueMock).not.toHaveBeenCalled();
     });

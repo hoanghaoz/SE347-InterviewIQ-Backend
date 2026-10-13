@@ -29,24 +29,18 @@ export class ScoringService implements IScoringService {
     sessionId: string,
     userId: string,
   ): Promise<Result<EnqueueResult, AppError>> {
-    const uuidRegex =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-    if (!sessionId || !uuidRegex.test(sessionId.trim())) {
+    if (!sessionId || !sessionId.trim()) {
       return err(
         new AppError(
           ErrorCode.BadRequest,
-          `Invalid sessionId '${sessionId}': must be a valid UUID`,
+          'sessionId must be a non-empty string',
         ),
       );
     }
 
-    if (!userId || !uuidRegex.test(userId.trim())) {
+    if (!userId || !userId.trim()) {
       return err(
-        new AppError(
-          ErrorCode.BadRequest,
-          `Invalid userId '${userId}': must be a valid UUID`,
-        ),
+        new AppError(ErrorCode.BadRequest, 'userId must be a non-empty string'),
       );
     }
 
