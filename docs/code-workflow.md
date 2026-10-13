@@ -194,9 +194,12 @@ Before opening a pull request:
 5. Request the owners defined by `.github/CODEOWNERS` and wait for CI and
    required reviews.
 
-The current CI workflow runs `npm ci`, Prisma generation, lint, and build on
-pushes and pull requests targeting `develop` or `main`. Run tests locally until
-they are also enforced by CI.
+The current CI workflow runs on pushes to `main` and pull requests targeting
+`main`. It installs locked dependencies, validates and generates Prisma, runs
+lint and actionlint, executes unit tests, builds the application, and validates
+Docker Compose. E2e tests are not invoked and the integration job is disabled;
+run those suites locally when required. Docker builds and publication are
+described in [`github-workflows.md`](./github-workflows.md).
 
 ## Troubleshooting
 
