@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomInt } from 'crypto';
 import { err, ok, type Result } from 'neverthrow';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
@@ -6,11 +7,19 @@ import {
   IUserRepository,
   UserAlreadyExistsError,
 } from '../../../user/domain/repositories/user.repo.interface';
+import { IAccessTokenIssuer } from '../../domain/repositories/access-token-issuer.interface';
 import { IEmailOtpStore } from '../../domain/repositories/email-otp-store.interface';
 import { IEmailSender } from '../../domain/repositories/email-sender.interface';
 import { IPasswordHasher } from '../../domain/repositories/password-hasher.interface';
 import { IPendingRegistrationStore } from '../../domain/repositories/pending-registration-store.interface';
-import { RegisterDto, VerifyRegistrationDto } from '../dtos/auth.request.dto';
+import { IRefreshTokenRepository } from '../../domain/repositories/refresh-token.repo.interface';
+import { ITokenHasher } from '../../domain/repositories/token-hasher.interface';
+import {
+  LoginDto,
+  RegisterDto,
+  VerifyRegistrationDto,
+} from '../dtos/auth.request.dto';
+import { LoginResponseDto } from '../dtos/auth.response.dto';
 import { IAuthService } from '../interfaces/auth.service.interface';
 
 const OTP_TTL_SECONDS = 300;
@@ -18,10 +27,15 @@ const OTP_TTL_SECONDS = 300;
 const PENDING_REGISTRATION_TTL_SECONDS = 900;
 // Sai OTP quá số lần này thì xóa OTP, user phải đăng ký lại
 const MAX_OTP_ATTEMPTS = 5;
+// Bcrypt hash (10 rounds) của một chuỗi random không ai biết. Email không tồn tại
+// vẫn compare với hash này để thời gian phản hồi giống hệt sai mật khẩu.
+const DUMMY_PASSWORD_HASH =
+  '$2b$10$4oEFBqNbsbZcDyi2c0QAl.lgJx6zuAd.AoNb5eTSVKtzq1jbCNPLu';
 
 @Injectable()
 export class AuthService implements IAuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly refreshTokenTtlSeconds: number;
 
   constructor(
     private readonly userRepository: IUserRepository,
@@ -29,7 +43,22 @@ export class AuthService implements IAuthService {
     private readonly emailSender: IEmailSender,
     private readonly pendingRegistrationStore: IPendingRegistrationStore,
     private readonly emailOtpStore: IEmailOtpStore,
-  ) {}
+    private readonly accessTokenIssuer: IAccessTokenIssuer,
+    private readonly tokenHasher: ITokenHasher,
+    private readonly refreshTokenRepository: IRefreshTokenRepository,
+    configService: ConfigService,
+  ) {
+    // Thiếu hoặc sai env thì crash lúc khởi động, không để lỗi lộ ra lúc login
+    this.refreshTokenTtlSeconds = Number(
+      configService.getOrThrow<string>('JWT_REFRESH_EXPIRES_IN'),
+    );
+    if (
+      !Number.isInteger(this.refreshTokenTtlSeconds) ||
+      this.refreshTokenTtlSeconds <= 0
+    ) {
+      throw new Error('JWT_REFRESH_EXPIRES_IN must be a positive integer');
+    }
+  }
 
   async registerAsync(request: RegisterDto): Promise<Result<void, AppError>> {
     const existingUser = await this.userRepository.getUserByEmail(
@@ -195,6 +224,56 @@ export class AuthService implements IAuthService {
     return ok({ email });
   }
 
+  async loginAsync(
+    request: LoginDto,
+  ): Promise<Result<LoginResponseDto, AppError>> {
+    const credentialsResult =
+      await this.userRepository.getUserCredentialsByEmail(request.email);
+    if (credentialsResult.isErr()) {
+      return err(this.loginFailedError());
+    }
+
+    // 1. Email không tồn tại vẫn chạy bcrypt (với hash giả) để attacker không
+    // đo thời gian phản hồi mà dò ra email nào đã đăng ký
+    const user = credentialsResult.value;
+    const isPasswordValid = await this.passwordHasher.compare(
+      request.password,
+      user?.passwordHash ?? DUMMY_PASSWORD_HASH,
+    );
+    if (isPasswordValid.isErr()) {
+      return err(this.loginFailedError());
+    }
+    // Sai email và sai mật khẩu dùng chung một lỗi
+    if (user === null || !isPasswordValid.value) {
+      return err(
+        new AppError(ErrorCode.Unauthorized, 'Invalid email or password'),
+      );
+    }
+
+    // 2. Access token chỉ mang publicId và role, không lộ id nội bộ
+    const accessTokenResult = await this.accessTokenIssuer.issueAccessToken({
+      sub: user.publicId,
+      role: user.role,
+    });
+    if (accessTokenResult.isErr()) {
+      return err(this.loginFailedError());
+    }
+
+    // 3. Refresh token: trả bản gốc cho client, DB chỉ lưu hash
+    const refreshToken = this.tokenHasher.generateToken();
+    const saveRefreshToken =
+      await this.refreshTokenRepository.createRefreshToken({
+        userId: user.id,
+        tokenHash: this.tokenHasher.hashToken(refreshToken),
+        expiresAt: new Date(Date.now() + this.refreshTokenTtlSeconds * 1000),
+      });
+    if (saveRefreshToken.isErr()) {
+      return err(this.loginFailedError());
+    }
+
+    return ok({ accessToken: accessTokenResult.value, refreshToken });
+  }
+
   private invalidOtpError(): AppError {
     return new AppError(ErrorCode.BadRequest, 'Invalid or expired OTP');
   }
@@ -204,5 +283,9 @@ export class AuthService implements IAuthService {
       ErrorCode.InternalServerError,
       'Failed to verify registration',
     );
+  }
+
+  private loginFailedError(): AppError {
+    return new AppError(ErrorCode.InternalServerError, 'Failed to login');
   }
 }

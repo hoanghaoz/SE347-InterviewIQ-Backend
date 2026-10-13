@@ -4,7 +4,9 @@ import {
   Logger,
   ValidationPipe,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
+import { randomUUID, type UUID } from 'crypto';
 import { err, ok } from 'neverthrow';
 import request from 'supertest';
 import type { App } from 'supertest/types';
@@ -18,11 +20,16 @@ import { IPendingRegistrationStore } from '../src/modules/authentication/domain/
 import { BcryptPasswordHasher } from '../src/modules/authentication/infrastructure/bcrypt-password-hasher';
 import { RedisEmailOtpStore } from '../src/modules/authentication/infrastructure/redis-email-otp-store';
 import { RedisPendingRegistrationStore } from '../src/modules/authentication/infrastructure/redis-pending-registration-store';
+import { IAccessTokenIssuer } from '../src/modules/authentication/domain/repositories/access-token-issuer.interface';
+import { IRefreshTokenRepository } from '../src/modules/authentication/domain/repositories/refresh-token.repo.interface';
+import { ITokenHasher } from '../src/modules/authentication/domain/repositories/token-hasher.interface';
+import { Sha256TokenHasher } from '../src/modules/authentication/infrastructure/sha256-token-hasher';
 import {
   CreateUserData,
   IUserRepository,
   UserAlreadyExistsError,
 } from '../src/modules/user/domain/repositories/user.repo.interface';
+import { CommonUserRole } from '../src/shared/common/commonEnum';
 import { AllExceptionsFilter } from '../src/shared/common/exceptions.filter';
 import { ErrorCode } from '../src/shared/common/errorCode';
 import { mapValidationErrors } from '../src/shared/common/validation-error.mapper';
@@ -58,7 +65,10 @@ class InMemoryRedis {
 }
 
 class InMemoryUserRepository implements IUserRepository {
-  readonly users = new Map<string, CreateUserData & { id: number }>();
+  readonly users = new Map<
+    string,
+    CreateUserData & { id: number; publicId: UUID }
+  >();
 
   getUserByEmail(email: string) {
     const user = this.users.get(email);
@@ -69,8 +79,24 @@ class InMemoryUserRepository implements IUserRepository {
       return Promise.resolve(err(new UserAlreadyExistsError()));
     }
     const id = this.users.size + 1;
-    this.users.set(data.email, { ...data, id });
+    this.users.set(data.email, { ...data, id, publicId: randomUUID() });
     return Promise.resolve(ok({ id }));
+  }
+  getUserCredentialsByEmail(email: string) {
+    const user = this.users.get(email);
+    return Promise.resolve(
+      ok(
+        user
+          ? {
+              id: user.id,
+              publicId: user.publicId,
+              email: user.email,
+              role: CommonUserRole.USER,
+              passwordHash: user.passwordHash,
+            }
+          : null,
+      ),
+    );
   }
 }
 
@@ -129,6 +155,20 @@ describe('AuthController (e2e)', () => {
         { provide: RedisService, useValue: redis },
         { provide: IUserRepository, useValue: users },
         { provide: IEmailSender, useValue: mailer },
+        // Login chưa có e2e: stub để AuthService khởi tạo được
+        {
+          provide: IAccessTokenIssuer,
+          useValue: { issueAccessToken: jest.fn() },
+        },
+        { provide: ITokenHasher, useClass: Sha256TokenHasher },
+        {
+          provide: IRefreshTokenRepository,
+          useValue: { createRefreshToken: jest.fn() },
+        },
+        {
+          provide: ConfigService,
+          useValue: { getOrThrow: () => '604800' },
+        },
       ],
     }).compile();
 

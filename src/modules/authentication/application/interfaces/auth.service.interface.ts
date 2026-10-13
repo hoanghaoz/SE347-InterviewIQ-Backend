@@ -1,10 +1,18 @@
 import { Result } from 'neverthrow';
 import { AppError } from 'src/shared/common/errorCode';
-import { RegisterDto, VerifyRegistrationDto } from '../dtos/auth.request.dto';
+import {
+  LoginDto,
+  RegisterDto,
+  VerifyRegistrationDto,
+} from '../dtos/auth.request.dto';
+import { LoginResponseDto } from '../dtos/auth.response.dto';
 
 export abstract class IAuthService {
   abstract registerAsync(request: RegisterDto): Promise<Result<void, AppError>>;
   abstract verifyRegistrationAsync(
     request: VerifyRegistrationDto,
   ): Promise<Result<{ email: string }, AppError>>;
+  abstract loginAsync(
+    request: LoginDto,
+  ): Promise<Result<LoginResponseDto, AppError>>;
 }
