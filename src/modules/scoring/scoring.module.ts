@@ -8,12 +8,14 @@ import { ScoringController } from './api/scoring.controller';
 import { IScoringQueue } from './application/interfaces/scoring.queue.interface';
 import { IScoringService } from './application/interfaces/scoring.service.interface';
 import { ScoringService } from './application/services/scoring.service';
+import { IScoringRepository } from './domain/repositories/scoring.repo.interface';
 import {
   PG_BOSS_TOKEN,
   PgBossProvider,
 } from './infrastructure/queue/pg-boss.provider';
 import { ScoringQueueService } from './infrastructure/queue/scoring-queue.service';
 import { ScoringWorkerService } from './infrastructure/queue/scoring-worker.service';
+import { ScoringRepository } from './infrastructure/scoring.repo';
 
 @Module({
   imports: [
@@ -38,9 +40,13 @@ import { ScoringWorkerService } from './infrastructure/queue/scoring-worker.serv
       provide: IScoringService,
       useClass: ScoringService,
     },
+    {
+      provide: IScoringRepository,
+      useClass: ScoringRepository,
+    },
     ScoringWorkerService,
   ],
-  exports: [IScoringService],
+  exports: [IScoringService, IScoringRepository],
 })
 export class ScoringModule implements OnModuleDestroy {
   constructor(@Inject(PG_BOSS_TOKEN) private readonly boss: PgBoss) {}
