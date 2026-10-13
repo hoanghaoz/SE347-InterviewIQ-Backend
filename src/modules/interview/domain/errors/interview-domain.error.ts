@@ -17,3 +17,9 @@ export class InterviewSubmissionConflictError extends Error {
     super('Interview session cannot be submitted in its current state');
   }
 }
+
+export class InterviewStartConflictError extends Error {
+  constructor() {
+    super('Interview session cannot be started in its current state');
+  }
+}

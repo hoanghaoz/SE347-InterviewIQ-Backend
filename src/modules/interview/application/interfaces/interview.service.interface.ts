@@ -1,10 +1,18 @@
 import { Result } from 'neverthrow';
-import { AppError } from 'src/shared/common/errorCode';
+import { AppError } from '../../../../shared/common/errorCode';
 import {
   CreateInterviewRequestDto,
   SubmitInterviewSessionRequestDto,
 } from '../dtos/interview.request.dto';
-import { SubmitInterviewSessionResponseDto } from '../dtos/interview.response.dto';
+import {
+  InterviewSessionResponse,
+  StartInterviewSessionResponseDto,
+  SubmitInterviewSessionResponseDto,
+} from '../dtos/interview.response.dto';
+import {
+  PageResult,
+  PaginationRequest,
+} from '../../../../shared/common/pagination';
 
 export abstract class IInterviewService {
   abstract createInterviewSessionAsync(
@@ -17,4 +25,14 @@ export abstract class IInterviewService {
     sessionPublicId: string,
     request: SubmitInterviewSessionRequestDto,
   ): Promise<Result<SubmitInterviewSessionResponseDto, AppError>>;
+
+  abstract getInterviewSessionAsync(
+    userPublicId: string,
+    pagination: PaginationRequest,
+  ): Promise<Result<PageResult<InterviewSessionResponse>, AppError>>;
+
+  abstract startInterviewSessionAsync(
+    userPublicId: string,
+    sessionPublicId: string,
+  ): Promise<Result<StartInterviewSessionResponseDto, AppError>>;
 }

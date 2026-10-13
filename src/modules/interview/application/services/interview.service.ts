@@ -6,12 +6,24 @@ import {
   CreateInterviewRequestDto,
   SubmitInterviewSessionRequestDto,
 } from '../dtos/interview.request.dto';
-import { SubmitInterviewSessionResponseDto } from '../dtos/interview.response.dto';
+import {
+  InterviewSessionResponse,
+  StartInterviewSessionResponseDto,
+  SubmitInterviewSessionResponseDto,
+} from '../dtos/interview.response.dto';
 import { IInterviewRepository } from '../../domain/repositories/interview.repo.interface';
 import { ICvRepository } from '../../../cv/domain/repositories/cv.repo.interface';
 import { Interview } from '../../domain/entities/interview.entity';
-import { InterviewSubmissionConflictError } from '../../domain/errors/interview-domain.error';
+import {
+  InterviewStartConflictError,
+  InterviewSubmissionConflictError,
+} from '../../domain/errors/interview-domain.error';
 import { IScoringService } from '../../../scoring/application/interfaces/scoring.service.interface';
+import {
+  PageResult,
+  PaginationRequest,
+} from '../../../../shared/common/pagination';
+import { CommonSessionStatus } from '../../domain/enums/interview-enum';
 
 @Injectable()
 export class InterviewService implements IInterviewService {
@@ -20,6 +32,89 @@ export class InterviewService implements IInterviewService {
     private readonly cvRepo: ICvRepository,
     private readonly scoringService: IScoringService,
   ) {}
+  async getInterviewSessionAsync(
+    userPublicId: string,
+    pagination: PaginationRequest,
+  ): Promise<Result<PageResult<InterviewSessionResponse>, AppError>> {
+    const result = await this.interviewRepo.getInterviewSessions(
+      userPublicId,
+      pagination,
+    );
+    if (result.isErr()) {
+      return err(
+        new AppError(
+          ErrorCode.InternalServerError,
+          'Failed to retrieve interview sessions',
+        ),
+      );
+    }
+    const page = result.value;
+    return ok({
+      ...page,
+      items: page.items.map((session) => ({
+        ...session,
+        createdAt: session.createdAt.toISOString(),
+      })),
+    });
+  }
+
+  async startInterviewSessionAsync(
+    userPublicId: string,
+    sessionPublicId: string,
+  ): Promise<Result<StartInterviewSessionResponseDto, AppError>> {
+    const authorizeResult = await this.interviewRepo.authorizeInterviewSession(
+      sessionPublicId,
+      userPublicId,
+    );
+    if (authorizeResult.isErr()) {
+      return err(
+        new AppError(
+          ErrorCode.InternalServerError,
+          'Failed to authorize interview session',
+        ),
+      );
+    }
+    const session = authorizeResult.value;
+    if (!session) {
+      return err(
+        new AppError(
+          ErrorCode.NotFound,
+          'Interview session not found or unavailable',
+        ),
+      );
+    }
+    if (session.status !== CommonSessionStatus.CREATED) {
+      return err(
+        new AppError(
+          ErrorCode.Conflict,
+          'Interview session cannot be started in its current state',
+        ),
+      );
+    }
+    const startedAt = new Date();
+    const result = await this.interviewRepo.startInterviewSession(
+      session.userId,
+      session.sessionId,
+      startedAt,
+    );
+    if (result.isErr()) {
+      if (result.error instanceof InterviewStartConflictError) {
+        return err(new AppError(ErrorCode.Conflict, result.error.message));
+      }
+      return err(
+        new AppError(
+          ErrorCode.InternalServerError,
+          'Failed to start interview session',
+        ),
+      );
+    }
+    return ok({
+      sessionPublicId,
+      status: CommonSessionStatus.IN_PROGRESS,
+      startedAt: startedAt.toISOString(),
+    });
+  }
+
   async submitInterviewSessionAsync(
     userPublicId: string,
     sessionPublicId: string,
