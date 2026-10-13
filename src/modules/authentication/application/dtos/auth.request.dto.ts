@@ -47,3 +47,19 @@ export class VerifyRegistrationDto {
   @Matches(/^\d{6}$/, { message: 'OTP must be exactly 6 digits' })
   otp!: string;
 }
+
+export class LoginDto {
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsEmail({}, { message: 'Invalid email format' })
+  @IsNotEmpty({ message: 'Email is required' })
+  email!: string;
+
+  // Không có MinLength: luật độ dài là việc của lúc đăng ký, login không lộ chính sách mật khẩu.
+  // MaxLength 72 vì bcrypt chỉ đọc 72 byte đầu.
+  @IsString({ message: 'Password must be a string' })
+  @IsNotEmpty({ message: 'Password is required' })
+  @MaxLength(72, { message: 'Password must not exceed 72 characters' })
+  password!: string;
+}

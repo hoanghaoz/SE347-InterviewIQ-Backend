@@ -97,4 +97,58 @@ describe('UserRepository', () => {
       expect(result.error.message).not.toContain(databaseMessage);
     });
   });
+
+  describe('getUserCredentialsByEmail', () => {
+    const credentials = {
+      id: 1,
+      publicId: '7f1c2a3b-4d5e-4f60-8a9b-0c1d2e3f4a5b',
+      email: 'test@example.com',
+      role: 'USER',
+      passwordHash: '$2b$10$hash',
+    };
+
+    it('returns the credentials when a user is found', async () => {
+      findUnique.mockResolvedValue(credentials);
+
+      const result =
+        await repository.getUserCredentialsByEmail('test@example.com');
+
+      if (result.isErr()) throw result.error;
+      expect(result.value).toEqual(credentials);
+      // Chỉ select đúng các field cần cho login, không kéo theo dữ liệu thừa
+      expect(findUnique).toHaveBeenCalledWith({
+        where: { email: 'test@example.com' },
+        select: {
+          id: true,
+          publicId: true,
+          email: true,
+          role: true,
+          passwordHash: true,
+        },
+      });
+    });
+
+    it('returns null when no user has that email', async () => {
+      findUnique.mockResolvedValue(null);
+
+      const result = await repository.getUserCredentialsByEmail(
+        'missing@example.com',
+      );
+
+      if (result.isErr()) throw result.error;
+      expect(result.value).toBeNull();
+    });
+
+    it('returns a generic error and hides the database message when Prisma fails', async () => {
+      const databaseMessage = 'connect ECONNREFUSED db-internal-host:5432';
+      findUnique.mockRejectedValue(new Error(databaseMessage));
+
+      const result =
+        await repository.getUserCredentialsByEmail('test@example.com');
+
+      if (result.isOk()) throw new Error('Expected repository error');
+      expect(result.error.message).toBe('Failed to find user credentials');
+      expect(result.error.message).not.toContain(databaseMessage);
+    });
+  });
 });

@@ -3,9 +3,11 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { toHttpException } from '../../../shared/common/app-error.mapper';
 import { ApiSuccessResponse } from '../../../shared/response/apiResponse';
 import {
+  LoginDto,
   RegisterDto,
   VerifyRegistrationDto,
 } from '../application/dtos/auth.request.dto';
+import { LoginResponseDto } from '../application/dtos/auth.response.dto';
 import { IAuthService } from '../application/interfaces/auth.service.interface';
 
 @ApiTags('auth')
@@ -53,6 +55,24 @@ export class AuthController {
           data,
           'Account created successfully',
         ),
+      (error) => {
+        throw toHttpException(error);
+      },
+    );
+  }
+
+  @Post('login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Log in and get an access token and a refresh token',
+  })
+  async loginAsync(
+    @Body() request: LoginDto,
+  ): Promise<ApiSuccessResponse<LoginResponseDto>> {
+    const result = await this.authService.loginAsync(request);
+
+    return result.match(
+      (data) => new ApiSuccessResponse(HttpStatus.OK, data, 'Login successful'),
       (error) => {
         throw toHttpException(error);
       },
