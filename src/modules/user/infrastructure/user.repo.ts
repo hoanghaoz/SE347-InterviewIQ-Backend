@@ -8,6 +8,7 @@ import {
   IUserRepository,
   UserAlreadyExistsError,
   UserCredentials,
+  UserIdentity,
 } from '../domain/repositories/user.repo.interface';
 
 @Injectable()
@@ -85,6 +86,26 @@ export class UserRepository implements IUserRepository {
         `getUserCredentialsByEmail failed: ${(error as Error).message}`,
       );
       return err(new Error('Failed to find user credentials'));
+    }
+  }
+
+  async getUserById(id: number): Promise<Result<UserIdentity | null, Error>> {
+    try {
+      const user = await this.prismaService.user.findUnique({
+        where: { id },
+        select: { publicId: true, role: true },
+      });
+      if (!user) {
+        return ok(null);
+      }
+      return ok({
+        // Cột public_id là @db.Uuid nên giá trị luôn đúng format UUID
+        publicId: user.publicId as UUID,
+        role: CommonUserRole[user.role],
+      });
+    } catch (error) {
+      this.logger.error(`getUserById failed: ${(error as Error).message}`);
+      return err(new Error('Failed to find user'));
     }
   }
 }
