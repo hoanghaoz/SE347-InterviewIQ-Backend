@@ -63,3 +63,12 @@ export class LoginDto {
   @MaxLength(72, { message: 'Password must not exceed 72 characters' })
   password!: string;
 }
+
+export class RefreshTokenDto {
+  // Token là 32 byte random dạng hex (Sha256TokenHasher.generateToken).
+  // Sai format thì chặn ở đây, không để chuỗi rác chạm tới DB.
+  @IsString({ message: 'Refresh token must be a string' })
+  @IsNotEmpty({ message: 'Refresh token is required' })
+  @Matches(/^[0-9a-f]{64}$/, { message: 'Invalid refresh token format' })
+  refreshToken!: string;
+}
