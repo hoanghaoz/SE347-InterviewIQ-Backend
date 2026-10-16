@@ -161,7 +161,7 @@ describe('InterviewModule', () => {
       question: {
         findUnique: jest
           .fn()
-          .mockResolvedValue({ session: { status: 'CREATED' } }),
+          .mockResolvedValue({ session: { status: 'IN_PROGRESS' } }),
       },
       $transaction: jest.fn(
         (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),

@@ -57,13 +57,13 @@ export class InterviewAnswerRepository implements IInterviewAnswerRepository {
           select: { id: true, userId: true },
         });
         if (!session) throw new InterviewAnswerUnavailableError();
-        // The guarded update locks this row until the answer write commits. A
+        // The guarded no-op update locks this row until the answer write commits. A
         // concurrent session submission must wait, or this update matches no row.
         const locked = await tx.interviewSession.updateMany({
           where: {
             id: session.id,
             userId: session.userId,
-            status: { in: [SessionStatus.CREATED, SessionStatus.IN_PROGRESS] },
+            status: SessionStatus.IN_PROGRESS,
           },
           data: { status: SessionStatus.IN_PROGRESS },
         });
