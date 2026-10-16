@@ -129,7 +129,6 @@ export class InterviewRepository implements IInterviewRepository {
   async authorizeInterviewSession(
     sessionPublicId: string,
     userPublicId: string,
-    cvPublicId?: string,
   ): Promise<Result<InterviewSessionAuthorizeResult | null, Error>> {
     try {
       const result = await this.prismaService.interviewSession.findUnique({
@@ -138,7 +137,6 @@ export class InterviewRepository implements IInterviewRepository {
           user: {
             publicId: userPublicId,
           },
-          ...(cvPublicId !== undefined ? { cv: { publicId: cvPublicId } } : {}),
         },
         select: {
           id: true,

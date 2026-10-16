@@ -125,7 +125,6 @@ export class InterviewService implements IInterviewService {
       this.interviewRepo.authorizeInterviewSession(
         sessionPublicId,
         userPublicId,
-        request.cvPublicId,
       ),
     ]);
     if (cvAuthorizeResult.isErr()) {
@@ -151,6 +150,14 @@ export class InterviewService implements IInterviewService {
         new AppError(
           ErrorCode.NotFound,
           'Interview session not found or unavailable',
+        ),
+      );
+    }
+    if (sessionAuthorizeResult.value.cvId !== cvAuthorizeResult.value.cvId) {
+      return err(
+        new AppError(
+          ErrorCode.BadRequest,
+          'CV does not belong to this interview session',
         ),
       );
     }
