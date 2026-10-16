@@ -43,7 +43,6 @@ export abstract class IInterviewRepository {
   abstract authorizeInterviewSession(
     sessionPublicId: string,
     userPublicId: string,
-    cvPublicId?: string,
   ): Promise<Result<InterviewSessionAuthorizeResult | null, Error>>;
 
   abstract submitInterviewSession(

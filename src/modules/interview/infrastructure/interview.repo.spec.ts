@@ -80,37 +80,7 @@ describe('InterviewRepository', () => {
   });
 
   describe('authorizeInterviewSession', () => {
-    it('requires the session, user, and CV public IDs to match', async () => {
-      findUnique.mockResolvedValue({
-        id: 3,
-        userId: 1,
-        cvId: 2,
-        status: CommonSessionStatus.CREATED,
-      });
-      const result = await repository.authorizeInterviewSession(
-        'session',
-        'user',
-        'cv',
-      );
-      expect(result.isOk()).toBe(true);
-      if (result.isErr()) throw result.error;
-      expect(result.value).toEqual({
-        sessionId: 3,
-        userId: 1,
-        cvId: 2,
-        status: CommonSessionStatus.CREATED,
-      });
-      expect(findUnique).toHaveBeenCalledWith({
-        where: {
-          publicId: 'session',
-          user: { publicId: 'user' },
-          cv: { publicId: 'cv' },
-        },
-        select: { id: true, cvId: true, userId: true, status: true },
-      });
-    });
-
-    it('authorizes start by owner without requiring a CV and returns status', async () => {
+    it('authorizes by session and owner public IDs and returns status', async () => {
       findUnique.mockResolvedValue({
         id: 3,
         userId: 1,
@@ -137,7 +107,7 @@ describe('InterviewRepository', () => {
     it('returns null for an unavailable session', async () => {
       findUnique.mockResolvedValue(null);
       expect(
-        await repository.authorizeInterviewSession('session', 'user', 'cv'),
+        await repository.authorizeInterviewSession('session', 'user'),
       ).toEqual({ value: null });
     });
 
@@ -146,7 +116,6 @@ describe('InterviewRepository', () => {
       const result = await repository.authorizeInterviewSession(
         'session',
         'user',
-        'cv',
       );
       expect(result.isErr()).toBe(true);
       if (result.isOk()) throw new Error('Expected authorization error');
@@ -341,7 +310,7 @@ describe('InterviewRepository', () => {
       expect(update).toHaveBeenCalledWith({
         where: {
           publicId: 'session-public-id',
-          status: { in: ['CREATED', 'IN_PROGRESS', 'SUBMITTED'] },
+          status: { in: ['IN_PROGRESS'] },
         },
         data: {
           totalQuestions: 7,

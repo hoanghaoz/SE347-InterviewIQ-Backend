@@ -125,7 +125,6 @@ export class InterviewService implements IInterviewService {
       this.interviewRepo.authorizeInterviewSession(
         sessionPublicId,
         userPublicId,
-        request.cvPublicId,
       ),
     ]);
     if (cvAuthorizeResult.isErr()) {
@@ -154,7 +153,25 @@ export class InterviewService implements IInterviewService {
         ),
       );
     }
+    if (sessionAuthorizeResult.value.cvId !== cvAuthorizeResult.value.cvId) {
+      return err(
+        new AppError(
+          ErrorCode.BadRequest,
+          'CV does not belong to this interview session',
+        ),
+      );
+    }
 
+    if (
+      sessionAuthorizeResult.value.status !== CommonSessionStatus.IN_PROGRESS
+    ) {
+      return err(
+        new AppError(
+          ErrorCode.BadRequest,
+          `Cannot submit the session with status ${sessionAuthorizeResult.value.status} `,
+        ),
+      );
+    }
     const submitResult = await this.interviewRepo.submitInterviewSession(
       sessionPublicId,
       {
