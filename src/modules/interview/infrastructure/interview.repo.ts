@@ -102,11 +102,7 @@ export class InterviewRepository implements IInterviewRepository {
         where: {
           publicId: sessionPublicId,
           status: {
-            in: [
-              SessionStatus.CREATED,
-              SessionStatus.IN_PROGRESS,
-              SessionStatus.SUBMITTED,
-            ],
+            in: [SessionStatus.IN_PROGRESS],
           },
         },
         data: {

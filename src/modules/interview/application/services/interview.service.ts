@@ -155,6 +155,16 @@ export class InterviewService implements IInterviewService {
       );
     }
 
+    if (
+      sessionAuthorizeResult.value.status !== CommonSessionStatus.IN_PROGRESS
+    ) {
+      return err(
+        new AppError(
+          ErrorCode.BadRequest,
+          `Cannot submit the session with status ${sessionAuthorizeResult.value.status} `,
+        ),
+      );
+    }
     const submitResult = await this.interviewRepo.submitInterviewSession(
       sessionPublicId,
       {
