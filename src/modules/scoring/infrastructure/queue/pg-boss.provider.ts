@@ -1,4 +1,4 @@
-import { Provider } from '@nestjs/common';
+import { Logger, Provider } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PgBoss } from 'pg-boss';
 
@@ -16,6 +16,9 @@ export const PgBossProvider: Provider = {
       connectionString,
       schema: 'pgboss',
     });
+    // Không có listener 'error' thì EventEmitter sẽ throw và làm sập cả process
+    const logger = new Logger('PgBoss');
+    boss.on('error', (error: Error) => logger.error(error.message));
 
     await boss.start();
     return boss;

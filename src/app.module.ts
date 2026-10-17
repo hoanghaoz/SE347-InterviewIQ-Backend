@@ -16,6 +16,8 @@ import { mapValidationErrors } from './shared/common/validation-error.mapper';
 import { PrismaModule } from './shared/infrastructure/database/prisma.module';
 import { InterviewModule } from './modules/interview/interview.module';
 import { CvModule } from './modules/cv/cv.module';
+import { RedisModule } from './shared/infrastructure/redis/redis.module';
+import { AuthModule } from './modules/authentication/auth.module';
 import { ScoringModule } from './modules/scoring/scoring.module';
 import { LlmPlaygroundModule } from './modules/llm-playground/llm-playground.module';
 
@@ -28,6 +30,8 @@ import { LlmPlaygroundModule } from './modules/llm-playground/llm-playground.mod
     ConfigModule,
     InterviewModule,
     CvModule,
+    RedisModule,
+    AuthModule,
     ScoringModule,
     LlmPlaygroundModule,
   ],

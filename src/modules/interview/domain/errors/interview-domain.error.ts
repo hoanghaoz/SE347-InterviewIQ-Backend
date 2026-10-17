@@ -11,3 +11,15 @@ export class InterviewDomainErrorValidation extends Error {
     super(message);
   }
 }
+
+export class InterviewSubmissionConflictError extends Error {
+  constructor() {
+    super('Interview session cannot be submitted in its current state');
+  }
+}
+
+export class InterviewStartConflictError extends Error {
+  constructor() {
+    super('Interview session cannot be started in its current state');
+  }
+}
