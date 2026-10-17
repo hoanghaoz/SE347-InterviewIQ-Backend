@@ -2,8 +2,8 @@ import type { ConfigService } from '@nestjs/config';
 import type { ILlmProvider } from './llm.provider';
 import type { LlmProviderName } from './llm.types';
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
-export const DEFAULT_GROQ_MODEL = 'llama-3.3-70b-versatile';
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
+export const DEFAULT_GROQ_MODEL = 'openai/gpt-oss-120b';
 export const DEFAULT_LLM_TIMEOUT_MS = 30_000;
 
 /** DI token for the `{ gemini, groq }` lookup used by the playground. */

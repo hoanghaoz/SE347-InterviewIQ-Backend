@@ -53,7 +53,7 @@ describe('GroqProvider', () => {
     });
 
     expect(createMock).toHaveBeenCalledWith({
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-oss-120b',
       messages: [
         { role: 'system', content: 'be brief' },
         { role: 'user', content: 'hi' },
@@ -64,7 +64,7 @@ describe('GroqProvider', () => {
     expect(result._unsafeUnwrap()).toMatchObject({
       text: 'hello',
       provider: 'groq',
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-oss-120b',
       usage: { inputTokens: 4, outputTokens: 6 },
     });
   });
