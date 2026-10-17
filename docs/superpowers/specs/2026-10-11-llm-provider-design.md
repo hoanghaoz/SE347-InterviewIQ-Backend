@@ -73,8 +73,8 @@ New variables in `.env.example` (no real values):
 |---|---|---|
 | `LLM_PRIMARY_PROVIDER` | `gemini` or `groq` | `gemini` |
 | `GEMINI_API_KEY`, `GROQ_API_KEY` | API keys | empty |
-| `GEMINI_MODEL` | Gemini model | `gemini-2.5-flash` |
-| `GROQ_MODEL` | Groq model | `llama-3.3-70b-versatile` |
+| `GEMINI_MODEL` | Gemini model | `gemini-3.8-flash` |
+| `GROQ_MODEL` | Groq model | `openai/gpt-oss-120b` |
 | `LLM_TIMEOUT_MS` | per-call timeout | `30000` |
 | `ENABLE_LLM_PLAYGROUND` | enable the playground | `false` |
 

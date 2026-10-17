@@ -52,7 +52,7 @@ describe('GeminiProvider', () => {
     });
 
     expect(generateContentMock).toHaveBeenCalledWith({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.8-flash',
       contents: 'hi',
       config: {
         systemInstruction: 'be brief',
@@ -63,7 +63,7 @@ describe('GeminiProvider', () => {
     expect(result._unsafeUnwrap()).toMatchObject({
       text: 'hello',
       provider: 'gemini',
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.8-flash',
       usage: { inputTokens: 4, outputTokens: 6 },
     });
   });
