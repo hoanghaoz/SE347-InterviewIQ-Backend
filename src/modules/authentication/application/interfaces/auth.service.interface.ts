@@ -19,4 +19,7 @@ export abstract class IAuthService {
   abstract refreshAsync(
     request: RefreshTokenDto,
   ): Promise<Result<LoginResponseDto, AppError>>;
+  abstract logoutAsync(
+    request: RefreshTokenDto,
+  ): Promise<Result<void, AppError>>;
 }

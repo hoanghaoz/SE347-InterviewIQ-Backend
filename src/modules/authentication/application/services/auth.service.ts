@@ -354,6 +354,24 @@ export class AuthService implements IAuthService {
     return ok({ accessToken: accessTokenResult.value, refreshToken });
   }
 
+  async logoutAsync(request: RefreshTokenDto): Promise<Result<void, AppError>> {
+    // Token không tồn tại / đã revoke / hết hạn đều trả ok như RFC 7009:
+    // phiên đó vốn đã không dùng được nên mục đích logout đã đạt, và không lộ trạng thái token.
+    // Không thu hồi mọi phiên khi gặp token đã revoke như refreshAsync: logout lại bằng token cũ
+    // thường chỉ là client retry, kẻ trộm token dùng logout cũng không lấy được gì.
+    const revokeResult =
+      await this.refreshTokenRepository.revokeRefreshTokenByHash(
+        this.tokenHasher.hashToken(request.refreshToken),
+      );
+    if (revokeResult.isErr()) {
+      return err(
+        new AppError(ErrorCode.InternalServerError, 'Failed to logout'),
+      );
+    }
+
+    return ok(undefined);
+  }
+
   private invalidOtpError(): AppError {
     return new AppError(ErrorCode.BadRequest, 'Invalid or expired OTP');
   }
