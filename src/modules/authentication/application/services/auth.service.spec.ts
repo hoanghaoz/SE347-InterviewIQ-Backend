@@ -689,4 +689,48 @@ describe('AuthService', () => {
       },
     );
   });
+
+  describe('logoutAsync', () => {
+    const request = { refreshToken: 'raw' };
+
+    beforeEach(() => {
+      tokenHasher.hashToken.mockImplementation((raw: string) => `sha:${raw}`);
+      refreshTokenRepository.revokeRefreshTokenByHash.mockResolvedValue(
+        ok(undefined),
+      );
+    });
+
+    it('revokes the token by its hash', async () => {
+      const result = await service.logoutAsync(request);
+
+      expect(result.isOk()).toBe(true);
+      expect(
+        refreshTokenRepository.revokeRefreshTokenByHash,
+      ).toHaveBeenCalledWith('sha:raw');
+    });
+
+    // Logout lại / token lạ là chuyện bình thường, không phải dấu hiệu token bị lộ
+    it('does not revoke the other sessions of the user', async () => {
+      await service.logoutAsync(request);
+
+      expect(
+        refreshTokenRepository.revokeAllRefreshTokensForUser,
+      ).not.toHaveBeenCalled();
+      expect(
+        refreshTokenRepository.getRefreshTokenByHash,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('returns a safe InternalServerError when revoking fails', async () => {
+      refreshTokenRepository.revokeRefreshTokenByHash.mockResolvedValue(
+        err(new Error('internal detail')),
+      );
+
+      const result = await service.logoutAsync(request);
+
+      if (result.isOk()) throw new Error('Expected an error result');
+      expect(result.error.code).toBe(ErrorCode.InternalServerError);
+      expect(result.error.message).toBe('Failed to logout');
+    });
+  });
 });
