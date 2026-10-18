@@ -40,6 +40,25 @@ describe('CloudinaryFileStorage', () => {
     resource.mockReset();
   });
 
+  // Every field the browser sends must be inside the signature, otherwise Cloudinary
+  // rejects the upload with "Invalid Signature".
+  it('signs and returns asset_folder as InterviewIQ/<public id folder>', () => {
+    const { storage } = createStorage();
+    const sign = cloudinary.utils.api_sign_request as jest.Mock;
+
+    const result = storage.createSignedUpload('cvs/user-1/file-1');
+
+    expect(result._unsafeUnwrap().assetFolder).toBe('InterviewIQ/cvs/user-1');
+    expect(sign).toHaveBeenCalledWith(
+      expect.objectContaining({
+        public_id: 'cvs/user-1/file-1',
+        asset_folder: 'InterviewIQ/cvs/user-1',
+        allowed_formats: 'pdf',
+      }),
+      API_SECRET,
+    );
+  });
+
   it('returns null when Cloudinary says the file does not exist (404)', async () => {
     const { storage } = createStorage();
     resource.mockRejectedValue({ error: { http_code: 404, message: 'x' } });
