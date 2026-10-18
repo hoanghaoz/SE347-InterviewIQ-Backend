@@ -4,6 +4,7 @@ import { toHttpException } from '../../../shared/common/app-error.mapper';
 import { ApiSuccessResponse } from '../../../shared/response/apiResponse';
 import {
   LoginDto,
+  RefreshTokenDto,
   RegisterDto,
   VerifyRegistrationDto,
 } from '../application/dtos/auth.request.dto';
@@ -73,6 +74,29 @@ export class AuthController {
 
     return result.match(
       (data) => new ApiSuccessResponse(HttpStatus.OK, data, 'Login successful'),
+      (error) => {
+        throw toHttpException(error);
+      },
+    );
+  }
+
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Rotate the refresh token and get a new access token',
+  })
+  async refreshAsync(
+    @Body() request: RefreshTokenDto,
+  ): Promise<ApiSuccessResponse<LoginResponseDto>> {
+    const result = await this.authService.refreshAsync(request);
+
+    return result.match(
+      (data) =>
+        new ApiSuccessResponse(
+          HttpStatus.OK,
+          data,
+          'Token refreshed successfully',
+        ),
       (error) => {
         throw toHttpException(error);
       },
