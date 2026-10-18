@@ -76,6 +76,7 @@ describe('CvService', () => {
           signature: 's',
           cloudinaryPublicId: id,
           allowedFormats: 'pdf',
+          assetFolder: 'f',
         }),
       );
 
