@@ -5,6 +5,7 @@ import { err, ok } from 'neverthrow';
 import { CommonUserRole } from '../../../../shared/common/commonEnum';
 import { ErrorCode } from '../../../../shared/common/errorCode';
 import { UserAlreadyExistsError } from '../../../user/domain/repositories/user.repo.interface';
+import { RefreshTokenAlreadyRevokedError } from '../../domain/repositories/refresh-token.repo.interface';
 import { AuthService } from './auth.service';
 
 describe('AuthService', () => {
@@ -488,6 +489,198 @@ describe('AuthService', () => {
         getMock().mockResolvedValue(err(new Error('internal detail')));
 
         const result = await service.loginAsync(request);
+
+        if (result.isOk()) throw new Error('Expected an error result');
+        expect(result.error.code).toBe(ErrorCode.InternalServerError);
+        expect(result.error.message).not.toContain('internal detail');
+      },
+    );
+  });
+
+  describe('refreshAsync', () => {
+    const request = { refreshToken: 'old-raw' };
+    const now = 1_760_000_000_000;
+    const storedToken = {
+      id: 3,
+      userId: 7,
+      expiresAt: new Date(now + 60_000),
+      revokedAt: null,
+    };
+    const identity = { publicId: randomUUID(), role: CommonUserRole.USER };
+    let dateNow: jest.SpyInstance;
+
+    // Mọi lỗi phía client (không tồn tại / revoke / hết hạn / user bị xóa / race)
+    // phải ra cùng một lỗi để không lộ trạng thái của token
+    const expectInvalidRefreshToken = async () => {
+      const result = await service.refreshAsync(request);
+
+      if (result.isOk()) throw new Error('Expected an error result');
+      expect(result.error.code).toBe(ErrorCode.Unauthorized);
+      expect(result.error.message).toBe('Invalid refresh token');
+    };
+
+    // Mặc định mọi bước đều thành công; từng test ghi đè bước cần làm hỏng
+    beforeEach(() => {
+      dateNow = jest.spyOn(Date, 'now').mockReturnValue(now);
+      tokenHasher.hashToken.mockImplementation((raw: string) => `sha:${raw}`);
+      tokenHasher.generateToken.mockReturnValue('new-raw');
+      refreshTokenRepository.getRefreshTokenByHash.mockResolvedValue(
+        ok(storedToken),
+      );
+      userRepository.getUserById.mockResolvedValue(ok(identity));
+      accessTokenIssuer.issueAccessToken.mockResolvedValue(ok('access.jwt'));
+      refreshTokenRepository.rotateRefreshToken.mockResolvedValue(
+        ok(undefined),
+      );
+      refreshTokenRepository.revokeAllRefreshTokensForUser.mockResolvedValue(
+        ok(undefined),
+      );
+    });
+
+    afterEach(() => {
+      dateNow.mockRestore();
+    });
+
+    it('returns a new token pair and rotates the old token keeping its expiry', async () => {
+      const result = await service.refreshAsync(request);
+
+      if (result.isErr()) throw result.error;
+      expect(result.value).toEqual({
+        accessToken: 'access.jwt',
+        refreshToken: 'new-raw',
+      });
+      expect(refreshTokenRepository.getRefreshTokenByHash).toHaveBeenCalledWith(
+        'sha:old-raw',
+      );
+      // Absolute expiry: token mới giữ đúng expiresAt của token cũ, không cộng thêm TTL
+      expect(refreshTokenRepository.rotateRefreshToken).toHaveBeenCalledWith(
+        3,
+        {
+          userId: 7,
+          tokenHash: 'sha:new-raw',
+          expiresAt: storedToken.expiresAt,
+        },
+      );
+      expect(
+        refreshTokenRepository.revokeAllRefreshTokensForUser,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('signs the access token with the latest role from the user repository', async () => {
+      userRepository.getUserById.mockResolvedValue(
+        ok({ ...identity, role: CommonUserRole.ADMIN }),
+      );
+
+      await service.refreshAsync(request);
+
+      expect(userRepository.getUserById).toHaveBeenCalledWith(7);
+      expect(accessTokenIssuer.issueAccessToken).toHaveBeenCalledWith({
+        sub: identity.publicId,
+        role: CommonUserRole.ADMIN,
+      });
+    });
+
+    it('returns Unauthorized when the token does not exist', async () => {
+      refreshTokenRepository.getRefreshTokenByHash.mockResolvedValue(ok(null));
+
+      await expectInvalidRefreshToken();
+      expect(userRepository.getUserById).not.toHaveBeenCalled();
+      expect(refreshTokenRepository.rotateRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it('revokes every session of the user when a revoked token is reused', async () => {
+      refreshTokenRepository.getRefreshTokenByHash.mockResolvedValue(
+        ok({ ...storedToken, revokedAt: new Date(now - 1_000) }),
+      );
+
+      await expectInvalidRefreshToken();
+      expect(
+        refreshTokenRepository.revokeAllRefreshTokensForUser,
+      ).toHaveBeenCalledWith(7);
+      expect(loggerWarn).toHaveBeenCalled();
+      expect(accessTokenIssuer.issueAccessToken).not.toHaveBeenCalled();
+      expect(refreshTokenRepository.rotateRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it('still returns Unauthorized when revoking all sessions fails after reuse', async () => {
+      const loggerError = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => undefined);
+      refreshTokenRepository.getRefreshTokenByHash.mockResolvedValue(
+        ok({ ...storedToken, revokedAt: new Date(now - 1_000) }),
+      );
+      refreshTokenRepository.revokeAllRefreshTokensForUser.mockResolvedValue(
+        err(new Error('internal detail')),
+      );
+
+      await expectInvalidRefreshToken();
+      expect(loggerError).toHaveBeenCalled();
+    });
+
+    it.each([
+      ['expires exactly now', 0],
+      ['expired a second ago', -1_000],
+    ])(
+      'returns Unauthorized when the token %s',
+      async (_case, offsetMs: number) => {
+        refreshTokenRepository.getRefreshTokenByHash.mockResolvedValue(
+          ok({ ...storedToken, expiresAt: new Date(now + offsetMs) }),
+        );
+
+        await expectInvalidRefreshToken();
+        expect(userRepository.getUserById).not.toHaveBeenCalled();
+        expect(
+          refreshTokenRepository.rotateRefreshToken,
+        ).not.toHaveBeenCalled();
+      },
+    );
+
+    it('returns Unauthorized when the user no longer exists', async () => {
+      userRepository.getUserById.mockResolvedValue(ok(null));
+
+      await expectInvalidRefreshToken();
+      expect(accessTokenIssuer.issueAccessToken).not.toHaveBeenCalled();
+      expect(refreshTokenRepository.rotateRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it('keeps the old token usable when the access token cannot be issued', async () => {
+      accessTokenIssuer.issueAccessToken.mockResolvedValue(
+        err(new Error('internal detail')),
+      );
+
+      const result = await service.refreshAsync(request);
+
+      if (result.isOk()) throw new Error('Expected an error result');
+      expect(result.error.code).toBe(ErrorCode.InternalServerError);
+      // Ký trước, rotate sau: ký lỗi thì token cũ không bị revoke oan
+      expect(refreshTokenRepository.rotateRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it('returns Unauthorized without revoking all sessions when another request rotated the token first', async () => {
+      refreshTokenRepository.rotateRefreshToken.mockResolvedValue(
+        err(new RefreshTokenAlreadyRevokedError()),
+      );
+
+      await expectInvalidRefreshToken();
+      expect(
+        refreshTokenRepository.revokeAllRefreshTokensForUser,
+      ).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        'looking up the token',
+        () => refreshTokenRepository.getRefreshTokenByHash,
+      ],
+      ['looking up the user', () => userRepository.getUserById],
+      ['issuing the access token', () => accessTokenIssuer.issueAccessToken],
+      ['rotating the token', () => refreshTokenRepository.rotateRefreshToken],
+    ])(
+      'returns a safe InternalServerError when %s fails',
+      async (_step, getMock) => {
+        getMock().mockResolvedValue(err(new Error('internal detail')));
+
+        const result = await service.refreshAsync(request);
 
         if (result.isOk()) throw new Error('Expected an error result');
         expect(result.error.code).toBe(ErrorCode.InternalServerError);
