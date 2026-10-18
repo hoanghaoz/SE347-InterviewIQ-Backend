@@ -222,6 +222,8 @@ describe('AuthController (e2e)', () => {
   const registerRoute = '/api/auth/register';
   const verifyRoute = '/api/auth/register/verify';
   const loginRoute = '/api/auth/login';
+  const refreshRoute = '/api/auth/refresh';
+  const logoutRoute = '/api/auth/logout';
   const body = {
     email: 'new.user@example.com',
     password: 'Str0ngPass',
@@ -234,6 +236,10 @@ describe('AuthController (e2e)', () => {
     request(app.getHttpServer()).post(verifyRoute).send(payload);
   const login = (payload: object) =>
     request(app.getHttpServer()).post(loginRoute).send(payload);
+  const refresh = (refreshToken: string) =>
+    request(app.getHttpServer()).post(refreshRoute).send({ refreshToken });
+  const logout = (refreshToken: string) =>
+    request(app.getHttpServer()).post(logoutRoute).send({ refreshToken });
   const wrongOtpFor = (otp: string) => (otp === '000000' ? '111111' : '000000');
   // Tạo account qua đúng luồng thật để passwordHash là bcrypt thật
   const createAccount = async () => {
@@ -637,6 +643,103 @@ describe('AuthController (e2e)', () => {
           }),
         ],
       });
+    });
+  });
+
+  describe('POST /api/auth/logout', () => {
+    const credentials = { email: body.email, password: body.password };
+    const loginForRefreshToken = async () => {
+      const response = await login(credentials).expect(200);
+      return (response.body as { data: { refreshToken: string } }).data
+        .refreshToken;
+    };
+    const storedTokenOf = (refreshToken: string) =>
+      refreshTokens.tokens.find(
+        (t) => t.tokenHash === new Sha256TokenHasher().hashToken(refreshToken),
+      );
+
+    it('revokes the refresh token so it can no longer be refreshed', async () => {
+      await createAccount();
+      const refreshToken = await loginForRefreshToken();
+
+      const response = await logout(refreshToken).expect(200);
+
+      expect(response.body).toMatchObject({
+        statusCode: 200,
+        success: true,
+        data: null,
+        message: 'Logout successful',
+      });
+      expect(storedTokenOf(refreshToken)?.revokedAt).toBeInstanceOf(Date);
+      await refresh(refreshToken).expect(401);
+    });
+
+    it('only logs out the current device', async () => {
+      await createAccount();
+      const current = await loginForRefreshToken();
+      const otherDevice = await loginForRefreshToken();
+
+      await logout(current).expect(200);
+
+      expect(storedTokenOf(otherDevice)?.revokedAt).toBeNull();
+      await refresh(otherDevice).expect(200);
+    });
+
+    it('returns 200 when logging out again with the same token without touching other sessions', async () => {
+      await createAccount();
+      const current = await loginForRefreshToken();
+      const otherDevice = await loginForRefreshToken();
+      await logout(current).expect(200);
+      const firstRevokedAt = storedTokenOf(current)?.revokedAt;
+
+      await logout(current).expect(200);
+
+      // Không ghi đè thời điểm revoke cũ, không coi là token bị dùng lại
+      expect(storedTokenOf(current)?.revokedAt).toBe(firstRevokedAt);
+      expect(storedTokenOf(otherDevice)?.revokedAt).toBeNull();
+    });
+
+    it('returns 200 for a token that was never issued', async () => {
+      const response = await logout('a'.repeat(64)).expect(200);
+
+      expect(response.body).toMatchObject({
+        success: true,
+        message: 'Logout successful',
+      });
+    });
+
+    it('returns 500 without leaking details when the token cannot be revoked', async () => {
+      await createAccount();
+      const refreshToken = await loginForRefreshToken();
+      jest
+        .spyOn(refreshTokens, 'revokeRefreshTokenByHash')
+        .mockResolvedValue(err(new Error('connection refused to postgres')));
+
+      const response = await logout(refreshToken).expect(500);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.InternalServerError,
+        success: false,
+        path: logoutRoute,
+      });
+      expect(JSON.stringify(response.body)).not.toContain('postgres');
+      expect(response.body).not.toHaveProperty('data');
+    });
+
+    it('returns a validation error without echoing a malformed token', async () => {
+      const response = await logout('not-a-token').expect(400);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.BadRequest,
+        message: 'Request validation failed',
+        errors: [
+          {
+            field: 'refreshToken',
+            messages: ['Invalid refresh token format'],
+          },
+        ],
+      });
+      expect(JSON.stringify(response.body)).not.toContain('not-a-token');
     });
   });
 });
