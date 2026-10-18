@@ -314,7 +314,7 @@ describe('InterviewService', () => {
           sessionId: 3,
           userId: 1,
           cvId: 2,
-          status: CommonSessionStatus.CREATED,
+          status: CommonSessionStatus.IN_PROGRESS,
         }),
       );
       submitInterviewSession.mockResolvedValue(ok(undefined));
@@ -353,7 +353,7 @@ describe('InterviewService', () => {
       expect(enqueueAsync).not.toHaveBeenCalled();
     });
 
-    it('returns not found for a missing, unauthorized, or mismatched session', async () => {
+    it('returns not found for a missing or unauthorized session', async () => {
       authorizeInterviewSession.mockResolvedValue(ok(null));
       const result = await submit();
       expect(result.isErr()).toBe(true);
@@ -362,6 +362,29 @@ describe('InterviewService', () => {
       expect(submitInterviewSession).not.toHaveBeenCalled();
       expect(enqueueAsync).not.toHaveBeenCalled();
     });
+
+    it.each([99, null])(
+      'returns bad request when the session CV is %p instead of the submitted CV',
+      async (sessionCvId) => {
+        authorizeInterviewSession.mockResolvedValue(
+          ok({
+            sessionId: 3,
+            userId: 1,
+            cvId: sessionCvId,
+            status: CommonSessionStatus.IN_PROGRESS,
+          }),
+        );
+        const result = await submit();
+        expect(result.isErr()).toBe(true);
+        if (result.isOk()) throw new Error('Expected CV mismatch');
+        expect(result.error.code).toBe(ErrorCode.BadRequest);
+        expect(result.error.message).toBe(
+          'CV does not belong to this interview session',
+        );
+        expect(submitInterviewSession).not.toHaveBeenCalled();
+        expect(enqueueAsync).not.toHaveBeenCalled();
+      },
+    );
 
     it('does not enqueue when saving fails', async () => {
       submitInterviewSession.mockResolvedValue(
@@ -399,7 +422,6 @@ describe('InterviewService', () => {
       expect(authorizeInterviewSession).toHaveBeenCalledWith(
         sessionPublicId,
         userPublicId,
-        cvPublicId,
       );
       expect(submitInterviewSession).toHaveBeenCalledWith(sessionPublicId, {
         totalQuestions: 7,

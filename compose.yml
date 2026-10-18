@@ -199,7 +199,7 @@ services:
       - "-config.file=/etc/loki/config.yml"
     volumes:
       - ./monitoring/loki/config.yml:/etc/loki/config.yml:ro
-      - loki_data:/var/lib/loki/data:rw
+      - loki_data:/loki:rw
 
   # jaeger
   jaeger:

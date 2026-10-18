@@ -10,12 +10,12 @@ ruler:
   alertmanager_url: alertmanager:9093
 
 common:
-  path_prefix: /var/lib/loki/data
+  path_prefix: /loki
   replication_factor: 1
   storage:
     filesystem:
-      chunks_directory: /var/lib/loki/data/chunks
-      rules_directory: /var/lib/loki/data/rules
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
   ring:
     kvstore:
       store: inmemory
@@ -42,7 +42,7 @@ limits_config:
   max_line_size: 256000
 
 compactor:
-  working_directory: /var/lib/loki/data/retention
+  working_directory: /loki/retention
   compaction_interval: 10m # dictates how often compaction is applied. If the Compactor falls behind, compaction occurs as soon as possible.
   retention_enabled: true # Without this, the Compactor will only compact tables
   retention_delete_delay: 2h # the delay after which the Compactor will delete marked chunks.
