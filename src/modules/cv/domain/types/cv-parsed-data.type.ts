@@ -1,5 +1,5 @@
 // Shape of `cvs.parsed_data` (JSONB), filled by the CV parser (Sprint 3).
-// Shared contract: interview (Luồng 3, cv_snapshot) and question generation (Luồng 2)
+// Sharxed contract: interview (Luồng 3, cv_snapshot) and question generation (Luồng 2)
 // import this type. Changing it means telling both tracks.
 //
 // Convention: lists are never null. When the CV has nothing for a list, it is [].
