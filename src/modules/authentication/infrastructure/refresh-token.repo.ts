@@ -104,4 +104,23 @@ export class RefreshTokenRepository implements IRefreshTokenRepository {
       return err(new Error('Failed to revoke refresh tokens'));
     }
   }
+
+  async revokeRefreshTokenByHash(
+    tokenHash: string,
+  ): Promise<Result<void, Error>> {
+    try {
+      // updateMany thay vì update: không có token thì count = 0 chứ không throw,
+      // và revokedAt: null giữ nguyên thời điểm revoke cũ khi logout lần nữa
+      await this.prisma.refreshToken.updateMany({
+        where: { tokenHash, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      return ok(undefined);
+    } catch (error) {
+      this.logger.error(
+        `revokeRefreshTokenByHash failed: ${(error as Error).message}`,
+      );
+      return err(new Error('Failed to revoke refresh token'));
+    }
+  }
 }

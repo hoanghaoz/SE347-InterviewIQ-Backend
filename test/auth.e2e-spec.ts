@@ -187,6 +187,14 @@ class InMemoryRefreshTokenRepository implements IRefreshTokenRepository {
     }
     return Promise.resolve(ok(undefined));
   }
+
+  revokeRefreshTokenByHash(tokenHash: string): Promise<Result<void, Error>> {
+    const token = this.tokens.find((t) => t.tokenHash === tokenHash);
+    if (token && token.revokedAt === null) {
+      token.revokedAt = new Date();
+    }
+    return Promise.resolve(ok(undefined));
+  }
 }
 
 class CapturingEmailSender implements IEmailSender {

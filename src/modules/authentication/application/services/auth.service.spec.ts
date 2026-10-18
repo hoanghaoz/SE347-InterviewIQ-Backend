@@ -47,6 +47,7 @@ describe('AuthService', () => {
     getRefreshTokenByHash: jest.fn(),
     rotateRefreshToken: jest.fn(),
     revokeAllRefreshTokensForUser: jest.fn(),
+    revokeRefreshTokenByHash: jest.fn(),
   };
   // ConfigService có private member nên phải ép kiểu
   const configService = {

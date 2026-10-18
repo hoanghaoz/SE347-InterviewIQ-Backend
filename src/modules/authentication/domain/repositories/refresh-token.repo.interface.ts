@@ -44,4 +44,10 @@ export abstract class IRefreshTokenRepository {
   abstract revokeAllRefreshTokensForUser(
     userId: number,
   ): Promise<Result<void, Error>>;
+
+  // Dùng khi logout: chỉ revoke đúng token của thiết bị hiện tại.
+  // Token không tồn tại hoặc đã bị revoke thì không làm gì và vẫn ok.
+  abstract revokeRefreshTokenByHash(
+    tokenHash: string,
+  ): Promise<Result<void, Error>>;
 }
