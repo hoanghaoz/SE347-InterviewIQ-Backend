@@ -76,13 +76,18 @@ export class CloudinaryFileStorage implements ICvFileStorage {
         format: resource.format,
       });
     } catch (error) {
-      // The SDK rejects with { error: { http_code } }; 404 = no such file.
-      const httpCode = (error as { error?: { http_code?: number } }).error
-        ?.http_code;
-      if (httpCode === 404) {
-        return ok(null);
+      // The SDK rejects with { error: { http_code, message }, request_options, ... }.
+      const details = (
+        error as { error?: { http_code?: number; message?: unknown } }
+      ).error;
+      if (details?.http_code === 404) {
+        return ok(null); // no such file
       }
-      this.logger.error(`Cloudinary getFile failed: ${JSON.stringify(error)}`);
+      // Never log the whole error object: request_options.auth is "api_key:api_secret".
+      this.logger.error(
+        `Cloudinary getFile failed: HTTP ${details?.http_code ?? 'unknown'}` +
+          ` - ${typeof details?.message === 'string' ? details.message : 'no message'}`,
+      );
       return err(new Error('Failed to read file from storage.'));
     }
   }
