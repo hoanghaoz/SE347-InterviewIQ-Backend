@@ -102,4 +102,23 @@ export class AuthController {
       },
     );
   }
+
+  // Không cần access token: client vẫn logout được khi access token đã hết hạn
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Log out by revoking the refresh token of the current device',
+  })
+  async logoutAsync(
+    @Body() request: RefreshTokenDto,
+  ): Promise<ApiSuccessResponse<null>> {
+    const result = await this.authService.logoutAsync(request);
+
+    return result.match(
+      () => new ApiSuccessResponse(HttpStatus.OK, null, 'Logout successful'),
+      (error) => {
+        throw toHttpException(error);
+      },
+    );
+  }
 }
