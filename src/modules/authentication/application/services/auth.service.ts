@@ -12,10 +12,14 @@ import { IEmailOtpStore } from '../../domain/repositories/email-otp-store.interf
 import { IEmailSender } from '../../domain/repositories/email-sender.interface';
 import { IPasswordHasher } from '../../domain/repositories/password-hasher.interface';
 import { IPendingRegistrationStore } from '../../domain/repositories/pending-registration-store.interface';
-import { IRefreshTokenRepository } from '../../domain/repositories/refresh-token.repo.interface';
+import {
+  IRefreshTokenRepository,
+  RefreshTokenAlreadyRevokedError,
+} from '../../domain/repositories/refresh-token.repo.interface';
 import { ITokenHasher } from '../../domain/repositories/token-hasher.interface';
 import {
   LoginDto,
+  RefreshTokenDto,
   RegisterDto,
   VerifyRegistrationDto,
 } from '../dtos/auth.request.dto';
@@ -274,6 +278,82 @@ export class AuthService implements IAuthService {
     return ok({ accessToken: accessTokenResult.value, refreshToken });
   }
 
+  async refreshAsync(
+    request: RefreshTokenDto,
+  ): Promise<Result<LoginResponseDto, AppError>> {
+    // 1. DB chỉ lưu hash nên tìm theo hash của token client gửi lên
+    const tokenResult = await this.refreshTokenRepository.getRefreshTokenByHash(
+      this.tokenHasher.hashToken(request.refreshToken),
+    );
+    if (tokenResult.isErr()) {
+      return err(this.refreshFailedError());
+    }
+    const token = tokenResult.value;
+    if (token === null) {
+      return err(this.invalidRefreshTokenError());
+    }
+
+    // 2. Token đã bị rotate mà vẫn được gửi lại → có thể đã bị lộ.
+    // Không biết ai là chủ thật nên thu hồi mọi phiên của user, buộc login lại.
+    if (token.revokedAt !== null) {
+      this.logger.warn(`Refresh token reuse detected for user ${token.userId}`);
+      const revokeAll =
+        await this.refreshTokenRepository.revokeAllRefreshTokensForUser(
+          token.userId,
+        );
+      if (revokeAll.isErr()) {
+        this.logger.error('Failed to revoke refresh tokens after token reuse');
+      }
+      return err(this.invalidRefreshTokenError());
+    }
+
+    if (token.expiresAt.getTime() <= Date.now()) {
+      return err(this.invalidRefreshTokenError());
+    }
+
+    // 3. Đọc role mới nhất từ DB: đổi role sẽ có hiệu lực từ lần refresh tiếp theo
+    const userResult = await this.userRepository.getUserById(token.userId);
+    if (userResult.isErr()) {
+      return err(this.refreshFailedError());
+    }
+    const user = userResult.value;
+    if (user === null) {
+      return err(this.invalidRefreshTokenError());
+    }
+
+    // 4. Ký access token trước khi rotate: nếu ký lỗi thì token cũ vẫn còn dùng được,
+    // không bị rotate mất mà client lại không nhận được token mới
+    const accessTokenResult = await this.accessTokenIssuer.issueAccessToken({
+      sub: user.publicId,
+      role: user.role,
+    });
+    if (accessTokenResult.isErr()) {
+      return err(this.refreshFailedError());
+    }
+
+    // 5. Absolute expiry: token mới giữ nguyên expiresAt của token cũ,
+    // hết hạn thì phải login lại dù user vẫn đang hoạt động
+    const refreshToken = this.tokenHasher.generateToken();
+    const rotateResult = await this.refreshTokenRepository.rotateRefreshToken(
+      token.id,
+      {
+        userId: token.userId,
+        tokenHash: this.tokenHasher.hashToken(refreshToken),
+        expiresAt: token.expiresAt,
+      },
+    );
+    if (rotateResult.isErr()) {
+      // Request khác vừa rotate token này (client gửi trùng): không thu hồi hết
+      // như bước 2 vì đa số là retry vô hại, chỉ từ chối request này
+      if (rotateResult.error instanceof RefreshTokenAlreadyRevokedError) {
+        return err(this.invalidRefreshTokenError());
+      }
+      return err(this.refreshFailedError());
+    }
+
+    return ok({ accessToken: accessTokenResult.value, refreshToken });
+  }
+
   private invalidOtpError(): AppError {
     return new AppError(ErrorCode.BadRequest, 'Invalid or expired OTP');
   }
@@ -287,5 +367,18 @@ export class AuthService implements IAuthService {
 
   private loginFailedError(): AppError {
     return new AppError(ErrorCode.InternalServerError, 'Failed to login');
+  }
+
+  // Không tồn tại / đã revoke / hết hạn / user đã bị xóa dùng chung một lỗi
+  // để không lộ trạng thái của token
+  private invalidRefreshTokenError(): AppError {
+    return new AppError(ErrorCode.Unauthorized, 'Invalid refresh token');
+  }
+
+  private refreshFailedError(): AppError {
+    return new AppError(
+      ErrorCode.InternalServerError,
+      'Failed to refresh token',
+    );
   }
 }

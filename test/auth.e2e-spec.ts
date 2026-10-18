@@ -25,6 +25,8 @@ import { IAccessTokenIssuer } from '../src/modules/authentication/domain/reposit
 import {
   CreateRefreshTokenData,
   IRefreshTokenRepository,
+  RefreshTokenAlreadyRevokedError,
+  RefreshTokenRecord,
 } from '../src/modules/authentication/domain/repositories/refresh-token.repo.interface';
 import { ITokenHasher } from '../src/modules/authentication/domain/repositories/token-hasher.interface';
 import { JwtAccessTokenIssuer } from '../src/modules/authentication/infrastructure/jwt-access-token-issuer';
@@ -114,16 +116,75 @@ class InMemoryUserRepository implements IUserRepository {
       ),
     );
   }
+  getUserById(id: number) {
+    const user = [...this.users.values()].find((u) => u.id === id);
+    return Promise.resolve(
+      ok(user ? { publicId: user.publicId, role: CommonUserRole.USER } : null),
+    );
+  }
 }
 
+type StoredRefreshToken = CreateRefreshTokenData & {
+  readonly id: number;
+  revokedAt: Date | null;
+};
+
 class InMemoryRefreshTokenRepository implements IRefreshTokenRepository {
-  readonly tokens: CreateRefreshTokenData[] = [];
+  readonly tokens: StoredRefreshToken[] = [];
 
   // Khai báo rõ kiểu trả về để test có thể mock nhánh err()
   createRefreshToken(
     data: CreateRefreshTokenData,
   ): Promise<Result<void, Error>> {
-    this.tokens.push(data);
+    this.tokens.push({ ...data, id: this.tokens.length + 1, revokedAt: null });
+    return Promise.resolve(ok(undefined));
+  }
+
+  getRefreshTokenByHash(
+    tokenHash: string,
+  ): Promise<Result<RefreshTokenRecord | null, Error>> {
+    const token = this.tokens.find((t) => t.tokenHash === tokenHash);
+    // Trả bản copy như DB, để service không sửa được dữ liệu đã lưu
+    return Promise.resolve(
+      ok(
+        token
+          ? {
+              id: token.id,
+              userId: token.userId,
+              expiresAt: token.expiresAt,
+              revokedAt: token.revokedAt,
+            }
+          : null,
+      ),
+    );
+  }
+
+  // Không có await giữa bước check và revoke nên đã atomic trong JS,
+  // giống updateMany có điều kiện revokedAt: null của bản Prisma
+  rotateRefreshToken(
+    oldTokenId: number,
+    newToken: CreateRefreshTokenData,
+  ): Promise<Result<void, Error>> {
+    const old = this.tokens.find((t) => t.id === oldTokenId);
+    if (!old || old.revokedAt !== null) {
+      return Promise.resolve(err(new RefreshTokenAlreadyRevokedError()));
+    }
+    old.revokedAt = new Date();
+    this.tokens.push({
+      ...newToken,
+      id: this.tokens.length + 1,
+      revokedAt: null,
+    });
+    return Promise.resolve(ok(undefined));
+  }
+
+  revokeAllRefreshTokensForUser(userId: number): Promise<Result<void, Error>> {
+    const now = new Date();
+    for (const token of this.tokens) {
+      if (token.userId === userId && token.revokedAt === null) {
+        token.revokedAt = now;
+      }
+    }
     return Promise.resolve(ok(undefined));
   }
 }

@@ -2,6 +2,7 @@ import { Result } from 'neverthrow';
 import { AppError } from 'src/shared/common/errorCode';
 import {
   LoginDto,
+  RefreshTokenDto,
   RegisterDto,
   VerifyRegistrationDto,
 } from '../dtos/auth.request.dto';
@@ -14,5 +15,8 @@ export abstract class IAuthService {
   ): Promise<Result<{ email: string }, AppError>>;
   abstract loginAsync(
     request: LoginDto,
+  ): Promise<Result<LoginResponseDto, AppError>>;
+  abstract refreshAsync(
+    request: RefreshTokenDto,
   ): Promise<Result<LoginResponseDto, AppError>>;
 }

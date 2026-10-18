@@ -12,6 +12,7 @@ describe('AuthService', () => {
     getUserByEmail: jest.fn(),
     createUser: jest.fn(),
     getUserCredentialsByEmail: jest.fn(),
+    getUserById: jest.fn(),
   };
   const passwordHasher = {
     hash: jest.fn(),
@@ -42,6 +43,9 @@ describe('AuthService', () => {
   };
   const refreshTokenRepository = {
     createRefreshToken: jest.fn(),
+    getRefreshTokenByHash: jest.fn(),
+    rotateRefreshToken: jest.fn(),
+    revokeAllRefreshTokensForUser: jest.fn(),
   };
   // ConfigService có private member nên phải ép kiểu
   const configService = {
