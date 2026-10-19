@@ -6,6 +6,7 @@ import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
 import {
   IUserRepository,
   UserAlreadyExistsError,
+  type UserIdentity,
 } from '../../../user/domain/repositories/user.repo.interface';
 import { IAccessTokenIssuer } from '../../domain/repositories/access-token-issuer.interface';
 import { IEmailOtpStore } from '../../domain/repositories/email-otp-store.interface';
@@ -257,28 +258,13 @@ export class AuthService implements IAuthService {
       );
     }
 
-    // 2. Access token chỉ mang publicId và role, không lộ id nội bộ
-    const accessTokenResult = await this.accessTokenIssuer.issueAccessToken({
-      sub: user.publicId,
-      role: user.role,
-    });
-    if (accessTokenResult.isErr()) {
+    // 2. Cấp phiên mới cho thiết bị này
+    const tokensResult = await this.issueTokenPairAsync(user);
+    if (tokensResult.isErr()) {
       return err(this.loginFailedError());
     }
 
-    // 3. Refresh token: trả bản gốc cho client, DB chỉ lưu hash
-    const refreshToken = this.tokenHasher.generateToken();
-    const saveRefreshToken =
-      await this.refreshTokenRepository.createRefreshToken({
-        userId: user.id,
-        tokenHash: this.tokenHasher.hashToken(refreshToken),
-        expiresAt: new Date(Date.now() + this.refreshTokenTtlSeconds * 1000),
-      });
-    if (saveRefreshToken.isErr()) {
-      return err(this.loginFailedError());
-    }
-
-    return ok({ accessToken: accessTokenResult.value, refreshToken });
+    return ok(tokensResult.value);
   }
 
   async refreshAsync(
@@ -380,6 +366,35 @@ export class AuthService implements IAuthService {
     }
 
     return ok(undefined);
+  }
+
+  // Mọi luồng cấp phiên mới (login, verify đăng ký) dùng chung: trả Error thô
+  // để mỗi caller tự map ra AppError của luồng mình
+  private async issueTokenPairAsync(
+    user: UserIdentity & { readonly id: number },
+  ): Promise<Result<LoginResponseDto, Error>> {
+    // Access token chỉ mang publicId và role, không lộ id nội bộ
+    const accessTokenResult = await this.accessTokenIssuer.issueAccessToken({
+      sub: user.publicId,
+      role: user.role,
+    });
+    if (accessTokenResult.isErr()) {
+      return err(accessTokenResult.error);
+    }
+
+    // Refresh token: trả bản gốc cho client, DB chỉ lưu hash
+    const refreshToken = this.tokenHasher.generateToken();
+    const saveRefreshToken =
+      await this.refreshTokenRepository.createRefreshToken({
+        userId: user.id,
+        tokenHash: this.tokenHasher.hashToken(refreshToken),
+        expiresAt: new Date(Date.now() + this.refreshTokenTtlSeconds * 1000),
+      });
+    if (saveRefreshToken.isErr()) {
+      return err(saveRefreshToken.error);
+    }
+
+    return ok({ accessToken: accessTokenResult.value, refreshToken });
   }
 
   private invalidOtpError(): AppError {
