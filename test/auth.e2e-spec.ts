@@ -46,7 +46,7 @@ import { RedisService } from '../src/shared/infrastructure/redis/redis.service';
  * Chạy luồng register → verify → login qua HTTP thật với AuthService, Redis stores,
  * bcrypt, JWT và SHA-256 thật.
  * Chỉ thay hạ tầng bên ngoài bằng bản in-memory: Redis (Map), Postgres (Map), SMTP (ghi lại OTP).
- * Không cần Docker; TTL không được mô phỏng.
+ * Không cần Docker; TTL không tự đếm ngược: test sửa `redis.ttls` để giả lập thời gian trôi.
  */
 const JWT_SECRET = 'e2e-test-secret';
 const JWT_ACCESS_EXPIRES_IN = 900;
@@ -60,20 +60,30 @@ const testConfig: Record<string, string> = {
 
 class InMemoryRedis {
   readonly store = new Map<string, string>();
+  // Số giây còn lại của từng key, giữ nguyên tới khi key bị set lại hoặc xóa
+  readonly ttls = new Map<string, number>();
 
   get(key: string): Promise<string | null> {
     return Promise.resolve(this.store.get(key) ?? null);
   }
-  set(key: string, value: string): Promise<void> {
+  set(key: string, value: string, ttlSeconds?: number): Promise<void> {
     this.store.set(key, value);
+    if (ttlSeconds) {
+      this.ttls.set(key, ttlSeconds);
+    } else {
+      this.ttls.delete(key);
+    }
     return Promise.resolve();
   }
   del(key: string): Promise<void> {
     this.store.delete(key);
+    this.ttls.delete(key);
     return Promise.resolve();
   }
+  // Giống Redis: -2 khi key không tồn tại, -1 khi key không có expiry
   ttl(key: string): Promise<number> {
-    return Promise.resolve(this.store.has(key) ? 300 : -2);
+    if (!this.store.has(key)) return Promise.resolve(-2);
+    return Promise.resolve(this.ttls.get(key) ?? -1);
   }
   incrementWithTtl(key: string): Promise<number> {
     const next = Number(this.store.get(key) ?? '0') + 1;
@@ -220,6 +230,7 @@ describe('AuthController (e2e)', () => {
   const jwtService = new JwtService();
 
   const registerRoute = '/api/auth/register';
+  const resendRoute = '/api/auth/register/resend';
   const verifyRoute = '/api/auth/register/verify';
   const loginRoute = '/api/auth/login';
   const refreshRoute = '/api/auth/refresh';
@@ -232,6 +243,8 @@ describe('AuthController (e2e)', () => {
 
   const register = (payload: object = body) =>
     request(app.getHttpServer()).post(registerRoute).send(payload);
+  const resend = (payload: object = { email: body.email }) =>
+    request(app.getHttpServer()).post(resendRoute).send(payload);
   const verify = (payload: object) =>
     request(app.getHttpServer()).post(verifyRoute).send(payload);
   const login = (payload: object) =>
@@ -241,6 +254,9 @@ describe('AuthController (e2e)', () => {
   const logout = (refreshToken: string) =>
     request(app.getHttpServer()).post(logoutRoute).send({ refreshToken });
   const wrongOtpFor = (otp: string) => (otp === '000000' ? '111111' : '000000');
+  // Giả lập OTP hiện tại đã gửi được 100s (TTL 300s), qua cooldown 60s
+  const passOtpCooldown = () =>
+    redis.ttls.set(`auth:otp:register:${body.email}`, 200);
   // Tạo account qua đúng luồng thật để passwordHash là bcrypt thật
   const createAccount = async () => {
     await register().expect(200);
@@ -356,6 +372,25 @@ describe('AuthController (e2e)', () => {
       expect(mailer.sent).toHaveLength(0);
     });
 
+    it('returns 429 when registering again within the cooldown without changing the pending data', async () => {
+      await register().expect(200);
+      const pendingKey = `auth:pending-registration:${body.email}`;
+      const pendingBefore = redis.store.get(pendingKey);
+
+      const response = await register({
+        ...body,
+        fullName: 'Someone Else',
+      }).expect(429);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.TooManyRequests,
+        message: 'Please wait before requesting a new OTP',
+        path: registerRoute,
+      });
+      expect(redis.store.get(pendingKey)).toBe(pendingBefore);
+      expect(mailer.sent).toHaveLength(1);
+    });
+
     it('returns field errors without echoing the rejected password', async () => {
       const response = await register({
         email: 'not-an-email',
@@ -369,6 +404,90 @@ describe('AuthController (e2e)', () => {
         expect.arrayContaining(['email', 'password', 'fullName']),
       );
       expect(JSON.stringify(response.body)).not.toContain('short');
+    });
+  });
+
+  describe('POST /api/auth/register/resend', () => {
+    it('emails a new otp that replaces the old one', async () => {
+      await register().expect(200);
+      const firstOtp = mailer.lastOtpFor(body.email);
+      passOtpCooldown();
+
+      const response = await resend().expect(200);
+
+      expect(response.body).toMatchObject({
+        statusCode: 200,
+        success: true,
+        data: { email: body.email },
+        message: 'OTP has been sent to your email',
+      });
+      expect(mailer.sent).toHaveLength(2);
+      const secondOtp = mailer.lastOtpFor(body.email);
+      await verify({ email: body.email, otp: firstOtp }).expect(400);
+      await verify({ email: body.email, otp: secondOtp }).expect(201);
+    });
+
+    it('normalizes the email before using it', async () => {
+      await register().expect(200);
+      passOtpCooldown();
+
+      await resend({ email: '  New.User@Example.com ' }).expect(200);
+
+      expect(mailer.sent).toHaveLength(2);
+    });
+
+    it('returns 429 without sending email when asked again within the cooldown', async () => {
+      await register().expect(200);
+
+      const response = await resend().expect(429);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.TooManyRequests,
+        message: 'Please wait before requesting a new OTP',
+        path: resendRoute,
+      });
+      expect(mailer.sent).toHaveLength(1);
+    });
+
+    it('lets the user get a new otp right after too many wrong attempts', async () => {
+      await register().expect(200);
+      const wrong = wrongOtpFor(mailer.lastOtpFor(body.email));
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        await verify({ email: body.email, otp: wrong }).expect(400);
+      }
+      const locked = await verify({ email: body.email, otp: wrong }).expect(
+        429,
+      );
+      expect(locked.body).toMatchObject({
+        message: 'Too many attempts, please request a new OTP',
+      });
+
+      // OTP đã bị xóa nên không còn vướng cooldown
+      await resend().expect(200);
+
+      const newOtp = mailer.lastOtpFor(body.email);
+      await verify({ email: body.email, otp: newOtp }).expect(201);
+    });
+
+    it('returns 400 without sending email when there is no pending registration', async () => {
+      const response = await resend().expect(400);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.BadRequest,
+        message: 'Registration expired, please register again',
+        path: resendRoute,
+      });
+      expect(mailer.sent).toHaveLength(0);
+    });
+
+    it('returns a validation error for a malformed email', async () => {
+      const response = await resend({ email: 'not-an-email' }).expect(400);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.BadRequest,
+        message: 'Request validation failed',
+        errors: [{ field: 'email', messages: ['Invalid email format'] }],
+      });
     });
   });
 
@@ -496,6 +615,7 @@ describe('AuthController (e2e)', () => {
         }).expect(400);
       }
 
+      passOtpCooldown();
       await register().expect(200);
       const secondOtp = mailer.lastOtpFor(body.email);
 
