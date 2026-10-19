@@ -12,6 +12,7 @@ import { IAccessTokenIssuer } from '../../domain/repositories/access-token-issue
 import { IEmailOtpStore } from '../../domain/repositories/email-otp-store.interface';
 import { IEmailSender } from '../../domain/repositories/email-sender.interface';
 import { IPasswordHasher } from '../../domain/repositories/password-hasher.interface';
+import { IPasswordResetOtpStore } from '../../domain/repositories/password-reset-otp-store.interface';
 import { IPendingRegistrationStore } from '../../domain/repositories/pending-registration-store.interface';
 import {
   IRefreshTokenRepository,
@@ -19,10 +20,12 @@ import {
 } from '../../domain/repositories/refresh-token.repo.interface';
 import { ITokenHasher } from '../../domain/repositories/token-hasher.interface';
 import {
+  ForgotPasswordDto,
   LoginDto,
   RefreshTokenDto,
   RegisterDto,
   ResendRegistrationOtpDto,
+  ResetPasswordDto,
   VerifyRegistrationDto,
 } from '../dtos/auth.request.dto';
 import { LoginResponseDto } from '../dtos/auth.response.dto';
@@ -54,6 +57,7 @@ export class AuthService implements IAuthService {
     private readonly emailSender: IEmailSender,
     private readonly pendingRegistrationStore: IPendingRegistrationStore,
     private readonly emailOtpStore: IEmailOtpStore,
+    private readonly passwordResetOtpStore: IPasswordResetOtpStore,
     private readonly accessTokenIssuer: IAccessTokenIssuer,
     private readonly tokenHasher: ITokenHasher,
     private readonly refreshTokenRepository: IRefreshTokenRepository,
@@ -358,22 +362,138 @@ export class AuthService implements IAuthService {
     return ok(undefined);
   }
 
+  async requestPasswordResetAsync(
+    request: ForgotPasswordDto,
+  ): Promise<Result<void, AppError>> {
+    const { email } = request;
+
+    // Email lạ và đang trong cooldown đều trả ok như khi gửi thật:
+    // response không cho biết email nào đã có tài khoản
+    const userResult = await this.userRepository.getUserByEmail(email);
+    if (userResult.isErr()) {
+      return err(this.passwordResetRequestFailedError());
+    }
+    if (userResult.value === null) {
+      return ok(undefined);
+    }
+
+    // OTP trước còn dùng được nên trong cooldown chỉ cần không gửi mail mới
+    const inCooldown = await this.isOtpInCooldownAsync(
+      this.passwordResetOtpStore,
+      email,
+    );
+    if (inCooldown.isErr()) {
+      return err(this.passwordResetRequestFailedError());
+    }
+    if (inCooldown.value) {
+      return ok(undefined);
+    }
+
+    const otp = await this.issueOtpAsync(this.passwordResetOtpStore, email);
+    if (otp.isErr()) {
+      return err(otp.error);
+    }
+
+    const sendOtp = await this.emailSender.sendPasswordResetOtp(
+      email,
+      otp.value,
+    );
+    if (sendOtp.isErr()) {
+      return err(
+        new AppError(ErrorCode.InternalServerError, 'Failed to send OTP email'),
+      );
+    }
+
+    return ok(undefined);
+  }
+
+  async resetPasswordAsync(
+    request: ResetPasswordDto,
+  ): Promise<Result<void, AppError>> {
+    const { email, otp, newPassword } = request;
+
+    // 1. OTP trước: chỉ chủ email mới đi tiếp được
+    const otpCheck = await this.checkOtpAsync(
+      this.passwordResetOtpStore,
+      email,
+      otp,
+      this.resetPasswordFailedError(),
+    );
+    if (otpCheck.isErr()) {
+      return err(otpCheck.error);
+    }
+
+    // 2. Tài khoản bị xóa sau khi xin OTP: báo như OTP sai, không lộ trạng thái tài khoản
+    const userResult = await this.userRepository.getUserByEmail(email);
+    if (userResult.isErr()) {
+      return err(this.resetPasswordFailedError());
+    }
+    if (userResult.value === null) {
+      return err(this.invalidOtpError());
+    }
+    const userId = userResult.value.id;
+
+    // 3. Đổi mật khẩu
+    const passwordHash = await this.passwordHasher.hash(newPassword);
+    if (passwordHash.isErr()) {
+      return err(this.resetPasswordFailedError());
+    }
+    const updateResult = await this.userRepository.updateUserPassword(
+      userId,
+      passwordHash.value,
+    );
+    if (updateResult.isErr()) {
+      return err(this.resetPasswordFailedError());
+    }
+
+    // 4. Đá mọi phiên cũ: reset thường là vì nghi tài khoản bị chiếm.
+    // Lỗi ở đây vẫn giữ OTP để user gửi lại đúng request này (đổi mật khẩu lần nữa là vô hại)
+    const revokeAll =
+      await this.refreshTokenRepository.revokeAllRefreshTokensForUser(userId);
+    if (revokeAll.isErr()) {
+      return err(this.resetPasswordFailedError());
+    }
+
+    // 5. Xong hết mới xóa OTP. Lỗi dọn dẹp chỉ log, TTL sẽ tự dọn
+    const cleanups = await Promise.all([
+      this.passwordResetOtpStore.deleteOtp(email),
+      this.passwordResetOtpStore.resetFailedAttempts(email),
+    ]);
+    if (cleanups.some((result) => result.isErr())) {
+      this.logger.warn('Failed to clean up password reset OTP');
+    }
+
+    return ok(undefined);
+  }
+
   // OTP còn sống lâu hơn (TTL - cooldown) nghĩa là vừa được gửi chưa quá cooldown.
   // Dùng luôn TTL của OTP nên không cần thêm key Redis riêng cho cooldown.
-  private async ensureOtpCooldownPassedAsync(
+  private async isOtpInCooldownAsync(
     store: IEmailOtpStore,
     email: string,
-  ): Promise<Result<void, AppError>> {
+  ): Promise<Result<boolean, AppError>> {
     const remainingTtl = await store.getRemainingTtl(email);
     if (remainingTtl.isErr()) {
       return err(
         new AppError(ErrorCode.InternalServerError, 'Failed to generate OTP'),
       );
     }
-    if (
+
+    return ok(
       remainingTtl.value !== null &&
-      remainingTtl.value > OTP_TTL_SECONDS - OTP_RESEND_COOLDOWN_SECONDS
-    ) {
+        remainingTtl.value > OTP_TTL_SECONDS - OTP_RESEND_COOLDOWN_SECONDS,
+    );
+  }
+
+  private async ensureOtpCooldownPassedAsync(
+    store: IEmailOtpStore,
+    email: string,
+  ): Promise<Result<void, AppError>> {
+    const inCooldown = await this.isOtpInCooldownAsync(store, email);
+    if (inCooldown.isErr()) {
+      return err(inCooldown.error);
+    }
+    if (inCooldown.value) {
       return err(
         new AppError(
           ErrorCode.TooManyRequests,
@@ -536,6 +656,20 @@ export class AuthService implements IAuthService {
     return new AppError(
       ErrorCode.InternalServerError,
       'Account created but automatic login failed, please log in',
+    );
+  }
+
+  private passwordResetRequestFailedError(): AppError {
+    return new AppError(
+      ErrorCode.InternalServerError,
+      'Failed to request password reset',
+    );
+  }
+
+  private resetPasswordFailedError(): AppError {
+    return new AppError(
+      ErrorCode.InternalServerError,
+      'Failed to reset password',
     );
   }
 

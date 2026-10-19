@@ -17,9 +17,11 @@ import { AuthService } from '../src/modules/authentication/application/services/
 import { IEmailOtpStore } from '../src/modules/authentication/domain/repositories/email-otp-store.interface';
 import { IEmailSender } from '../src/modules/authentication/domain/repositories/email-sender.interface';
 import { IPasswordHasher } from '../src/modules/authentication/domain/repositories/password-hasher.interface';
+import { IPasswordResetOtpStore } from '../src/modules/authentication/domain/repositories/password-reset-otp-store.interface';
 import { IPendingRegistrationStore } from '../src/modules/authentication/domain/repositories/pending-registration-store.interface';
 import { BcryptPasswordHasher } from '../src/modules/authentication/infrastructure/bcrypt-password-hasher';
 import { RedisEmailOtpStore } from '../src/modules/authentication/infrastructure/redis-email-otp-store';
+import { RedisPasswordResetOtpStore } from '../src/modules/authentication/infrastructure/redis-password-reset-otp-store';
 import { RedisPendingRegistrationStore } from '../src/modules/authentication/infrastructure/redis-pending-registration-store';
 import { IAccessTokenIssuer } from '../src/modules/authentication/domain/repositories/access-token-issuer.interface';
 import {
@@ -299,6 +301,10 @@ describe('AuthController (e2e)', () => {
         { provide: IAuthService, useClass: AuthService },
         { provide: IPasswordHasher, useClass: BcryptPasswordHasher },
         { provide: IEmailOtpStore, useClass: RedisEmailOtpStore },
+        {
+          provide: IPasswordResetOtpStore,
+          useClass: RedisPasswordResetOtpStore,
+        },
         {
           provide: IPendingRegistrationStore,
           useClass: RedisPendingRegistrationStore,

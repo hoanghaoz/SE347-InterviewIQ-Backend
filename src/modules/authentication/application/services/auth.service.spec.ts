@@ -37,6 +37,14 @@ describe('AuthService', () => {
     incrementFailedAttempts: jest.fn(),
     resetFailedAttempts: jest.fn(),
   };
+  const passwordResetOtpStore = {
+    saveOtp: jest.fn(),
+    findOtp: jest.fn(),
+    deleteOtp: jest.fn(),
+    getRemainingTtl: jest.fn(),
+    incrementFailedAttempts: jest.fn(),
+    resetFailedAttempts: jest.fn(),
+  };
   const accessTokenIssuer = {
     issueAccessToken: jest.fn(),
   };
@@ -63,6 +71,7 @@ describe('AuthService', () => {
     emailSender,
     pendingStore,
     otpStore,
+    passwordResetOtpStore,
     accessTokenIssuer,
     tokenHasher,
     refreshTokenRepository,
@@ -560,6 +569,7 @@ describe('AuthService', () => {
         emailSender,
         pendingStore,
         otpStore,
+        passwordResetOtpStore,
         accessTokenIssuer,
         tokenHasher,
         refreshTokenRepository,

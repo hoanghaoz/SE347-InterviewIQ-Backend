@@ -1,10 +1,12 @@
 import { Result } from 'neverthrow';
 import { AppError } from 'src/shared/common/errorCode';
 import {
+  ForgotPasswordDto,
   LoginDto,
   RefreshTokenDto,
   RegisterDto,
   ResendRegistrationOtpDto,
+  ResetPasswordDto,
   VerifyRegistrationDto,
 } from '../dtos/auth.request.dto';
 import { LoginResponseDto } from '../dtos/auth.response.dto';
@@ -25,5 +27,11 @@ export abstract class IAuthService {
   ): Promise<Result<LoginResponseDto, AppError>>;
   abstract logoutAsync(
     request: RefreshTokenDto,
+  ): Promise<Result<void, AppError>>;
+  abstract requestPasswordResetAsync(
+    request: ForgotPasswordDto,
+  ): Promise<Result<void, AppError>>;
+  abstract resetPasswordAsync(
+    request: ResetPasswordDto,
   ): Promise<Result<void, AppError>>;
 }
