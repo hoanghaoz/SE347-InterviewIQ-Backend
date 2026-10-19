@@ -976,4 +976,237 @@ describe('AuthService', () => {
       expect(result.error.message).toBe('Failed to logout');
     });
   });
+
+  describe('requestPasswordResetAsync', () => {
+    const request = { email };
+
+    // Mặc định mọi bước đều thành công; từng test ghi đè bước cần làm hỏng
+    beforeEach(() => {
+      userRepository.getUserByEmail.mockResolvedValue(ok({ id: 7 }));
+      passwordResetOtpStore.getRemainingTtl.mockResolvedValue(ok(null));
+      passwordHasher.hash.mockImplementation((plain: string) =>
+        Promise.resolve(ok(`hashed:${plain}`)),
+      );
+      passwordResetOtpStore.saveOtp.mockResolvedValue(ok(undefined));
+      passwordResetOtpStore.resetFailedAttempts.mockResolvedValue(
+        ok(undefined),
+      );
+      emailSender.sendPasswordResetOtp.mockResolvedValue(ok(undefined));
+    });
+
+    const sentOtp = (): string =>
+      (emailSender.sendPasswordResetOtp.mock.calls[0] as [string, string])[1];
+
+    it('emails a reset otp and stores only its hash in the password reset store', async () => {
+      const result = await service.requestPasswordResetAsync(request);
+
+      expect(result.isOk()).toBe(true);
+      expect(sentOtp()).toMatch(/^\d{6}$/);
+      expect(passwordResetOtpStore.saveOtp).toHaveBeenCalledWith(
+        email,
+        `hashed:${sentOtp()}`,
+        300,
+      );
+      expect(passwordResetOtpStore.resetFailedAttempts).toHaveBeenCalledWith(
+        email,
+      );
+      // Không đụng OTP và mail của luồng đăng ký
+      expect(otpStore.saveOtp).not.toHaveBeenCalled();
+      expect(emailSender.sendOtp).not.toHaveBeenCalled();
+    });
+
+    it('returns ok without sending anything when the email is not registered', async () => {
+      userRepository.getUserByEmail.mockResolvedValue(ok(null));
+
+      const result = await service.requestPasswordResetAsync(request);
+
+      expect(result.isOk()).toBe(true);
+      expect(passwordResetOtpStore.saveOtp).not.toHaveBeenCalled();
+      expect(emailSender.sendPasswordResetOtp).not.toHaveBeenCalled();
+    });
+
+    it('returns ok without a new email while the previous otp is within the cooldown', async () => {
+      passwordResetOtpStore.getRemainingTtl.mockResolvedValue(ok(250));
+
+      const result = await service.requestPasswordResetAsync(request);
+
+      // Không trả 429: lỗi đó chỉ xảy ra với email có tài khoản nên sẽ lộ email
+      expect(result.isOk()).toBe(true);
+      expect(passwordResetOtpStore.saveOtp).not.toHaveBeenCalled();
+      expect(emailSender.sendPasswordResetOtp).not.toHaveBeenCalled();
+    });
+
+    it('sends a new otp once the cooldown has ended', async () => {
+      passwordResetOtpStore.getRemainingTtl.mockResolvedValue(ok(240));
+
+      const result = await service.requestPasswordResetAsync(request);
+
+      expect(result.isOk()).toBe(true);
+      expect(emailSender.sendPasswordResetOtp).toHaveBeenCalled();
+    });
+
+    it.each([
+      ['looking up the user', () => userRepository.getUserByEmail],
+      [
+        'checking the otp cooldown',
+        () => passwordResetOtpStore.getRemainingTtl,
+      ],
+      ['saving the otp', () => passwordResetOtpStore.saveOtp],
+      ['sending the email', () => emailSender.sendPasswordResetOtp],
+    ])(
+      'returns a safe InternalServerError when %s fails',
+      async (_step, getMock) => {
+        getMock().mockResolvedValue(err(new Error('internal detail')));
+
+        const result = await service.requestPasswordResetAsync(request);
+
+        if (result.isOk()) throw new Error('Expected an error result');
+        expect(result.error.code).toBe(ErrorCode.InternalServerError);
+        expect(result.error.message).not.toContain('internal detail');
+      },
+    );
+  });
+
+  describe('resetPasswordAsync', () => {
+    const request = { email, otp: '123456', newPassword: 'N3wStr0ngPass' };
+
+    // Mặc định mọi bước đều thành công; từng test ghi đè bước cần làm hỏng
+    beforeEach(() => {
+      passwordResetOtpStore.findOtp.mockResolvedValue(ok('hashed:123456'));
+      passwordHasher.compare.mockResolvedValue(ok(true));
+      passwordHasher.hash.mockResolvedValue(ok('bcrypt-hash'));
+      userRepository.getUserByEmail.mockResolvedValue(ok({ id: 7 }));
+      userRepository.updateUserPassword.mockResolvedValue(ok(undefined));
+      refreshTokenRepository.revokeAllRefreshTokensForUser.mockResolvedValue(
+        ok(undefined),
+      );
+      passwordResetOtpStore.deleteOtp.mockResolvedValue(ok(undefined));
+      passwordResetOtpStore.resetFailedAttempts.mockResolvedValue(
+        ok(undefined),
+      );
+    });
+
+    const expectError = async (code: ErrorCode, message: string) => {
+      const result = await service.resetPasswordAsync(request);
+
+      if (result.isOk()) throw new Error('Expected an error result');
+      expect(result.error.code).toBe(code);
+      expect(result.error.message).toBe(message);
+    };
+
+    it('stores the hash of the new password, logs out every session and removes the otp', async () => {
+      const result = await service.resetPasswordAsync(request);
+
+      expect(result.isOk()).toBe(true);
+      expect(passwordResetOtpStore.findOtp).toHaveBeenCalledWith(email);
+      expect(passwordHasher.compare).toHaveBeenCalledWith(
+        '123456',
+        'hashed:123456',
+      );
+      expect(passwordHasher.hash).toHaveBeenCalledWith('N3wStr0ngPass');
+      expect(userRepository.updateUserPassword).toHaveBeenCalledWith(
+        7,
+        'bcrypt-hash',
+      );
+      expect(
+        refreshTokenRepository.revokeAllRefreshTokensForUser,
+      ).toHaveBeenCalledWith(7);
+      expect(passwordResetOtpStore.deleteOtp).toHaveBeenCalledWith(email);
+      expect(passwordResetOtpStore.resetFailedAttempts).toHaveBeenCalledWith(
+        email,
+      );
+      // OTP đăng ký không dùng được để đặt lại mật khẩu
+      expect(otpStore.findOtp).not.toHaveBeenCalled();
+    });
+
+    it('never passes the plain new password to the repository', async () => {
+      await service.resetPasswordAsync(request);
+
+      expect(
+        JSON.stringify(userRepository.updateUserPassword.mock.calls),
+      ).not.toContain('N3wStr0ngPass');
+    });
+
+    it('returns BadRequest without touching the password when no otp is stored', async () => {
+      passwordResetOtpStore.findOtp.mockResolvedValue(ok(null));
+
+      await expectError(ErrorCode.BadRequest, 'Invalid or expired OTP');
+      expect(passwordHasher.compare).not.toHaveBeenCalled();
+      expect(userRepository.updateUserPassword).not.toHaveBeenCalled();
+    });
+
+    it('counts a wrong otp and returns BadRequest while under the attempt limit', async () => {
+      passwordHasher.compare.mockResolvedValue(ok(false));
+      passwordResetOtpStore.incrementFailedAttempts.mockResolvedValue(ok(1));
+
+      await expectError(ErrorCode.BadRequest, 'Invalid or expired OTP');
+      expect(
+        passwordResetOtpStore.incrementFailedAttempts,
+      ).toHaveBeenCalledWith(email, 300);
+      expect(passwordResetOtpStore.deleteOtp).not.toHaveBeenCalled();
+      expect(userRepository.updateUserPassword).not.toHaveBeenCalled();
+    });
+
+    it('deletes the otp and returns TooManyRequests on the 5th wrong attempt', async () => {
+      passwordHasher.compare.mockResolvedValue(ok(false));
+      passwordResetOtpStore.incrementFailedAttempts.mockResolvedValue(ok(5));
+
+      await expectError(
+        ErrorCode.TooManyRequests,
+        'Too many attempts, please request a new OTP',
+      );
+      expect(passwordResetOtpStore.deleteOtp).toHaveBeenCalledWith(email);
+      expect(userRepository.updateUserPassword).not.toHaveBeenCalled();
+    });
+
+    it('returns the same BadRequest as a wrong otp when the account no longer exists', async () => {
+      userRepository.getUserByEmail.mockResolvedValue(ok(null));
+
+      await expectError(ErrorCode.BadRequest, 'Invalid or expired OTP');
+      expect(userRepository.updateUserPassword).not.toHaveBeenCalled();
+    });
+
+    it('keeps the otp so the user can retry when logging out the sessions fails', async () => {
+      refreshTokenRepository.revokeAllRefreshTokensForUser.mockResolvedValue(
+        err(new Error('internal detail')),
+      );
+
+      await expectError(
+        ErrorCode.InternalServerError,
+        'Failed to reset password',
+      );
+      expect(userRepository.updateUserPassword).toHaveBeenCalled();
+      expect(passwordResetOtpStore.deleteOtp).not.toHaveBeenCalled();
+    });
+
+    it('still succeeds and logs a warning when cleaning up the otp fails', async () => {
+      passwordResetOtpStore.deleteOtp.mockResolvedValue(
+        err(new Error('redis down')),
+      );
+
+      const result = await service.resetPasswordAsync(request);
+
+      expect(result.isOk()).toBe(true);
+      expect(loggerWarn).toHaveBeenCalled();
+    });
+
+    it.each([
+      ['finding the otp', () => passwordResetOtpStore.findOtp],
+      ['comparing the otp', () => passwordHasher.compare],
+      ['looking up the user', () => userRepository.getUserByEmail],
+      ['hashing the new password', () => passwordHasher.hash],
+      ['updating the password', () => userRepository.updateUserPassword],
+    ])(
+      'returns a safe InternalServerError and keeps the otp when %s fails',
+      async (_step, getMock) => {
+        getMock().mockResolvedValue(err(new Error('internal detail')));
+
+        await expectError(
+          ErrorCode.InternalServerError,
+          'Failed to reset password',
+        );
+        expect(passwordResetOtpStore.deleteOtp).not.toHaveBeenCalled();
+      },
+    );
+  });
 });
