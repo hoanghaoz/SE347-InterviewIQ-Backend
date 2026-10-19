@@ -6,6 +6,24 @@ import { createTransport, type Transporter } from 'nodemailer';
 
 const SMTP_TIMEOUT_MS = 10_000;
 
+type OtpMailContent = { subject: string; intro: string; warning: string };
+
+const OTP_WARNING =
+  'Mã chỉ có hiệu lực trong thời gian ngắn, không chia sẻ cho bất kỳ ai.';
+
+const REGISTRATION_OTP_MAIL: OtpMailContent = {
+  subject: 'Mã xác thực đăng ký',
+  intro: 'Mã OTP của bạn là',
+  warning: OTP_WARNING,
+};
+
+const PASSWORD_RESET_OTP_MAIL: OtpMailContent = {
+  subject: 'Mã đặt lại mật khẩu',
+  intro: 'Mã OTP đặt lại mật khẩu của bạn là',
+  // Người nhận không tự yêu cầu thì có thể ai đó đang thử chiếm tài khoản
+  warning: `${OTP_WARNING} Nếu bạn không yêu cầu đặt lại mật khẩu, hãy bỏ qua email này.`,
+};
+
 @Injectable()
 export class SmtpEmailSender implements IEmailSender {
   private readonly logger = new Logger(SmtpEmailSender.name);
@@ -37,17 +55,32 @@ export class SmtpEmailSender implements IEmailSender {
     });
   }
 
-  async sendOtp(email: string, otp: string): Promise<Result<void, Error>> {
+  sendOtp(email: string, otp: string): Promise<Result<void, Error>> {
+    return this.sendOtpMail(email, otp, REGISTRATION_OTP_MAIL);
+  }
+
+  sendPasswordResetOtp(
+    email: string,
+    otp: string,
+  ): Promise<Result<void, Error>> {
+    return this.sendOtpMail(email, otp, PASSWORD_RESET_OTP_MAIL);
+  }
+
+  private async sendOtpMail(
+    email: string,
+    otp: string,
+    content: OtpMailContent,
+  ): Promise<Result<void, Error>> {
     try {
       await this.transporter.sendMail({
         from: this.from,
         to: email,
-        subject: 'Mã xác thực đăng ký',
-        text: `Mã OTP của bạn là ${otp}. Mã chỉ có hiệu lực trong thời gian ngắn, không chia sẻ cho bất kỳ ai.`,
+        subject: content.subject,
+        text: `${content.intro} ${otp}. ${content.warning}`,
         html: `
-          <p>Mã OTP của bạn là:</p>
+          <p>${content.intro}:</p>
           <h2 style="letter-spacing:4px">${otp}</h2>
-          <p>Mã chỉ có hiệu lực trong thời gian ngắn, không chia sẻ cho bất kỳ ai.</p>
+          <p>${content.warning}</p>
         `,
       });
       return ok(undefined);

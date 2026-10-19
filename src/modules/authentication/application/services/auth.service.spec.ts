@@ -22,6 +22,7 @@ describe('AuthService', () => {
   };
   const emailSender = {
     sendOtp: jest.fn(),
+    sendPasswordResetOtp: jest.fn(),
   };
   const pendingStore = {
     savePendingRegistration: jest.fn(),

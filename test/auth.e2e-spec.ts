@@ -219,16 +219,24 @@ class InMemoryRefreshTokenRepository implements IRefreshTokenRepository {
   }
 }
 
+type OtpMailKind = 'register' | 'reset-password';
+
 class CapturingEmailSender implements IEmailSender {
-  readonly sent: { email: string; otp: string }[] = [];
+  readonly sent: { email: string; otp: string; kind: OtpMailKind }[] = [];
 
   sendOtp(email: string, otp: string) {
-    this.sent.push({ email, otp });
+    this.sent.push({ email, otp, kind: 'register' });
     return Promise.resolve(ok(undefined));
   }
-  lastOtpFor(email: string): string {
-    const otp = [...this.sent].reverse().find((m) => m.email === email)?.otp;
-    if (!otp) throw new Error(`No OTP was sent to ${email}`);
+  sendPasswordResetOtp(email: string, otp: string) {
+    this.sent.push({ email, otp, kind: 'reset-password' });
+    return Promise.resolve(ok(undefined));
+  }
+  lastOtpFor(email: string, kind: OtpMailKind = 'register'): string {
+    const otp = [...this.sent]
+      .reverse()
+      .find((m) => m.email === email && m.kind === kind)?.otp;
+    if (!otp) throw new Error(`No ${kind} OTP was sent to ${email}`);
     return otp;
   }
 }
