@@ -204,6 +204,7 @@ describe('AuthService', () => {
       fullName: 'Nguyen Van A',
       createdAt: new Date('2026-10-12T00:00:00.000Z'),
     };
+    const identity = { publicId: randomUUID(), role: CommonUserRole.USER };
 
     // Mặc định là happy path; từng test ghi đè bước cần làm hỏng
     beforeEach(() => {
@@ -214,13 +215,19 @@ describe('AuthService', () => {
       otpStore.deleteOtp.mockResolvedValue(ok(undefined));
       pendingStore.deletePendingRegistration.mockResolvedValue(ok(undefined));
       otpStore.resetFailedAttempts.mockResolvedValue(ok(undefined));
+      userRepository.getUserById.mockResolvedValue(ok(identity));
+      accessTokenIssuer.issueAccessToken.mockResolvedValue(ok('access.jwt'));
+      tokenHasher.generateToken.mockReturnValue('refresh-raw');
+      tokenHasher.hashToken.mockImplementation((raw: string) => `sha:${raw}`);
+      refreshTokenRepository.createRefreshToken.mockResolvedValue(
+        ok(undefined),
+      );
     });
 
     it('creates the user from the pending data and cleans up all registration keys', async () => {
       const result = await service.verifyRegistrationAsync(request);
 
       if (result.isErr()) throw result.error;
-      expect(result.value).toEqual({ email });
       expect(passwordHasher.compare).toHaveBeenCalledWith(
         '123456',
         'hashed:123456',
@@ -236,6 +243,72 @@ describe('AuthService', () => {
       );
       expect(otpStore.resetFailedAttempts).toHaveBeenCalledWith(email);
     });
+
+    it('logs the new user in with a session for the created account', async () => {
+      const result = await service.verifyRegistrationAsync(request);
+
+      if (result.isErr()) throw result.error;
+      expect(result.value).toEqual({
+        accessToken: 'access.jwt',
+        refreshToken: 'refresh-raw',
+      });
+      expect(userRepository.getUserById).toHaveBeenCalledWith(1);
+      expect(accessTokenIssuer.issueAccessToken).toHaveBeenCalledWith({
+        sub: identity.publicId,
+        role: CommonUserRole.USER,
+      });
+      expect(refreshTokenRepository.createRefreshToken).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 1, tokenHash: 'sha:refresh-raw' }),
+      );
+    });
+
+    it.each([
+      [
+        'looking up the created user fails',
+        () =>
+          userRepository.getUserById.mockResolvedValue(
+            err(new Error('internal detail')),
+          ),
+      ],
+      [
+        'the created user cannot be found',
+        () => userRepository.getUserById.mockResolvedValue(ok(null)),
+      ],
+      [
+        'issuing the access token fails',
+        () =>
+          accessTokenIssuer.issueAccessToken.mockResolvedValue(
+            err(new Error('internal detail')),
+          ),
+      ],
+      [
+        'saving the refresh token fails',
+        () =>
+          refreshTokenRepository.createRefreshToken.mockResolvedValue(
+            err(new Error('internal detail')),
+          ),
+      ],
+    ])(
+      'keeps the account and tells the user to log in when %s',
+      async (_case, breakStep) => {
+        breakStep();
+
+        const result = await service.verifyRegistrationAsync(request);
+
+        if (result.isOk()) throw new Error('Expected an error result');
+        expect(result.error.code).toBe(ErrorCode.InternalServerError);
+        expect(result.error.message).toBe(
+          'Account created but automatic login failed, please log in',
+        );
+        expect(result.error.message).not.toContain('internal detail');
+        // Tài khoản đã tạo thì dữ liệu đăng ký vẫn phải được dọn
+        expect(userRepository.createUser).toHaveBeenCalled();
+        expect(otpStore.deleteOtp).toHaveBeenCalledWith(email);
+        expect(pendingStore.deletePendingRegistration).toHaveBeenCalledWith(
+          email,
+        );
+      },
+    );
 
     it('returns the same BadRequest as a wrong otp when no otp is stored, without checking pending', async () => {
       otpStore.findOtp.mockResolvedValue(ok(null));
@@ -296,6 +369,7 @@ describe('AuthService', () => {
       if (result.isOk()) throw new Error('Expected an error result');
       expect(result.error.code).toBe(ErrorCode.Conflict);
       expect(otpStore.deleteOtp).not.toHaveBeenCalled();
+      expect(accessTokenIssuer.issueAccessToken).not.toHaveBeenCalled();
     });
 
     it('still succeeds and logs a warning when cleanup fails', async () => {
