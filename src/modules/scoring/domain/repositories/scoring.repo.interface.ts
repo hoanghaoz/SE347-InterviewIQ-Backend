@@ -68,6 +68,15 @@ export abstract class IScoringRepository {
     summary: InterviewSummary,
   ): Promise<Result<void, Error>>;
 
+  /**
+   * Marks session as FAILED when scoring fails permanently.
+   * Conditional update: only updates if current status is SCORING to prevent race conditions.
+   */
+  abstract markSessionFailed(
+    sessionId: number,
+    failureReason: string,
+  ): Promise<Result<void, Error>>;
+
   // -------------------------------------------------------------------------
   // Read Operations (used by Query Endpoints)
   // -------------------------------------------------------------------------

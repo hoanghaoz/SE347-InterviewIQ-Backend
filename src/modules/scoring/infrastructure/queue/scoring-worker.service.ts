@@ -12,6 +12,7 @@ import {
   IScoringLlmProvider,
   ISCORING_LLM_PROVIDER,
 } from '../../application/interfaces/scoring-llm.interface';
+import { ScoringDomainErrorValidation } from '../../domain/errors/scoring-domain.error';
 import {
   ImprovementItem,
   InterviewSummary,
@@ -53,9 +54,15 @@ export class ScoringWorkerService implements OnModuleInit {
 
   async handleJob(job: Job<ScoringJobData>): Promise<void> {
     const { sessionId, userId } = job.data;
+    const jobAny = job as Record<string, any>;
+    const retryCount = Number(jobAny.retrycount ?? jobAny.retryCount ?? 0);
+    const retryLimit = Number(jobAny.retrylimit ?? jobAny.retryLimit ?? 3);
+
     this.logger.log(
-      `Processing scoring job ${job.id} for session ${sessionId} (user: ${userId})`,
+      `Processing scoring job ${job.id} for session ${sessionId} (user: ${userId}) [retry: ${retryCount}/${retryLimit}]`,
     );
+
+    let sessionDbId: number | null = null;
 
     try {
       // 1. Load session context via repository
@@ -73,6 +80,8 @@ export class ScoringWorkerService implements OnModuleInit {
         this.logger.warn(`Session '${sessionId}' not found for job ${job.id}`);
         return;
       }
+
+      sessionDbId = session.id;
 
       // 2. Log candidate CV parsed info if available
       if (session.cvParsedData) {
@@ -196,11 +205,54 @@ export class ScoringWorkerService implements OnModuleInit {
         `Scoring job ${job.id} completed for session ${sessionId} with score ${score.overallScore}`,
       );
     } catch (error) {
+      const err = error as Error;
       this.logger.error(
-        `Failed to process scoring job ${job.id} for session ${sessionId}: ${(error as Error).message}`,
-        (error as Error).stack,
+        `Failed to process scoring job ${job.id} for session ${sessionId} [retry: ${retryCount}/${retryLimit}]: ${err.message}`,
+        err.stack,
       );
+
+      if (sessionDbId !== null) {
+        const isNonRetryable = this.isNonRetryableError(error);
+        const isLastAttempt = retryCount + 1 >= retryLimit;
+
+        if (isNonRetryable || isLastAttempt) {
+          const failureReason = err.message || 'Scoring job processing failed';
+          const markResult = await this.scoringRepo.markSessionFailed(
+            sessionDbId,
+            failureReason,
+          );
+          if (markResult.isErr()) {
+            this.logger.error(
+              `Failed to mark session ${sessionDbId} as FAILED: ${markResult.error.message}`,
+            );
+          }
+        }
+      }
+
       throw error;
     }
+  }
+
+  private isNonRetryableError(error: unknown): boolean {
+    if (error instanceof ScoringDomainErrorValidation) {
+      return true;
+    }
+    if (error instanceof Error) {
+      if (
+        error.name === 'ScoringDomainErrorValidation' ||
+        error.name === 'ValidationError'
+      ) {
+        return true;
+      }
+    }
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'isNonRetryable' in error &&
+      (error as Record<string, unknown>).isNonRetryable === true
+    ) {
+      return true;
+    }
+    return false;
   }
 }

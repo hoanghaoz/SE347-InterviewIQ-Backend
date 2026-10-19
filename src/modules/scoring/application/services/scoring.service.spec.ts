@@ -50,11 +50,16 @@ describe('ScoringService', () => {
     ReturnType<IScoringRepository['getSessionOwnerUserId']>,
     Parameters<IScoringRepository['getSessionOwnerUserId']>
   >();
+  const markSessionFailedMock = jest.fn<
+    ReturnType<IScoringRepository['markSessionFailed']>,
+    Parameters<IScoringRepository['markSessionFailed']>
+  >();
 
   const scoringRepo: IScoringRepository = {
     findSessionForScoring: findSessionForScoringMock,
     updateSessionStatus: updateSessionStatusMock,
     saveScoringResult: saveScoringResultMock,
+    markSessionFailed: markSessionFailedMock,
     findSessionResult: findSessionResultMock,
     getSessionOwnerUserId: getSessionOwnerUserIdMock,
   };
@@ -72,6 +77,7 @@ describe('ScoringService', () => {
     findSessionForScoringMock.mockReset();
     updateSessionStatusMock.mockReset();
     saveScoringResultMock.mockReset();
+    markSessionFailedMock.mockReset();
     findSessionResultMock.mockReset();
     getSessionOwnerUserIdMock.mockReset();
   });

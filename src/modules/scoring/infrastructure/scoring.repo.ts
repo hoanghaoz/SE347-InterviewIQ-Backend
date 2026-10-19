@@ -162,6 +162,32 @@ export class ScoringRepository implements IScoringRepository {
     }
   }
 
+  async markSessionFailed(
+    sessionId: number,
+    failureReason: string,
+  ): Promise<Result<void, Error>> {
+    try {
+      await this.prisma.interviewSession.updateMany({
+        where: {
+          id: sessionId,
+          status: SessionStatus.SCORING,
+        },
+        data: {
+          status: SessionStatus.FAILED,
+        },
+      });
+      this.logger.warn(
+        `Session ${sessionId} marked as FAILED. Reason: ${failureReason}`,
+      );
+      return ok(undefined);
+    } catch (error) {
+      this.logger.error(
+        `Failed to mark session ${sessionId} as FAILED: ${(error as Error).message}`,
+      );
+      return err(new Error('Failed to mark session as failed.'));
+    }
+  }
+
   async findSessionResult(
     sessionPublicId: string,
   ): Promise<Result<ScoringResult | null, Error>> {
