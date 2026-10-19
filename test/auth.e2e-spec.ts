@@ -382,7 +382,6 @@ describe('AuthController (e2e)', () => {
       expect(response.body).toMatchObject({
         statusCode: 201,
         success: true,
-        data: { email: body.email },
         message: 'Account created successfully',
       });
       const user = users.users.get(body.email);
@@ -392,6 +391,50 @@ describe('AuthController (e2e)', () => {
       });
       expect(user?.passwordHash).toMatch(/^\$2[aby]\$10\$/);
       expect([...redis.store.keys()]).toHaveLength(0);
+    });
+
+    it('logs the user in right after verification', async () => {
+      await register().expect(200);
+      const otp = mailer.lastOtpFor(body.email);
+
+      const response = await verify({ email: body.email, otp }).expect(201);
+
+      const { accessToken, refreshToken } = (
+        response.body as { data: { accessToken: string; refreshToken: string } }
+      ).data;
+      const payload = await jwtService.verifyAsync<{
+        sub: string;
+        role: string;
+      }>(accessToken, { secret: JWT_SECRET });
+      expect(payload).toMatchObject({
+        sub: users.users.get(body.email)?.publicId,
+        role: CommonUserRole.USER,
+      });
+      // Phiên tạo từ verify dùng được y như phiên tạo từ login
+      await refresh(refreshToken).expect(200);
+    });
+
+    it('keeps the account and asks the user to log in when the session cannot be created', async () => {
+      await register().expect(200);
+      const otp = mailer.lastOtpFor(body.email);
+      jest
+        .spyOn(refreshTokens, 'createRefreshToken')
+        .mockResolvedValueOnce(
+          err(new Error('connection refused to postgres')),
+        );
+
+      const response = await verify({ email: body.email, otp }).expect(500);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.InternalServerError,
+        success: false,
+        message: 'Account created but automatic login failed, please log in',
+        path: verifyRoute,
+      });
+      expect(JSON.stringify(response.body)).not.toContain('postgres');
+      expect(response.body).not.toHaveProperty('data');
+      // Làm theo lời nhắc: login thủ công vẫn được
+      await login({ email: body.email, password: body.password }).expect(200);
     });
 
     it('rejects a reused otp after the account was created', async () => {
@@ -497,6 +540,8 @@ describe('AuthController (e2e)', () => {
     it('returns a signed access token and stores only the refresh token hash', async () => {
       await createAccount();
       const user = users.users.get(body.email);
+      // Verify đã tạo sẵn một phiên, chỉ xét token do lần login này tạo ra
+      const tokensBefore = refreshTokens.tokens.length;
       const before = Date.now();
 
       const response = await login(credentials).expect(200);
@@ -526,8 +571,8 @@ describe('AuthController (e2e)', () => {
 
       // Refresh token: client nhận bản gốc, DB chỉ có SHA-256 của nó
       expect(refreshToken).toMatch(/^[0-9a-f]{64}$/);
-      expect(refreshTokens.tokens).toHaveLength(1);
-      const stored = refreshTokens.tokens[0];
+      expect(refreshTokens.tokens).toHaveLength(tokensBefore + 1);
+      const stored = refreshTokens.tokens[tokensBefore];
       expect(stored.userId).toBe(user?.id);
       expect(stored.tokenHash).toBe(
         new Sha256TokenHasher().hashToken(refreshToken),
@@ -540,6 +585,7 @@ describe('AuthController (e2e)', () => {
 
     it('issues a different refresh token on every login', async () => {
       await createAccount();
+      const tokensBefore = refreshTokens.tokens.length;
 
       const first = await login(credentials).expect(200);
       const second = await login(credentials).expect(200);
@@ -547,7 +593,7 @@ describe('AuthController (e2e)', () => {
       const tokenOf = (res: request.Response) =>
         (res.body as { data: { refreshToken: string } }).data.refreshToken;
       expect(tokenOf(first)).not.toBe(tokenOf(second));
-      expect(refreshTokens.tokens).toHaveLength(2);
+      expect(refreshTokens.tokens).toHaveLength(tokensBefore + 2);
     });
 
     it('normalizes the email before looking up the user', async () => {
@@ -560,6 +606,7 @@ describe('AuthController (e2e)', () => {
 
     it('returns 401 for a wrong password without issuing tokens', async () => {
       await createAccount();
+      const tokensBefore = refreshTokens.tokens.length;
 
       const response = await login({
         ...credentials,
@@ -574,7 +621,7 @@ describe('AuthController (e2e)', () => {
         path: loginRoute,
       });
       expect(response.body).not.toHaveProperty('data');
-      expect(refreshTokens.tokens).toHaveLength(0);
+      expect(refreshTokens.tokens).toHaveLength(tokensBefore);
     });
 
     it('returns the same 401 for an unknown email as for a wrong password', async () => {
