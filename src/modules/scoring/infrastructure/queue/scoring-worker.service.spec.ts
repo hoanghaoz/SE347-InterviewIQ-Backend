@@ -4,6 +4,7 @@ jest.mock('pg-boss', () => ({
   default: jest.fn(),
 }));
 
+import { ConfigService } from '@nestjs/config';
 import { ok, err } from 'neverthrow';
 import { SessionStatus } from '../../../../../generated/prisma/enums';
 import type { Job, PgBoss } from 'pg-boss';
@@ -110,6 +111,75 @@ describe('ScoringWorkerService', () => {
         { localConcurrency: 2 },
         expect.any(Function),
       );
+    });
+
+    it('should read custom concurrency from ConfigService', async () => {
+      createQueueMock.mockResolvedValue(undefined);
+      workMock.mockResolvedValue('handler-id');
+
+      const mockConfigService = {
+        get: jest
+          .fn()
+          .mockImplementation((key: string, defaultValue?: unknown) => {
+            if (key === 'SCORING_WORKER_CONCURRENCY') return '4';
+            if (key === 'SCORING_WORKER_PACING_MS') return '1500';
+            return defaultValue;
+          }),
+      };
+
+      const workerWithConfig = new ScoringWorkerService(
+        mockBoss,
+        mockScoringRepo,
+        mockConfigService as unknown as ConfigService,
+      );
+
+      await workerWithConfig.onModuleInit();
+
+      expect(workMock).toHaveBeenCalledWith(
+        'scoring-jobs',
+        { localConcurrency: 4 },
+        expect.any(Function),
+      );
+    });
+
+    it('should apply pacing delay when processing consecutive jobs with pacingMs configured', async () => {
+      createQueueMock.mockResolvedValue(undefined);
+      let capturedHandler:
+        | ((jobs: Job<ScoringJobData>[]) => Promise<void>)
+        | undefined;
+      workMock.mockImplementation((_queue, _options, handler) => {
+        capturedHandler = handler;
+        return Promise.resolve('handler-id');
+      });
+
+      const mockConfigService = {
+        get: jest
+          .fn()
+          .mockImplementation((key: string, defaultValue?: unknown) => {
+            if (key === 'SCORING_WORKER_PACING_MS') return 50;
+            return defaultValue;
+          }),
+      };
+
+      const workerWithPacing = new ScoringWorkerService(
+        mockBoss,
+        mockScoringRepo,
+        mockConfigService as unknown as ConfigService,
+      );
+
+      await workerWithPacing.onModuleInit();
+      expect(capturedHandler).toBeDefined();
+
+      findSessionForScoringMock.mockResolvedValue(ok(null));
+
+      const job1 = { ...mockJob, id: 'job-1' };
+      const job2 = { ...mockJob, id: 'job-2' };
+
+      const startTime = Date.now();
+      await capturedHandler!([job1, job2]);
+      const elapsed = Date.now() - startTime;
+
+      expect(elapsed).toBeGreaterThanOrEqual(40);
     });
   });
 

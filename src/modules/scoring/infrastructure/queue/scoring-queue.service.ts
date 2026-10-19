@@ -1,5 +1,6 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { PgBoss } from 'pg-boss';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { PgBoss } from 'pg-boss';
 import { ScoringJobData } from '../../application/dtos/scoring.request.dto';
 import {
   IScoringQueue,
@@ -12,14 +13,38 @@ export const SCORING_QUEUE_NAME = 'scoring-jobs';
 
 @Injectable()
 export class ScoringQueueService implements IScoringQueue {
-  constructor(@Inject(PG_BOSS_TOKEN) private readonly boss: PgBoss) {}
+  private readonly retryLimit: number;
+  private readonly retryDelay: number;
+  private readonly expireInSeconds: number;
+
+  constructor(
+    @Inject(PG_BOSS_TOKEN) private readonly boss: PgBoss,
+    @Optional() private readonly configService?: ConfigService,
+  ) {
+    this.retryLimit =
+      Number(
+        this.configService?.get<number | string>('SCORING_JOB_RETRY_LIMIT', 3),
+      ) || 3;
+    this.retryDelay =
+      Number(
+        this.configService?.get<number | string>('SCORING_JOB_RETRY_DELAY', 30),
+      ) || 30;
+    this.expireInSeconds =
+      Number(
+        this.configService?.get<number | string>(
+          'SCORING_JOB_EXPIRE_SECONDS',
+          300,
+        ),
+      ) || 300;
+  }
 
   async enqueue(data: ScoringJobData): Promise<string | null> {
     return this.boss.send(SCORING_QUEUE_NAME, data, {
       singletonKey: data.sessionId,
-      retryLimit: 3,
-      retryDelay: 30,
+      retryLimit: this.retryLimit,
+      retryDelay: this.retryDelay,
       retryBackoff: true,
+      expireInSeconds: this.expireInSeconds,
     });
   }
 

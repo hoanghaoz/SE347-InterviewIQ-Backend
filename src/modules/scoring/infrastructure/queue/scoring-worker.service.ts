@@ -5,6 +5,7 @@ import {
   OnModuleInit,
   Optional,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { SessionStatus } from '../../../../../generated/prisma/enums';
 import type { Job, PgBoss } from 'pg-boss';
 import { ScoringJobData } from '../../application/dtos/scoring.request.dto';
@@ -26,29 +27,77 @@ import { SCORING_QUEUE_NAME } from './scoring-queue.service';
 @Injectable()
 export class ScoringWorkerService implements OnModuleInit {
   private readonly logger = new Logger(ScoringWorkerService.name);
+  private readonly concurrency: number;
+  private readonly defaultRetryLimit: number;
+  private readonly pacingMs: number;
+  private readonly llmProvider?: IScoringLlmProvider;
+  private readonly configService?: ConfigService;
+  private lastJobCompletedAt = 0;
 
   constructor(
     @Inject(PG_BOSS_TOKEN) private readonly boss: PgBoss,
     private readonly scoringRepo: IScoringRepository,
     @Optional()
     @Inject(ISCORING_LLM_PROVIDER)
-    private readonly llmProvider?: IScoringLlmProvider,
-  ) {}
+    arg3?: IScoringLlmProvider | ConfigService,
+    @Optional()
+    arg4?: ConfigService | IScoringLlmProvider,
+  ) {
+    let resolvedLlmProvider: IScoringLlmProvider | undefined;
+    let resolvedConfigService: ConfigService | undefined;
+
+    if (arg3 && 'evaluateSession' in arg3) {
+      resolvedLlmProvider = arg3;
+    } else if (arg3 && 'get' in arg3) {
+      resolvedConfigService = arg3;
+    }
+
+    if (arg4 && 'evaluateSession' in arg4) {
+      resolvedLlmProvider = arg4;
+    } else if (arg4 && 'get' in arg4) {
+      resolvedConfigService = arg4;
+    }
+
+    this.llmProvider = resolvedLlmProvider;
+    this.configService = resolvedConfigService;
+
+    this.concurrency =
+      Number(
+        this.configService?.get<number | string>(
+          'SCORING_WORKER_CONCURRENCY',
+          2,
+        ),
+      ) || 2;
+    this.defaultRetryLimit =
+      Number(
+        this.configService?.get<number | string>('SCORING_JOB_RETRY_LIMIT', 3),
+      ) || 3;
+    const rawPacing = this.configService?.get<number | string>(
+      'SCORING_WORKER_PACING_MS',
+    );
+    this.pacingMs =
+      rawPacing !== undefined
+        ? Number(rawPacing)
+        : process.env.NODE_ENV === 'test'
+          ? 0
+          : 2000;
+  }
 
   async onModuleInit(): Promise<void> {
     // pg-boss >= 10 yêu cầu queue tồn tại trước khi work/send (idempotent)
     await this.boss.createQueue(SCORING_QUEUE_NAME);
     await this.boss.work<ScoringJobData>(
       SCORING_QUEUE_NAME,
-      { localConcurrency: 2 },
+      { localConcurrency: this.concurrency },
       async (jobs: Job<ScoringJobData>[]) => {
         for (const job of jobs) {
+          await this.applyPacingDelay();
           await this.handleJob(job);
         }
       },
     );
     this.logger.log(
-      `Scoring worker subscribed to queue '${SCORING_QUEUE_NAME}' with concurrency 2`,
+      `Scoring worker subscribed to queue '${SCORING_QUEUE_NAME}' with concurrency ${this.concurrency} (pacing: ${this.pacingMs}ms)`,
     );
   }
 
@@ -56,7 +105,9 @@ export class ScoringWorkerService implements OnModuleInit {
     const { sessionId, userId } = job.data;
     const jobAny = job as Record<string, any>;
     const retryCount = Number(jobAny.retrycount ?? jobAny.retryCount ?? 0);
-    const retryLimit = Number(jobAny.retrylimit ?? jobAny.retryLimit ?? 3);
+    const retryLimit = Number(
+      jobAny.retrylimit ?? jobAny.retryLimit ?? this.defaultRetryLimit,
+    );
 
     this.logger.log(
       `Processing scoring job ${job.id} for session ${sessionId} (user: ${userId}) [retry: ${retryCount}/${retryLimit}]`,
@@ -230,6 +281,8 @@ export class ScoringWorkerService implements OnModuleInit {
       }
 
       throw error;
+    } finally {
+      this.lastJobCompletedAt = Date.now();
     }
   }
 
@@ -254,5 +307,24 @@ export class ScoringWorkerService implements OnModuleInit {
       return true;
     }
     return false;
+  }
+
+  private async applyPacingDelay(): Promise<void> {
+    if (this.pacingMs <= 0) {
+      return;
+    }
+    const now = Date.now();
+    const elapsedSinceLastJob = now - this.lastJobCompletedAt;
+    if (this.lastJobCompletedAt > 0 && elapsedSinceLastJob < this.pacingMs) {
+      const waitTime = this.pacingMs - elapsedSinceLastJob;
+      this.logger.debug(
+        `Applying pacing delay of ${waitTime}ms to protect AI rate limits`,
+      );
+      await this.delay(waitTime);
+    }
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
