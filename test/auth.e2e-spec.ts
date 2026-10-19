@@ -646,6 +646,65 @@ describe('AuthController (e2e)', () => {
     });
   });
 
+  describe('POST /api/auth/refresh', () => {
+    const credentials = { email: body.email, password: body.password };
+    const refreshTokenOf = (res: request.Response) =>
+      (res.body as { data: { refreshToken: string } }).data.refreshToken;
+    const loginForRefreshToken = async () =>
+      refreshTokenOf(await login(credentials).expect(200));
+    const storedTokenOf = (refreshToken: string) =>
+      refreshTokens.tokens.find(
+        (t) => t.tokenHash === new Sha256TokenHasher().hashToken(refreshToken),
+      );
+
+    it('rejects a token reused right after rotation without logging the user out', async () => {
+      await createAccount();
+      const current = await loginForRefreshToken();
+      const otherDevice = await loginForRefreshToken();
+      const rotated = refreshTokenOf(await refresh(current).expect(200));
+
+      // Tab khác vẫn giữ token cũ và refresh ngay sau đó
+      const response = await refresh(current).expect(401);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.Unauthorized,
+        message: 'Invalid refresh token',
+        path: refreshRoute,
+      });
+      await refresh(rotated).expect(200);
+      expect(storedTokenOf(otherDevice)?.revokedAt).toBeNull();
+    });
+
+    it('lets one of two concurrent refreshes win without revoking the session', async () => {
+      await createAccount();
+      const current = await loginForRefreshToken();
+
+      const responses = await Promise.all([refresh(current), refresh(current)]);
+
+      const statuses = responses.map((res) => res.status).sort((a, b) => a - b);
+      expect(statuses).toEqual([200, 401]);
+      const [winner] = responses.filter((res) => res.status === 200);
+      await refresh(refreshTokenOf(winner)).expect(200);
+    });
+
+    it('revokes every session when a rotated token is reused after the grace window', async () => {
+      await createAccount();
+      const current = await loginForRefreshToken();
+      const otherDevice = await loginForRefreshToken();
+      const rotated = refreshTokenOf(await refresh(current).expect(200));
+      // Giả lập token cũ đã bị rotate từ 11 giây trước, quá grace window 10s
+      const stored = storedTokenOf(current);
+      if (!stored) throw new Error('Expected the old token to be stored');
+      stored.revokedAt = new Date(Date.now() - 11_000);
+
+      await refresh(current).expect(401);
+
+      // Không biết ai là chủ thật nên mọi phiên của user đều bị thu hồi
+      await refresh(rotated).expect(401);
+      await refresh(otherDevice).expect(401);
+    });
+  });
+
   describe('POST /api/auth/logout', () => {
     const credentials = { email: body.email, password: body.password };
     const loginForRefreshToken = async () => {
