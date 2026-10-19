@@ -143,7 +143,7 @@ export class AuthService implements IAuthService {
 
   async verifyRegistrationAsync(
     request: VerifyRegistrationDto,
-  ): Promise<Result<{ email: string }, AppError>> {
+  ): Promise<Result<LoginResponseDto, AppError>> {
     const { email, otp } = request;
 
     // 1. OTP trước pending: chỉ ai có OTP đúng mới biết được trạng thái đăng ký.
@@ -229,7 +229,24 @@ export class AuthService implements IAuthService {
       this.logger.warn('Failed to clean up registration data after verify');
     }
 
-    return ok({ email });
+    // 6. Đăng nhập luôn để user không phải gõ lại email + mật khẩu vừa đặt.
+    // Làm sau bước dọn dẹp: tài khoản đã tồn tại thì dữ liệu đăng ký phải được xóa
+    // dù đăng nhập có lỗi hay không
+    const userId = createUserResult.value.id;
+    const identityResult = await this.userRepository.getUserById(userId);
+    if (identityResult.isErr() || identityResult.value === null) {
+      return err(this.autoLoginFailedError());
+    }
+
+    const tokensResult = await this.issueTokenPairAsync({
+      id: userId,
+      ...identityResult.value,
+    });
+    if (tokensResult.isErr()) {
+      return err(this.autoLoginFailedError());
+    }
+
+    return ok(tokensResult.value);
   }
 
   async loginAsync(
@@ -405,6 +422,15 @@ export class AuthService implements IAuthService {
     return new AppError(
       ErrorCode.InternalServerError,
       'Failed to verify registration',
+    );
+  }
+
+  // Tài khoản đã được tạo và OTP đã bị xóa: verify lại chỉ ra "OTP sai",
+  // nên message phải chỉ client sang màn login
+  private autoLoginFailedError(): AppError {
+    return new AppError(
+      ErrorCode.InternalServerError,
+      'Account created but automatic login failed, please log in',
     );
   }
 

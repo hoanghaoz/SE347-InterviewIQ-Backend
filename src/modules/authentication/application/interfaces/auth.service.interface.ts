@@ -12,7 +12,7 @@ export abstract class IAuthService {
   abstract registerAsync(request: RegisterDto): Promise<Result<void, AppError>>;
   abstract verifyRegistrationAsync(
     request: VerifyRegistrationDto,
-  ): Promise<Result<{ email: string }, AppError>>;
+  ): Promise<Result<LoginResponseDto, AppError>>;
   abstract loginAsync(
     request: LoginDto,
   ): Promise<Result<LoginResponseDto, AppError>>;

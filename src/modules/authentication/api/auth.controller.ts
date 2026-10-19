@@ -42,11 +42,11 @@ export class AuthController {
   @Post('register/verify')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
-    summary: 'Verify the registration OTP and create the account',
+    summary: 'Verify the registration OTP, create the account and log in',
   })
   async verifyRegistrationAsync(
     @Body() request: VerifyRegistrationDto,
-  ): Promise<ApiSuccessResponse<{ email: string }>> {
+  ): Promise<ApiSuccessResponse<LoginResponseDto>> {
     const result = await this.authService.verifyRegistrationAsync(request);
 
     return result.match(
