@@ -31,6 +31,9 @@ const OTP_TTL_SECONDS = 300;
 const PENDING_REGISTRATION_TTL_SECONDS = 900;
 // Sai OTP quá số lần này thì xóa OTP, user phải đăng ký lại
 const MAX_OTP_ATTEMPTS = 5;
+// Token vừa bị rotate trong khoảng này mà bị gửi lại thường là các tab refresh cùng lúc
+// hoặc client retry khi mất response, không phải bị trộm
+const REFRESH_TOKEN_REUSE_GRACE_SECONDS = 10;
 // Bcrypt hash (10 rounds) của một chuỗi random không ai biết. Email không tồn tại
 // vẫn compare với hash này để thời gian phản hồi giống hệt sai mật khẩu.
 const DUMMY_PASSWORD_HASH =
@@ -296,6 +299,13 @@ export class AuthService implements IAuthService {
     // 2. Token đã bị rotate mà vẫn được gửi lại → có thể đã bị lộ.
     // Không biết ai là chủ thật nên thu hồi mọi phiên của user, buộc login lại.
     if (token.revokedAt !== null) {
+      // Trong grace window chỉ từ chối request này: thu hồi mọi phiên ở đây sẽ đá
+      // user ra khỏi mọi thiết bị chỉ vì mở nhiều tab
+      const revokedAgoMs = Date.now() - token.revokedAt.getTime();
+      if (revokedAgoMs <= REFRESH_TOKEN_REUSE_GRACE_SECONDS * 1000) {
+        return err(this.invalidRefreshTokenError());
+      }
+
       this.logger.warn(`Refresh token reuse detected for user ${token.userId}`);
       const revokeAll =
         await this.refreshTokenRepository.revokeAllRefreshTokensForUser(
