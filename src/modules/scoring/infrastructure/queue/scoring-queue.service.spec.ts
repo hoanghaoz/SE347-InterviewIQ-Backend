@@ -20,6 +20,7 @@ describe('ScoringQueueService', () => {
   const mockJobData: ScoringJobData = {
     sessionId: 'session-uuid-1',
     userId: 'user-uuid-1',
+    enqueuedAt: '2026-10-19T10:00:00.000Z',
   };
 
   beforeEach(() => {

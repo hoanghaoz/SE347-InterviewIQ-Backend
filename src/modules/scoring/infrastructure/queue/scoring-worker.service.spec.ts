@@ -82,6 +82,7 @@ describe('ScoringWorkerService', () => {
     data: {
       sessionId: mockSessionId,
       userId: mockUserId,
+      enqueuedAt: '2026-10-19T10:00:00.000Z',
     },
   } as unknown as Job<ScoringJobData>;
 
