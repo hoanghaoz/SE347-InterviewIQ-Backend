@@ -589,9 +589,32 @@ describe('AuthService', () => {
       expect(refreshTokenRepository.rotateRefreshToken).not.toHaveBeenCalled();
     });
 
-    it('revokes every session of the user when a revoked token is reused', async () => {
+    it.each([
+      ['a moment ago', 1_000],
+      ['exactly at the grace limit', 10_000],
+    ])(
+      'returns Unauthorized without revoking other sessions when the token was rotated %s',
+      async (_case, revokedAgoMs: number) => {
+        refreshTokenRepository.getRefreshTokenByHash.mockResolvedValue(
+          ok({ ...storedToken, revokedAt: new Date(now - revokedAgoMs) }),
+        );
+
+        await expectInvalidRefreshToken();
+        // Tab khác vừa refresh / client retry: không đá user khỏi mọi thiết bị
+        expect(
+          refreshTokenRepository.revokeAllRefreshTokensForUser,
+        ).not.toHaveBeenCalled();
+        expect(loggerWarn).not.toHaveBeenCalled();
+        expect(accessTokenIssuer.issueAccessToken).not.toHaveBeenCalled();
+        expect(
+          refreshTokenRepository.rotateRefreshToken,
+        ).not.toHaveBeenCalled();
+      },
+    );
+
+    it('revokes every session of the user when a revoked token is reused after the grace window', async () => {
       refreshTokenRepository.getRefreshTokenByHash.mockResolvedValue(
-        ok({ ...storedToken, revokedAt: new Date(now - 1_000) }),
+        ok({ ...storedToken, revokedAt: new Date(now - 10_001) }),
       );
 
       await expectInvalidRefreshToken();
@@ -608,7 +631,7 @@ describe('AuthService', () => {
         .spyOn(Logger.prototype, 'error')
         .mockImplementation(() => undefined);
       refreshTokenRepository.getRefreshTokenByHash.mockResolvedValue(
-        ok({ ...storedToken, revokedAt: new Date(now - 1_000) }),
+        ok({ ...storedToken, revokedAt: new Date(now - 60_000) }),
       );
       refreshTokenRepository.revokeAllRefreshTokensForUser.mockResolvedValue(
         err(new Error('internal detail')),
