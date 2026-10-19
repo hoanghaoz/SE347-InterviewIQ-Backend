@@ -48,6 +48,15 @@ export class VerifyRegistrationDto {
   otp!: string;
 }
 
+export class ResendRegistrationOtpDto {
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsEmail({}, { message: 'Invalid email format' })
+  @IsNotEmpty({ message: 'Email is required' })
+  email!: string;
+}
+
 export class LoginDto {
   @Transform(({ value }: { value: unknown }) =>
     typeof value === 'string' ? value.trim().toLowerCase() : value,

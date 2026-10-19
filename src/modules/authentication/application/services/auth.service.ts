@@ -22,15 +22,18 @@ import {
   LoginDto,
   RefreshTokenDto,
   RegisterDto,
+  ResendRegistrationOtpDto,
   VerifyRegistrationDto,
 } from '../dtos/auth.request.dto';
 import { LoginResponseDto } from '../dtos/auth.response.dto';
 import { IAuthService } from '../interfaces/auth.service.interface';
 
 const OTP_TTL_SECONDS = 300;
+// Chặn spam mail: OTP vừa gửi chưa quá khoảng này thì không gửi OTP mới
+const OTP_RESEND_COOLDOWN_SECONDS = 60;
 // Pending phải sống lâu hơn OTP để resend OTP vẫn còn dữ liệu đăng ký
 const PENDING_REGISTRATION_TTL_SECONDS = 900;
-// Sai OTP quá số lần này thì xóa OTP, user phải đăng ký lại
+// Sai OTP quá số lần này thì xóa OTP, user phải xin OTP mới
 const MAX_OTP_ATTEMPTS = 5;
 // Token vừa bị rotate trong khoảng này mà bị gửi lại thường là các tab refresh cùng lúc
 // hoặc client retry khi mất response, không phải bị trộm
@@ -81,6 +84,13 @@ export class AuthService implements IAuthService {
       return err(new AppError(ErrorCode.Conflict, 'Email already registered'));
     }
 
+    // Không có cooldown thì gọi lại register sẽ lách được cooldown của resend.
+    // Kiểm tra trước khi ghi đè pending để request bị chặn không đổi dữ liệu đăng ký.
+    const cooldown = await this.ensureOtpCooldownPassedAsync(request.email);
+    if (cooldown.isErr()) {
+      return err(cooldown.error);
+    }
+
     const passwordHash = await this.passwordHasher.hash(request.password);
     if (passwordHash.isErr()) {
       return err(
@@ -104,41 +114,34 @@ export class AuthService implements IAuthService {
       );
     }
 
-    const otp = randomInt(0, 1_000_000).toString().padStart(6, '0');
-    const otpHash = await this.passwordHasher.hash(otp);
-    if (otpHash.isErr()) {
+    return this.sendRegistrationOtpAsync(request.email);
+  }
+
+  async resendRegistrationOtpAsync(
+    request: ResendRegistrationOtpDto,
+  ): Promise<Result<void, AppError>> {
+    // Chỉ cần email: dữ liệu đăng ký đã nằm trong pending, client không phải giữ mật khẩu.
+    // Không giấu "không có pending" vì register đã trả 409 cho email đã có tài khoản.
+    const pendingResult =
+      await this.pendingRegistrationStore.findPendingRegistration(
+        request.email,
+      );
+    if (pendingResult.isErr()) {
       return err(
-        new AppError(ErrorCode.InternalServerError, 'Failed to generate OTP'),
+        new AppError(ErrorCode.InternalServerError, 'Failed to resend OTP'),
       );
     }
-
-    const saveOtp = await this.emailOtpStore.saveOtp(
-      request.email,
-      otpHash.value,
-      OTP_TTL_SECONDS,
-    );
-    if (saveOtp.isErr()) {
-      return err(
-        new AppError(ErrorCode.InternalServerError, 'Failed to generate OTP'),
-      );
+    if (pendingResult.value === null) {
+      return err(this.registrationExpiredError());
     }
 
-    // OTP mới → đếm số lần sai lại từ 0
-    const resetAttempts = await this.emailOtpStore.resetFailedAttempts(
-      request.email,
-    );
-    if (resetAttempts.isErr()) {
-      this.logger.warn('Failed to reset OTP attempts after issuing a new OTP');
+    const cooldown = await this.ensureOtpCooldownPassedAsync(request.email);
+    if (cooldown.isErr()) {
+      return err(cooldown.error);
     }
 
-    const sendOtp = await this.emailSender.sendOtp(request.email, otp);
-    if (sendOtp.isErr()) {
-      return err(
-        new AppError(ErrorCode.InternalServerError, 'Failed to send OTP email'),
-      );
-    }
-
-    return ok(undefined);
+    // Không gia hạn pending: đăng ký chỉ chờ tối đa PENDING_REGISTRATION_TTL_SECONDS
+    return this.sendRegistrationOtpAsync(request.email);
   }
 
   async verifyRegistrationAsync(
@@ -181,7 +184,7 @@ export class AuthService implements IAuthService {
         return err(
           new AppError(
             ErrorCode.TooManyRequests,
-            'Too many attempts, please register again',
+            'Too many attempts, please request a new OTP',
           ),
         );
       }
@@ -195,12 +198,7 @@ export class AuthService implements IAuthService {
       return err(this.verifyFailedError());
     }
     if (pendingResult.value === null) {
-      return err(
-        new AppError(
-          ErrorCode.BadRequest,
-          'Registration expired, please register again',
-        ),
-      );
+      return err(this.registrationExpiredError());
     }
 
     // 4. Tạo user từ dữ liệu pending (không lấy từ request)
@@ -385,6 +383,70 @@ export class AuthService implements IAuthService {
     return ok(undefined);
   }
 
+  // OTP còn sống lâu hơn (TTL - cooldown) nghĩa là vừa được gửi chưa quá cooldown.
+  // Dùng luôn TTL của OTP nên không cần thêm key Redis riêng cho cooldown.
+  private async ensureOtpCooldownPassedAsync(
+    email: string,
+  ): Promise<Result<void, AppError>> {
+    const remainingTtl = await this.emailOtpStore.getRemainingTtl(email);
+    if (remainingTtl.isErr()) {
+      return err(
+        new AppError(ErrorCode.InternalServerError, 'Failed to generate OTP'),
+      );
+    }
+    if (
+      remainingTtl.value !== null &&
+      remainingTtl.value > OTP_TTL_SECONDS - OTP_RESEND_COOLDOWN_SECONDS
+    ) {
+      return err(
+        new AppError(
+          ErrorCode.TooManyRequests,
+          'Please wait before requesting a new OTP',
+        ),
+      );
+    }
+
+    return ok(undefined);
+  }
+
+  // Register và resend dùng chung: OTP mới thay OTP cũ, bộ đếm sai reset về 0
+  private async sendRegistrationOtpAsync(
+    email: string,
+  ): Promise<Result<void, AppError>> {
+    const otp = randomInt(0, 1_000_000).toString().padStart(6, '0');
+    const otpHash = await this.passwordHasher.hash(otp);
+    if (otpHash.isErr()) {
+      return err(
+        new AppError(ErrorCode.InternalServerError, 'Failed to generate OTP'),
+      );
+    }
+
+    const saveOtp = await this.emailOtpStore.saveOtp(
+      email,
+      otpHash.value,
+      OTP_TTL_SECONDS,
+    );
+    if (saveOtp.isErr()) {
+      return err(
+        new AppError(ErrorCode.InternalServerError, 'Failed to generate OTP'),
+      );
+    }
+
+    const resetAttempts = await this.emailOtpStore.resetFailedAttempts(email);
+    if (resetAttempts.isErr()) {
+      this.logger.warn('Failed to reset OTP attempts after issuing a new OTP');
+    }
+
+    const sendOtp = await this.emailSender.sendOtp(email, otp);
+    if (sendOtp.isErr()) {
+      return err(
+        new AppError(ErrorCode.InternalServerError, 'Failed to send OTP email'),
+      );
+    }
+
+    return ok(undefined);
+  }
+
   // Mọi luồng cấp phiên mới (login, verify đăng ký) dùng chung: trả Error thô
   // để mỗi caller tự map ra AppError của luồng mình
   private async issueTokenPairAsync(
@@ -416,6 +478,13 @@ export class AuthService implements IAuthService {
 
   private invalidOtpError(): AppError {
     return new AppError(ErrorCode.BadRequest, 'Invalid or expired OTP');
+  }
+
+  private registrationExpiredError(): AppError {
+    return new AppError(
+      ErrorCode.BadRequest,
+      'Registration expired, please register again',
+    );
   }
 
   private verifyFailedError(): AppError {

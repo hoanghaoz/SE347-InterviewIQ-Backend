@@ -4,12 +4,16 @@ import {
   LoginDto,
   RefreshTokenDto,
   RegisterDto,
+  ResendRegistrationOtpDto,
   VerifyRegistrationDto,
 } from '../dtos/auth.request.dto';
 import { LoginResponseDto } from '../dtos/auth.response.dto';
 
 export abstract class IAuthService {
   abstract registerAsync(request: RegisterDto): Promise<Result<void, AppError>>;
+  abstract resendRegistrationOtpAsync(
+    request: ResendRegistrationOtpDto,
+  ): Promise<Result<void, AppError>>;
   abstract verifyRegistrationAsync(
     request: VerifyRegistrationDto,
   ): Promise<Result<LoginResponseDto, AppError>>;

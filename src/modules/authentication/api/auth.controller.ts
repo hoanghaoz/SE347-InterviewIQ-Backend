@@ -6,6 +6,7 @@ import {
   LoginDto,
   RefreshTokenDto,
   RegisterDto,
+  ResendRegistrationOtpDto,
   VerifyRegistrationDto,
 } from '../application/dtos/auth.request.dto';
 import { LoginResponseDto } from '../application/dtos/auth.response.dto';
@@ -25,6 +26,29 @@ export class AuthController {
     @Body() request: RegisterDto,
   ): Promise<ApiSuccessResponse<{ email: string }>> {
     const result = await this.authService.registerAsync(request);
+
+    return result.match(
+      () =>
+        new ApiSuccessResponse(
+          HttpStatus.OK,
+          { email: request.email },
+          'OTP has been sent to your email',
+        ),
+      (error) => {
+        throw toHttpException(error);
+      },
+    );
+  }
+
+  @Post('register/resend')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Send a new registration OTP to the email',
+  })
+  async resendRegistrationOtpAsync(
+    @Body() request: ResendRegistrationOtpDto,
+  ): Promise<ApiSuccessResponse<{ email: string }>> {
+    const result = await this.authService.resendRegistrationOtpAsync(request);
 
     return result.match(
       () =>
