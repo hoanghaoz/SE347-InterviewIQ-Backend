@@ -257,6 +257,8 @@ describe('AuthController (e2e)', () => {
   const loginRoute = '/api/auth/login';
   const refreshRoute = '/api/auth/refresh';
   const logoutRoute = '/api/auth/logout';
+  const forgotPasswordRoute = '/api/auth/password/forgot';
+  const resetPasswordRoute = '/api/auth/password/reset';
   const body = {
     email: 'new.user@example.com',
     password: 'Str0ngPass',
@@ -275,10 +277,14 @@ describe('AuthController (e2e)', () => {
     request(app.getHttpServer()).post(refreshRoute).send({ refreshToken });
   const logout = (refreshToken: string) =>
     request(app.getHttpServer()).post(logoutRoute).send({ refreshToken });
+  const forgotPassword = (payload: object = { email: body.email }) =>
+    request(app.getHttpServer()).post(forgotPasswordRoute).send(payload);
+  const resetPassword = (payload: object) =>
+    request(app.getHttpServer()).post(resetPasswordRoute).send(payload);
   const wrongOtpFor = (otp: string) => (otp === '000000' ? '111111' : '000000');
   // Giả lập OTP hiện tại đã gửi được 100s (TTL 300s), qua cooldown 60s
-  const passOtpCooldown = () =>
-    redis.ttls.set(`auth:otp:register:${body.email}`, 200);
+  const passOtpCooldown = (kind: OtpMailKind = 'register') =>
+    redis.ttls.set(`auth:otp:${kind}:${body.email}`, 200);
   // Tạo account qua đúng luồng thật để passwordHash là bcrypt thật
   const createAccount = async () => {
     await register().expect(200);
@@ -992,6 +998,211 @@ describe('AuthController (e2e)', () => {
         ],
       });
       expect(JSON.stringify(response.body)).not.toContain('not-a-token');
+    });
+  });
+
+  describe('POST /api/auth/password/forgot', () => {
+    const resetMailsTo = (email: string) =>
+      mailer.sent.filter(
+        (m) => m.kind === 'reset-password' && m.email === email,
+      );
+
+    it('emails a reset otp to a registered user and stores only its hash', async () => {
+      await createAccount();
+
+      const response = await forgotPassword().expect(200);
+
+      expect(response.body).toMatchObject({
+        statusCode: 200,
+        success: true,
+        data: null,
+        message: 'If the email is registered, an OTP has been sent',
+      });
+      const otp = mailer.lastOtpFor(body.email, 'reset-password');
+      expect(otp).toMatch(/^\d{6}$/);
+      const storedOtp = redis.store.get(
+        `auth:otp:reset-password:${body.email}`,
+      );
+      expect(storedOtp).toMatch(/^\$2[aby]\$10\$/);
+      expect(storedOtp).not.toBe(otp);
+    });
+
+    it('returns the same response for an unknown email without sending anything', async () => {
+      await createAccount();
+
+      const known = await forgotPassword().expect(200);
+      const unknown = await forgotPassword({
+        email: 'nobody@example.com',
+      }).expect(200);
+
+      // So mọi thứ trừ timestamp: không được có field nào lộ email có tồn tại hay không
+      const withoutTimestamp = (res: request.Response) => ({
+        ...(res.body as Record<string, unknown>),
+        timestamp: undefined,
+      });
+      expect(withoutTimestamp(unknown)).toEqual(withoutTimestamp(known));
+      expect(resetMailsTo('nobody@example.com')).toHaveLength(0);
+    });
+
+    it('answers 200 without another email within the cooldown', async () => {
+      await createAccount();
+      await forgotPassword().expect(200);
+
+      await forgotPassword().expect(200);
+      expect(resetMailsTo(body.email)).toHaveLength(1);
+
+      passOtpCooldown('reset-password');
+      await forgotPassword().expect(200);
+      expect(resetMailsTo(body.email)).toHaveLength(2);
+    });
+
+    it('returns a validation error for a malformed email', async () => {
+      const response = await forgotPassword({ email: 'not-an-email' }).expect(
+        400,
+      );
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.BadRequest,
+        errors: [{ field: 'email', messages: ['Invalid email format'] }],
+      });
+    });
+  });
+
+  describe('POST /api/auth/password/reset', () => {
+    const newPassword = 'N3wStr0ngPass';
+    const loginWith = (password: string) =>
+      login({ email: body.email, password });
+    const requestResetOtp = async () => {
+      await forgotPassword().expect(200);
+      return mailer.lastOtpFor(body.email, 'reset-password');
+    };
+
+    it('changes the password and logs out every device', async () => {
+      await createAccount();
+      const device = (
+        (await loginWith(body.password).expect(200)).body as {
+          data: { refreshToken: string };
+        }
+      ).data.refreshToken;
+      const otp = await requestResetOtp();
+
+      const response = await resetPassword({
+        email: body.email,
+        otp,
+        newPassword,
+      }).expect(200);
+
+      expect(response.body).toMatchObject({
+        statusCode: 200,
+        success: true,
+        data: null,
+        message: 'Password reset successfully',
+      });
+      await loginWith(body.password).expect(401);
+      await loginWith(newPassword).expect(200);
+      // Phiên đăng nhập bằng mật khẩu cũ không còn refresh được
+      await refresh(device).expect(401);
+      expect(redis.store.has(`auth:otp:reset-password:${body.email}`)).toBe(
+        false,
+      );
+    });
+
+    it('rejects reusing the otp after a successful reset', async () => {
+      await createAccount();
+      const otp = await requestResetOtp();
+      await resetPassword({ email: body.email, otp, newPassword }).expect(200);
+
+      const response = await resetPassword({
+        email: body.email,
+        otp,
+        newPassword: 'An0therPass',
+      }).expect(400);
+
+      expect(response.body).toMatchObject({
+        message: 'Invalid or expired OTP',
+      });
+      await loginWith(newPassword).expect(200);
+    });
+
+    it('rejects a wrong otp and keeps the old password', async () => {
+      await createAccount();
+      const otp = await requestResetOtp();
+
+      const response = await resetPassword({
+        email: body.email,
+        otp: wrongOtpFor(otp),
+        newPassword,
+      }).expect(400);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.BadRequest,
+        message: 'Invalid or expired OTP',
+        path: resetPasswordRoute,
+      });
+      await loginWith(body.password).expect(200);
+    });
+
+    it('locks the otp after 5 wrong attempts until a new one is requested', async () => {
+      await createAccount();
+      const otp = await requestResetOtp();
+      const wrong = { email: body.email, otp: wrongOtpFor(otp), newPassword };
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        await resetPassword(wrong).expect(400);
+      }
+
+      const locked = await resetPassword(wrong).expect(429);
+
+      expect(locked.body).toMatchObject({
+        code: ErrorCode.TooManyRequests,
+        message: 'Too many attempts, please request a new OTP',
+      });
+      // OTP đã bị xóa: kể cả OTP đúng cũng không dùng được nữa
+      await resetPassword({ email: body.email, otp, newPassword }).expect(400);
+      // OTP bị xóa nên không còn vướng cooldown, xin OTP mới được ngay
+      const newOtp = await requestResetOtp();
+      await resetPassword({
+        email: body.email,
+        otp: newOtp,
+        newPassword,
+      }).expect(200);
+    });
+
+    it('keeps the otp usable when logging out the sessions fails', async () => {
+      await createAccount();
+      const otp = await requestResetOtp();
+      jest
+        .spyOn(refreshTokens, 'revokeAllRefreshTokensForUser')
+        .mockResolvedValueOnce(
+          err(new Error('connection refused to postgres')),
+        );
+
+      const response = await resetPassword({
+        email: body.email,
+        otp,
+        newPassword,
+      }).expect(500);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.InternalServerError,
+        message: 'Failed to reset password',
+      });
+      expect(JSON.stringify(response.body)).not.toContain('postgres');
+      // Gửi lại đúng request đó là xong
+      await resetPassword({ email: body.email, otp, newPassword }).expect(200);
+    });
+
+    it('returns field errors without echoing the rejected password', async () => {
+      const response = await resetPassword({
+        email: body.email,
+        otp: '12',
+        newPassword: 'short',
+      }).expect(400);
+
+      const fields = (
+        response.body as { errors: { field: string }[] }
+      ).errors.map((e) => e.field);
+      expect(fields).toEqual(expect.arrayContaining(['otp', 'newPassword']));
+      expect(JSON.stringify(response.body)).not.toContain('short');
     });
   });
 });
