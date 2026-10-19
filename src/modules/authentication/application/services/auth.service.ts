@@ -86,7 +86,10 @@ export class AuthService implements IAuthService {
 
     // Không có cooldown thì gọi lại register sẽ lách được cooldown của resend.
     // Kiểm tra trước khi ghi đè pending để request bị chặn không đổi dữ liệu đăng ký.
-    const cooldown = await this.ensureOtpCooldownPassedAsync(request.email);
+    const cooldown = await this.ensureOtpCooldownPassedAsync(
+      this.emailOtpStore,
+      request.email,
+    );
     if (cooldown.isErr()) {
       return err(cooldown.error);
     }
@@ -135,7 +138,10 @@ export class AuthService implements IAuthService {
       return err(this.registrationExpiredError());
     }
 
-    const cooldown = await this.ensureOtpCooldownPassedAsync(request.email);
+    const cooldown = await this.ensureOtpCooldownPassedAsync(
+      this.emailOtpStore,
+      request.email,
+    );
     if (cooldown.isErr()) {
       return err(cooldown.error);
     }
@@ -149,49 +155,18 @@ export class AuthService implements IAuthService {
   ): Promise<Result<LoginResponseDto, AppError>> {
     const { email, otp } = request;
 
-    // 1. OTP trước pending: chỉ ai có OTP đúng mới biết được trạng thái đăng ký.
-    // "Không có OTP" và "OTP sai" dùng chung message để không lộ email nào đang chờ.
-    const otpHashResult = await this.emailOtpStore.findOtp(email);
-    if (otpHashResult.isErr()) {
-      return err(this.verifyFailedError());
-    }
-    if (otpHashResult.value === null) {
-      return err(this.invalidOtpError());
-    }
-
-    const isOtpValid = await this.passwordHasher.compare(
+    // 1. OTP trước pending: chỉ ai có OTP đúng mới biết được trạng thái đăng ký
+    const otpCheck = await this.checkOtpAsync(
+      this.emailOtpStore,
+      email,
       otp,
-      otpHashResult.value,
+      this.verifyFailedError(),
     );
-    if (isOtpValid.isErr()) {
-      return err(this.verifyFailedError());
+    if (otpCheck.isErr()) {
+      return err(otpCheck.error);
     }
 
-    // 2. Sai OTP → đếm, quá MAX_OTP_ATTEMPTS thì xóa OTP để chặn brute-force
-    if (!isOtpValid.value) {
-      const attempts = await this.emailOtpStore.incrementFailedAttempts(
-        email,
-        OTP_TTL_SECONDS,
-      );
-      if (attempts.isErr()) {
-        return err(this.verifyFailedError());
-      }
-      if (attempts.value >= MAX_OTP_ATTEMPTS) {
-        const deleteOtp = await this.emailOtpStore.deleteOtp(email);
-        if (deleteOtp.isErr()) {
-          this.logger.warn('Failed to delete OTP after too many attempts');
-        }
-        return err(
-          new AppError(
-            ErrorCode.TooManyRequests,
-            'Too many attempts, please request a new OTP',
-          ),
-        );
-      }
-      return err(this.invalidOtpError());
-    }
-
-    // 3. OTP đúng → lấy dữ liệu đăng ký đã lưu
+    // 2. OTP đúng → lấy dữ liệu đăng ký đã lưu
     const pendingResult =
       await this.pendingRegistrationStore.findPendingRegistration(email);
     if (pendingResult.isErr()) {
@@ -201,7 +176,7 @@ export class AuthService implements IAuthService {
       return err(this.registrationExpiredError());
     }
 
-    // 4. Tạo user từ dữ liệu pending (không lấy từ request)
+    // 3. Tạo user từ dữ liệu pending (không lấy từ request)
     const pending = pendingResult.value;
     const createUserResult = await this.userRepository.createUser({
       email: pending.email,
@@ -217,7 +192,7 @@ export class AuthService implements IAuthService {
       return err(this.verifyFailedError());
     }
 
-    // 5. Dọn dẹp: user đã được tạo nên lỗi ở đây chỉ log, không fail request (TTL sẽ tự dọn)
+    // 4. Dọn dẹp: user đã được tạo nên lỗi ở đây chỉ log, không fail request (TTL sẽ tự dọn)
     const cleanups = await Promise.all([
       this.emailOtpStore.deleteOtp(email),
       this.pendingRegistrationStore.deletePendingRegistration(email),
@@ -227,7 +202,7 @@ export class AuthService implements IAuthService {
       this.logger.warn('Failed to clean up registration data after verify');
     }
 
-    // 6. Đăng nhập luôn để user không phải gõ lại email + mật khẩu vừa đặt.
+    // 5. Đăng nhập luôn để user không phải gõ lại email + mật khẩu vừa đặt.
     // Làm sau bước dọn dẹp: tài khoản đã tồn tại thì dữ liệu đăng ký phải được xóa
     // dù đăng nhập có lỗi hay không
     const userId = createUserResult.value.id;
@@ -386,9 +361,10 @@ export class AuthService implements IAuthService {
   // OTP còn sống lâu hơn (TTL - cooldown) nghĩa là vừa được gửi chưa quá cooldown.
   // Dùng luôn TTL của OTP nên không cần thêm key Redis riêng cho cooldown.
   private async ensureOtpCooldownPassedAsync(
+    store: IEmailOtpStore,
     email: string,
   ): Promise<Result<void, AppError>> {
-    const remainingTtl = await this.emailOtpStore.getRemainingTtl(email);
+    const remainingTtl = await store.getRemainingTtl(email);
     if (remainingTtl.isErr()) {
       return err(
         new AppError(ErrorCode.InternalServerError, 'Failed to generate OTP'),
@@ -409,10 +385,12 @@ export class AuthService implements IAuthService {
     return ok(undefined);
   }
 
-  // Register và resend dùng chung: OTP mới thay OTP cũ, bộ đếm sai reset về 0
-  private async sendRegistrationOtpAsync(
+  // OTP mới thay OTP cũ, bộ đếm sai reset về 0. Store chỉ giữ hash;
+  // trả OTP gốc để caller tự gửi mail đúng nội dung của luồng mình.
+  private async issueOtpAsync(
+    store: IEmailOtpStore,
     email: string,
-  ): Promise<Result<void, AppError>> {
+  ): Promise<Result<string, AppError>> {
     const otp = randomInt(0, 1_000_000).toString().padStart(6, '0');
     const otpHash = await this.passwordHasher.hash(otp);
     if (otpHash.isErr()) {
@@ -421,23 +399,81 @@ export class AuthService implements IAuthService {
       );
     }
 
-    const saveOtp = await this.emailOtpStore.saveOtp(
-      email,
-      otpHash.value,
-      OTP_TTL_SECONDS,
-    );
+    const saveOtp = await store.saveOtp(email, otpHash.value, OTP_TTL_SECONDS);
     if (saveOtp.isErr()) {
       return err(
         new AppError(ErrorCode.InternalServerError, 'Failed to generate OTP'),
       );
     }
 
-    const resetAttempts = await this.emailOtpStore.resetFailedAttempts(email);
+    const resetAttempts = await store.resetFailedAttempts(email);
     if (resetAttempts.isErr()) {
       this.logger.warn('Failed to reset OTP attempts after issuing a new OTP');
     }
 
-    const sendOtp = await this.emailSender.sendOtp(email, otp);
+    return ok(otp);
+  }
+
+  // "Không có OTP" và "OTP sai" dùng chung lỗi để không lộ email nào đang có OTP.
+  // Sai quá MAX_OTP_ATTEMPTS thì xóa OTP để chặn brute-force.
+  // failedError là lỗi 500 riêng của luồng gọi, dùng khi hạ tầng lỗi.
+  private async checkOtpAsync(
+    store: IEmailOtpStore,
+    email: string,
+    otp: string,
+    failedError: AppError,
+  ): Promise<Result<void, AppError>> {
+    const otpHashResult = await store.findOtp(email);
+    if (otpHashResult.isErr()) {
+      return err(failedError);
+    }
+    if (otpHashResult.value === null) {
+      return err(this.invalidOtpError());
+    }
+
+    const isOtpValid = await this.passwordHasher.compare(
+      otp,
+      otpHashResult.value,
+    );
+    if (isOtpValid.isErr()) {
+      return err(failedError);
+    }
+    if (isOtpValid.value) {
+      return ok(undefined);
+    }
+
+    const attempts = await store.incrementFailedAttempts(
+      email,
+      OTP_TTL_SECONDS,
+    );
+    if (attempts.isErr()) {
+      return err(failedError);
+    }
+    if (attempts.value >= MAX_OTP_ATTEMPTS) {
+      const deleteOtp = await store.deleteOtp(email);
+      if (deleteOtp.isErr()) {
+        this.logger.warn('Failed to delete OTP after too many attempts');
+      }
+      return err(
+        new AppError(
+          ErrorCode.TooManyRequests,
+          'Too many attempts, please request a new OTP',
+        ),
+      );
+    }
+    return err(this.invalidOtpError());
+  }
+
+  // Register và resend dùng chung
+  private async sendRegistrationOtpAsync(
+    email: string,
+  ): Promise<Result<void, AppError>> {
+    const otp = await this.issueOtpAsync(this.emailOtpStore, email);
+    if (otp.isErr()) {
+      return err(otp.error);
+    }
+
+    const sendOtp = await this.emailSender.sendOtp(email, otp.value);
     if (sendOtp.isErr()) {
       return err(
         new AppError(ErrorCode.InternalServerError, 'Failed to send OTP email'),
