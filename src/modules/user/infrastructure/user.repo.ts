@@ -108,4 +108,24 @@ export class UserRepository implements IUserRepository {
       return err(new Error('Failed to find user'));
     }
   }
+
+  async updateUserPassword(
+    id: number,
+    passwordHash: string,
+  ): Promise<Result<void, Error>> {
+    try {
+      // select id để không kéo passwordHash vừa ghi ngược về
+      await this.prismaService.user.update({
+        where: { id },
+        data: { passwordHash },
+        select: { id: true },
+      });
+      return ok(undefined);
+    } catch (error) {
+      this.logger.error(
+        `updateUserPassword failed: ${(error as Error).message}`,
+      );
+      return err(new Error('Failed to update user password'));
+    }
+  }
 }

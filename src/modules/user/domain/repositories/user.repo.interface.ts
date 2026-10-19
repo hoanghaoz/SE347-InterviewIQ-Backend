@@ -45,4 +45,10 @@ export abstract class IUserRepository {
 
   // id là id nội bộ (ví dụ RefreshTokenRecord.userId), không phải publicId
   abstract getUserById(id: number): Promise<Result<UserIdentity | null, Error>>;
+
+  // passwordHash phải được hash sẵn ở tầng service, repo không tự hash
+  abstract updateUserPassword(
+    id: number,
+    passwordHash: string,
+  ): Promise<Result<void, Error>>;
 }

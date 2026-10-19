@@ -132,6 +132,18 @@ class InMemoryUserRepository implements IUserRepository {
       ok(user ? { publicId: user.publicId, role: CommonUserRole.USER } : null),
     );
   }
+  // Giống Prisma update: không có user thì lỗi
+  updateUserPassword(
+    id: number,
+    passwordHash: string,
+  ): Promise<Result<void, Error>> {
+    const user = [...this.users.values()].find((u) => u.id === id);
+    if (!user) {
+      return Promise.resolve(err(new Error('Failed to update user password')));
+    }
+    this.users.set(user.email, { ...user, passwordHash });
+    return Promise.resolve(ok(undefined));
+  }
 }
 
 type StoredRefreshToken = CreateRefreshTokenData & {
