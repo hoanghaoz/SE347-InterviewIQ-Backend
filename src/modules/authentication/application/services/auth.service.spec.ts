@@ -87,6 +87,8 @@ describe('AuthService', () => {
     // Mặc định mọi bước đều thành công; từng test ghi đè bước cần làm hỏng
     beforeEach(() => {
       userRepository.getUserByEmail.mockResolvedValue(ok(null));
+      // Chưa có OTP nào đang sống → không vướng cooldown
+      otpStore.getRemainingTtl.mockResolvedValue(ok(null));
       passwordHasher.hash.mockImplementation((plain: string) =>
         Promise.resolve(ok(`hashed:${plain}`)),
       );
@@ -178,8 +180,37 @@ describe('AuthService', () => {
       expect(loggerWarn).toHaveBeenCalled();
     });
 
+    it('returns TooManyRequests without touching the pending registration when an otp was sent within the cooldown', async () => {
+      // TTL 300s, còn 250s → OTP mới gửi cách đây 50s
+      otpStore.getRemainingTtl.mockResolvedValue(ok(250));
+
+      const result = await service.registerAsync(request);
+
+      if (result.isOk()) throw new Error('Expected an error result');
+      expect(result.error.code).toBe(ErrorCode.TooManyRequests);
+      expect(result.error.message).toBe(
+        'Please wait before requesting a new OTP',
+      );
+      expect(otpStore.getRemainingTtl).toHaveBeenCalledWith(email);
+      expect(pendingStore.savePendingRegistration).not.toHaveBeenCalled();
+      expect(emailSender.sendOtp).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['the cooldown just ended', 240],
+      ['the previous otp expired', null],
+    ])('sends a new otp when %s', async (_case, remainingTtl) => {
+      otpStore.getRemainingTtl.mockResolvedValue(ok(remainingTtl));
+
+      const result = await service.registerAsync(request);
+
+      expect(result.isOk()).toBe(true);
+      expect(emailSender.sendOtp).toHaveBeenCalled();
+    });
+
     it.each([
       ['looking up the user', () => userRepository.getUserByEmail],
+      ['checking the otp cooldown', () => otpStore.getRemainingTtl],
       ['saving the otp', () => otpStore.saveOtp],
       ['sending the email', () => emailSender.sendOtp],
     ])(
@@ -188,6 +219,105 @@ describe('AuthService', () => {
         getMock().mockResolvedValue(err(new Error('internal detail')));
 
         const result = await service.registerAsync(request);
+
+        if (result.isOk()) throw new Error('Expected an error result');
+        expect(result.error.code).toBe(ErrorCode.InternalServerError);
+        expect(result.error.message).not.toContain('internal detail');
+      },
+    );
+  });
+
+  describe('resendRegistrationOtpAsync', () => {
+    const request = { email };
+    const pending = {
+      email,
+      passwordHash: 'hashed:Str0ngPass',
+      fullName: 'Nguyen Van A',
+      createdAt: new Date('2026-10-12T00:00:00.000Z'),
+    };
+
+    // Mặc định mọi bước đều thành công; từng test ghi đè bước cần làm hỏng
+    beforeEach(() => {
+      pendingStore.findPendingRegistration.mockResolvedValue(ok(pending));
+      otpStore.getRemainingTtl.mockResolvedValue(ok(null));
+      passwordHasher.hash.mockImplementation((plain: string) =>
+        Promise.resolve(ok(`hashed:${plain}`)),
+      );
+      otpStore.saveOtp.mockResolvedValue(ok(undefined));
+      otpStore.resetFailedAttempts.mockResolvedValue(ok(undefined));
+      emailSender.sendOtp.mockResolvedValue(ok(undefined));
+    });
+
+    const sentOtp = (): string =>
+      (emailSender.sendOtp.mock.calls[0] as [string, string])[1];
+
+    it('emails a new otp for the pending registration and resets failed attempts', async () => {
+      const result = await service.resendRegistrationOtpAsync(request);
+
+      expect(result.isOk()).toBe(true);
+      expect(pendingStore.findPendingRegistration).toHaveBeenCalledWith(email);
+      expect(sentOtp()).toMatch(/^\d{6}$/);
+      expect(otpStore.saveOtp).toHaveBeenCalledWith(
+        email,
+        `hashed:${sentOtp()}`,
+        300,
+      );
+      expect(otpStore.resetFailedAttempts).toHaveBeenCalledWith(email);
+      // Không gia hạn pending: đăng ký vẫn hết hạn đúng mốc ban đầu
+      expect(pendingStore.savePendingRegistration).not.toHaveBeenCalled();
+    });
+
+    it('returns BadRequest without sending email when the registration expired', async () => {
+      pendingStore.findPendingRegistration.mockResolvedValue(ok(null));
+
+      const result = await service.resendRegistrationOtpAsync(request);
+
+      if (result.isOk()) throw new Error('Expected an error result');
+      expect(result.error.code).toBe(ErrorCode.BadRequest);
+      expect(result.error.message).toBe(
+        'Registration expired, please register again',
+      );
+      expect(otpStore.saveOtp).not.toHaveBeenCalled();
+      expect(emailSender.sendOtp).not.toHaveBeenCalled();
+    });
+
+    it('returns TooManyRequests without sending email when an otp was sent within the cooldown', async () => {
+      otpStore.getRemainingTtl.mockResolvedValue(ok(241));
+
+      const result = await service.resendRegistrationOtpAsync(request);
+
+      if (result.isOk()) throw new Error('Expected an error result');
+      expect(result.error.code).toBe(ErrorCode.TooManyRequests);
+      expect(otpStore.saveOtp).not.toHaveBeenCalled();
+      expect(emailSender.sendOtp).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['the cooldown just ended', 240],
+      ['the otp was deleted after too many attempts', null],
+    ])('sends a new otp when %s', async (_case, remainingTtl) => {
+      otpStore.getRemainingTtl.mockResolvedValue(ok(remainingTtl));
+
+      const result = await service.resendRegistrationOtpAsync(request);
+
+      expect(result.isOk()).toBe(true);
+      expect(emailSender.sendOtp).toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        'finding the pending registration',
+        () => pendingStore.findPendingRegistration,
+      ],
+      ['checking the otp cooldown', () => otpStore.getRemainingTtl],
+      ['saving the otp', () => otpStore.saveOtp],
+      ['sending the email', () => emailSender.sendOtp],
+    ])(
+      'returns a safe InternalServerError when %s fails',
+      async (_step, getMock) => {
+        getMock().mockResolvedValue(err(new Error('internal detail')));
+
+        const result = await service.resendRegistrationOtpAsync(request);
 
         if (result.isOk()) throw new Error('Expected an error result');
         expect(result.error.code).toBe(ErrorCode.InternalServerError);
@@ -344,6 +474,10 @@ describe('AuthService', () => {
 
       if (result.isOk()) throw new Error('Expected an error result');
       expect(result.error.code).toBe(ErrorCode.TooManyRequests);
+      // Pending vẫn còn nên chỉ cần xin OTP mới, không phải đăng ký lại
+      expect(result.error.message).toBe(
+        'Too many attempts, please request a new OTP',
+      );
       expect(otpStore.deleteOtp).toHaveBeenCalledWith(email);
       expect(userRepository.createUser).not.toHaveBeenCalled();
     });
