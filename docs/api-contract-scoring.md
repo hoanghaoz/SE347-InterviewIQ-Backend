@@ -180,12 +180,24 @@ Authorization: Bearer <access_token>
 ```
 
 #### Các Mã Lỗi Thường gặp:
-| HTTP Status | Error Code | Nguyên nhân & Hướng xử lý |
-| :---: | :--- | :--- |
-| **400** | `BAD_REQUEST` | Định dạng `jobId` không hợp lệ (không phải chuẩn UUIDv4). |
-| **401** | `UNAUTHORIZED` | Thiếu access token hoặc token đã hết hạn. |
-| **403** | `FORBIDDEN` | Job này thuộc về người dùng khác (`job.data.userId !== user.sub`). |
-| **404** | `NOT_FOUND` | Không tìm thấy job với `jobId` đã cung cấp (hoặc job đã bị dọn sau 7 ngày). |
+| HTTP Status | Error Code | Message trong Code | Nguyên nhân & Hướng xử lý |
+| :---: | :--- | :--- | :--- |
+| **400** | `BAD_REQUEST` | `Validation failed (uuid is expected)` | Định dạng `jobId` không hợp lệ (ParseUUIDPipe). |
+| **401** | `UNAUTHORIZED` | `Unauthorized` | Thiếu access token hoặc token đã hết hạn / không hợp lệ. |
+| **403** | `FORBIDDEN` | `You are not authorized to view this scoring job` | Job này thuộc về người dùng khác (`job.data.userId !== user.sub`). |
+| **404** | `NOT_FOUND` | `Scoring job with id '...' not found` | Không tìm thấy job trong hàng đợi (hoặc job đã bị dọn sau 7 ngày). |
+
+##### Ví dụ Phản hồi Lỗi (HTTP 404):
+```json
+{
+  "statusCode": 404,
+  "success": false,
+  "code": "NOT_FOUND",
+  "message": "Scoring job with id '33333333-3333-4333-8333-333333333333' not found",
+  "path": "/api/scoring/jobs/33333333-3333-4333-8333-333333333333/status",
+  "timestamp": "2026-10-20T10:00:05.000Z"
+}
+```
 
 ---
 
@@ -257,12 +269,26 @@ Authorization: Bearer <access_token>
 > Tỷ trọng: Chất lượng nội dung (40%), Độ phù hợp câu hỏi (40%), Phong thái & Sự tự tin (20%).
 
 #### Các Mã Lỗi Thường gặp:
-| HTTP Status | Error Code | Nguyên nhân & Hướng xử lý |
-| :---: | :--- | :--- |
-| **400** | `BAD_REQUEST` | Phiên phỏng vấn chưa hoàn tất chấm điểm (`session.status !== 'COMPLETED'`). Trả về thông báo: `Scoring for session '...' is not completed yet`. |
-| **401** | `UNAUTHORIZED` | Không có token hoặc token không hợp lệ. |
-| **403** | `FORBIDDEN` | Phiên phỏng vấn thuộc về người dùng khác. |
-| **404** | `NOT_FOUND` | Không tìm thấy session hoặc chưa có bản ghi điểm trong CSDL. |
+| HTTP Status | Error Code | Message trong Code | Nguyên nhân & Hướng xử lý |
+| :---: | :--- | :--- | :--- |
+| **400** | `BAD_REQUEST` | `Session scoring is not completed (current status: SCORING)` | Phiên phỏng vấn chưa hoàn tất chấm điểm (`session.status !== 'COMPLETED'`). |
+| **400** | `BAD_REQUEST` | `Validation failed (uuid is expected)` | Định dạng `sessionId` không phải chuẩn UUIDv4. |
+| **401** | `UNAUTHORIZED` | `Unauthorized` | Không có token hoặc token không hợp lệ / hết hạn. |
+| **403** | `FORBIDDEN` | `You are not authorized to view the result of this session` | Phiên phỏng vấn thuộc về người dùng khác. |
+| **404** | `NOT_FOUND` | `Interview session with id '...' not found` | Không tìm thấy session trong CSDL. |
+| **404** | `NOT_FOUND` | `Scoring result for session '...' not found` | Session tồn tại nhưng chưa có bản ghi điểm / summary. |
+
+##### Ví dụ Phản hồi Lỗi khi Session Chưa Chấm Xong (HTTP 400):
+```json
+{
+  "statusCode": 400,
+  "success": false,
+  "code": "BAD_REQUEST",
+  "message": "Session scoring is not completed (current status: SCORING)",
+  "path": "/api/scoring/sessions/11111111-1111-4111-8111-111111111111/result",
+  "timestamp": "2026-10-20T10:00:05.000Z"
+}
+```
 
 ---
 
