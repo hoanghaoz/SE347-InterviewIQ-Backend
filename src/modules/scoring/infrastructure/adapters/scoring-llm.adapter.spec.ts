@@ -29,19 +29,37 @@ describe('ScoringLlmAdapter', () => {
   const samplePayload: ScoringLlmPayload = {
     sessionPublicId: 'session-uuid-123',
     cvParsedData: {
-      candidate: {
-        fullName: 'Nguyen Van A',
-        email: 'nguyenvana@example.com',
-        phone: null,
-      },
       summary: 'Frontend Engineer with 2 years of experience',
-      technicalSkills: ['TypeScript', 'React', 'NestJS'],
-      softSkills: ['Teamwork'],
-      workExperiences: [],
-      education: [],
-      certifications: [],
-      projects: [],
-      languages: [{ language: 'Vietnamese', proficiency: 'Native' }],
+      skills: {
+        languages: ['TypeScript', 'JavaScript'],
+        frameworks: ['React', 'NestJS'],
+        databases: ['PostgreSQL'],
+        tools: ['Git', 'Docker'],
+      },
+      experiences: [
+        {
+          company: 'Tech Corp',
+          position: 'Frontend Engineer',
+          startDate: '2024-01',
+          endDate: null,
+          description: 'Developing React frontend apps',
+          technologies: ['TypeScript', 'React'],
+        },
+      ],
+      education: [
+        {
+          institution: 'University of Technology',
+          degree: 'Bachelor of Computer Science',
+          graduationYear: 2024,
+        },
+      ],
+      projects: [
+        {
+          name: 'MockMate',
+          description: 'AI Interview Practice Platform',
+          role: 'Frontend Developer',
+        },
+      ],
     },
     questions: [
       {
@@ -130,7 +148,7 @@ describe('ScoringLlmAdapter', () => {
     expect(mockGenerateJson).toHaveBeenCalledTimes(1);
     const passedRequest = mockGenerateJson.mock.calls[0][0];
     expect(passedRequest.temperature).toBe(0.2);
-    expect(passedRequest.prompt).toContain('Nguyen Van A');
+    expect(passedRequest.prompt).toContain('Tech Corp');
   });
 
   it('should preserve fallback model name when Groq answered', async () => {
