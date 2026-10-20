@@ -1,4 +1,4 @@
-import { err, ok } from 'neverthrow';
+import { err, ok, type Result } from 'neverthrow';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
 import type { ILlmProvider } from '../../../../shared/llm/llm.provider';
 import type {
