@@ -37,7 +37,6 @@ export class ScoringWorkerService implements OnModuleInit {
   constructor(
     @Inject(PG_BOSS_TOKEN) private readonly boss: PgBoss,
     private readonly scoringRepo: IScoringRepository,
-    @Optional()
     @Inject(ISCORING_LLM_PROVIDER)
     arg3?: IScoringLlmProvider | ConfigService,
     @Optional()
