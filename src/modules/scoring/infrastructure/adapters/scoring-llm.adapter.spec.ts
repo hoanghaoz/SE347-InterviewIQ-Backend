@@ -1,11 +1,9 @@
-import { err, ok, type Result } from 'neverthrow';
+import { err, ok } from 'neverthrow';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
-import type { ILlmProvider } from '../../../../shared/llm/llm.provider';
+import { ILlmProvider } from '../../../../shared/llm/llm.provider';
 import type {
   LlmJsonRequest,
   LlmJsonResult,
-  LlmTextRequest,
-  LlmTextResult,
 } from '../../../../shared/llm/llm.types';
 import type { ScoringLlmPayload } from '../../application/interfaces/scoring-llm.interface';
 import {
@@ -14,17 +12,14 @@ import {
   type ScoringRubricRawResponse,
 } from './scoring-llm.adapter';
 
+class MockLlmProvider implements ILlmProvider {
+  generateText = jest.fn();
+  generateJson = jest.fn();
+}
+
 describe('ScoringLlmAdapter', () => {
   let adapter: ScoringLlmAdapter;
-  let mockGenerateJson: jest.Mock<
-    Promise<Result<LlmJsonResult<ScoringRubricRawResponse>, AppError>>,
-    [LlmJsonRequest]
-  >;
-  let mockGenerateText: jest.Mock<
-    Promise<Result<LlmTextResult, AppError>>,
-    [LlmTextRequest]
-  >;
-  let mockLlmProvider: ILlmProvider;
+  let mockLlmProvider: MockLlmProvider;
 
   const samplePayload: ScoringLlmPayload = {
     sessionPublicId: 'session-uuid-123',
@@ -103,18 +98,7 @@ describe('ScoringLlmAdapter', () => {
   };
 
   beforeEach(() => {
-    mockGenerateJson = jest.fn<
-      Promise<Result<LlmJsonResult<ScoringRubricRawResponse>, AppError>>,
-      [LlmJsonRequest]
-    >();
-    mockGenerateText = jest.fn<
-      Promise<Result<LlmTextResult, AppError>>,
-      [LlmTextRequest]
-    >();
-    mockLlmProvider = {
-      generateJson: mockGenerateJson,
-      generateText: mockGenerateText,
-    };
+    mockLlmProvider = new MockLlmProvider();
     adapter = new ScoringLlmAdapter(mockLlmProvider);
   });
 
@@ -126,7 +110,7 @@ describe('ScoringLlmAdapter', () => {
       data: validRubricData,
     };
 
-    mockGenerateJson.mockResolvedValue(ok(mockJsonResult));
+    mockLlmProvider.generateJson.mockResolvedValue(ok(mockJsonResult));
 
     const result = await adapter.evaluateSession(samplePayload);
 
@@ -145,8 +129,11 @@ describe('ScoringLlmAdapter', () => {
       expect(result.value.promptVersion).toBe(SCORING_PROMPT_VERSION);
     }
 
-    expect(mockGenerateJson).toHaveBeenCalledTimes(1);
-    const passedRequest = mockGenerateJson.mock.calls[0][0];
+    expect(mockLlmProvider.generateJson).toHaveBeenCalledTimes(1);
+    const calls = mockLlmProvider.generateJson.mock.calls as unknown as Array<
+      [LlmJsonRequest]
+    >;
+    const passedRequest = calls[0][0];
     expect(passedRequest.temperature).toBe(0.2);
     expect(passedRequest.prompt).toContain('Tech Corp');
   });
@@ -159,7 +146,7 @@ describe('ScoringLlmAdapter', () => {
       data: validRubricData,
     };
 
-    mockGenerateJson.mockResolvedValue(ok(mockJsonResult));
+    mockLlmProvider.generateJson.mockResolvedValue(ok(mockJsonResult));
 
     const result = await adapter.evaluateSession(samplePayload);
 
@@ -187,7 +174,7 @@ describe('ScoringLlmAdapter', () => {
       data: rawDataWithExtremeScores,
     };
 
-    mockGenerateJson.mockResolvedValue(ok(mockJsonResult));
+    mockLlmProvider.generateJson.mockResolvedValue(ok(mockJsonResult));
 
     const result = await adapter.evaluateSession(samplePayload);
 
@@ -227,18 +214,21 @@ describe('ScoringLlmAdapter', () => {
       },
     };
 
-    mockGenerateJson.mockResolvedValue(ok(mockJsonResult));
+    mockLlmProvider.generateJson.mockResolvedValue(ok(mockJsonResult));
 
     const result = await adapter.evaluateSession(payloadWithoutCv);
 
     expect(result.isOk()).toBe(true);
-    expect(mockGenerateJson).toHaveBeenCalledTimes(1);
-    const passedRequest = mockGenerateJson.mock.calls[0][0];
+    expect(mockLlmProvider.generateJson).toHaveBeenCalledTimes(1);
+    const calls = mockLlmProvider.generateJson.mock.calls as unknown as Array<
+      [LlmJsonRequest]
+    >;
+    const passedRequest = calls[0][0];
     expect(passedRequest.prompt).toContain('Không có thông tin CV');
   });
 
   it('should return error when ILlmProvider fails', async () => {
-    mockGenerateJson.mockResolvedValue(
+    mockLlmProvider.generateJson.mockResolvedValue(
       err(
         new AppError(
           ErrorCode.TooManyRequests,
