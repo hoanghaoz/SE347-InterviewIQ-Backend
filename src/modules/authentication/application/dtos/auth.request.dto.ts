@@ -82,7 +82,7 @@ export class ForgotPasswordDto {
   email!: string;
 }
 
-export class ResetPasswordDto {
+export class VerifyPasswordResetOtpDto {
   @Transform(({ value }: { value: unknown }) =>
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )
@@ -96,6 +96,21 @@ export class ResetPasswordDto {
   @IsString({ message: 'OTP must be a string' })
   @Matches(/^\d{6}$/, { message: 'OTP must be exactly 6 digits' })
   otp!: string;
+}
+
+export class ResetPasswordDto {
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsEmail({}, { message: 'Invalid email format' })
+  @IsNotEmpty({ message: 'Email is required' })
+  email!: string;
+
+  // Token nhận từ bước verify OTP: 32 byte random dạng hex (Sha256TokenHasher.generateToken)
+  @IsString({ message: 'Reset token must be a string' })
+  @IsNotEmpty({ message: 'Reset token is required' })
+  @Matches(/^[0-9a-f]{64}$/, { message: 'Invalid reset token format' })
+  resetToken!: string;
 
   // Cùng luật với mật khẩu lúc đăng ký
   @IsString({ message: 'New password must be a string' })

@@ -13,6 +13,7 @@ import { IEmailOtpStore } from '../../domain/repositories/email-otp-store.interf
 import { IEmailSender } from '../../domain/repositories/email-sender.interface';
 import { IPasswordHasher } from '../../domain/repositories/password-hasher.interface';
 import { IPasswordResetOtpStore } from '../../domain/repositories/password-reset-otp-store.interface';
+import { IPasswordResetTokenStore } from '../../domain/repositories/password-reset-token-store.interface';
 import { IPendingRegistrationStore } from '../../domain/repositories/pending-registration-store.interface';
 import {
   IRefreshTokenRepository,
@@ -26,9 +27,13 @@ import {
   RegisterDto,
   ResendRegistrationOtpDto,
   ResetPasswordDto,
+  VerifyPasswordResetOtpDto,
   VerifyRegistrationDto,
 } from '../dtos/auth.request.dto';
-import { LoginResponseDto } from '../dtos/auth.response.dto';
+import {
+  LoginResponseDto,
+  PasswordResetTokenResponseDto,
+} from '../dtos/auth.response.dto';
 import { IAuthService } from '../interfaces/auth.service.interface';
 
 const OTP_TTL_SECONDS = 300;
@@ -38,6 +43,8 @@ const OTP_RESEND_COOLDOWN_SECONDS = 60;
 const PENDING_REGISTRATION_TTL_SECONDS = 900;
 // Sai OTP quá số lần này thì xóa OTP, user phải xin OTP mới
 const MAX_OTP_ATTEMPTS = 5;
+// Đủ để gõ mật khẩu mới; ngắn để token có bị lộ (log, lịch sử) cũng sớm vô dụng
+const PASSWORD_RESET_TOKEN_TTL_SECONDS = 600;
 // Token vừa bị rotate trong khoảng này mà bị gửi lại thường là các tab refresh cùng lúc
 // hoặc client retry khi mất response, không phải bị trộm
 const REFRESH_TOKEN_REUSE_GRACE_SECONDS = 10;
@@ -58,6 +65,7 @@ export class AuthService implements IAuthService {
     private readonly pendingRegistrationStore: IPendingRegistrationStore,
     private readonly emailOtpStore: IEmailOtpStore,
     private readonly passwordResetOtpStore: IPasswordResetOtpStore,
+    private readonly passwordResetTokenStore: IPasswordResetTokenStore,
     private readonly accessTokenIssuer: IAccessTokenIssuer,
     private readonly tokenHasher: ITokenHasher,
     private readonly refreshTokenRepository: IRefreshTokenRepository,
@@ -407,29 +415,71 @@ export class AuthService implements IAuthService {
     return ok(undefined);
   }
 
-  async resetPasswordAsync(
-    request: ResetPasswordDto,
-  ): Promise<Result<void, AppError>> {
-    const { email, otp, newPassword } = request;
+  async verifyPasswordResetOtpAsync(
+    request: VerifyPasswordResetOtpDto,
+  ): Promise<Result<PasswordResetTokenResponseDto, AppError>> {
+    const { email, otp } = request;
 
-    // 1. OTP trước: chỉ chủ email mới đi tiếp được
+    // 1. Chỉ chủ email mới đi tiếp được. Sai quá MAX_OTP_ATTEMPTS thì OTP bị xóa như luồng đăng ký
     const otpCheck = await this.checkOtpAsync(
       this.passwordResetOtpStore,
       email,
       otp,
-      this.resetPasswordFailedError(),
+      this.verifyPasswordResetOtpFailedError(),
     );
     if (otpCheck.isErr()) {
       return err(otpCheck.error);
     }
 
-    // 2. Tài khoản bị xóa sau khi xin OTP: báo như OTP sai, không lộ trạng thái tài khoản
+    // 2. Đổi OTP lấy reset token cho bước đặt mật khẩu. Store chỉ giữ hash
+    const resetToken = this.tokenHasher.generateToken();
+    const saveToken = await this.passwordResetTokenStore.saveResetToken(
+      email,
+      this.tokenHasher.hashToken(resetToken),
+      PASSWORD_RESET_TOKEN_TTL_SECONDS,
+    );
+    if (saveToken.isErr()) {
+      // OTP chưa bị xóa nên user gửi lại đúng OTP đó là được
+      return err(this.verifyPasswordResetOtpFailedError());
+    }
+
+    // 3. OTP chỉ dùng một lần. Lỗi dọn dẹp chỉ log: verify lại cũng chỉ ghi đè token cũ
+    const cleanups = await Promise.all([
+      this.passwordResetOtpStore.deleteOtp(email),
+      this.passwordResetOtpStore.resetFailedAttempts(email),
+    ]);
+    if (cleanups.some((result) => result.isErr())) {
+      this.logger.warn('Failed to clean up password reset OTP after verify');
+    }
+
+    return ok({ resetToken });
+  }
+
+  async resetPasswordAsync(
+    request: ResetPasswordDto,
+  ): Promise<Result<void, AppError>> {
+    const { email, resetToken, newPassword } = request;
+
+    // 1. Chỉ ai vừa verify OTP mới có token. Không đếm số lần sai như OTP:
+    // token 32 byte random thì không đoán được.
+    // So hash thay vì token gốc nên đo thời gian so sánh cũng không suy ra được token.
+    const tokenHashResult =
+      await this.passwordResetTokenStore.findResetToken(email);
+    if (tokenHashResult.isErr()) {
+      return err(this.resetPasswordFailedError());
+    }
+    // Không có token và token sai dùng chung một lỗi
+    if (tokenHashResult.value !== this.tokenHasher.hashToken(resetToken)) {
+      return err(this.invalidResetTokenError());
+    }
+
+    // 2. Tài khoản bị xóa sau khi verify: báo như token sai, không lộ trạng thái tài khoản
     const userResult = await this.userRepository.getUserByEmail(email);
     if (userResult.isErr()) {
       return err(this.resetPasswordFailedError());
     }
     if (userResult.value === null) {
-      return err(this.invalidOtpError());
+      return err(this.invalidResetTokenError());
     }
     const userId = userResult.value.id;
 
@@ -447,20 +497,18 @@ export class AuthService implements IAuthService {
     }
 
     // 4. Đá mọi phiên cũ: reset thường là vì nghi tài khoản bị chiếm.
-    // Lỗi ở đây vẫn giữ OTP để user gửi lại đúng request này (đổi mật khẩu lần nữa là vô hại)
+    // Lỗi ở đây vẫn giữ token để user gửi lại đúng request này (đổi mật khẩu lần nữa là vô hại)
     const revokeAll =
       await this.refreshTokenRepository.revokeAllRefreshTokensForUser(userId);
     if (revokeAll.isErr()) {
       return err(this.resetPasswordFailedError());
     }
 
-    // 5. Xong hết mới xóa OTP. Lỗi dọn dẹp chỉ log, TTL sẽ tự dọn
-    const cleanups = await Promise.all([
-      this.passwordResetOtpStore.deleteOtp(email),
-      this.passwordResetOtpStore.resetFailedAttempts(email),
-    ]);
-    if (cleanups.some((result) => result.isErr())) {
-      this.logger.warn('Failed to clean up password reset OTP');
+    // 5. Xong hết mới xóa token: token chỉ dùng một lần. Lỗi dọn dẹp chỉ log, TTL sẽ tự dọn
+    const deleteToken =
+      await this.passwordResetTokenStore.deleteResetToken(email);
+    if (deleteToken.isErr()) {
+      this.logger.warn('Failed to delete password reset token');
     }
 
     return ok(undefined);
@@ -663,6 +711,18 @@ export class AuthService implements IAuthService {
     return new AppError(
       ErrorCode.InternalServerError,
       'Failed to request password reset',
+    );
+  }
+
+  private verifyPasswordResetOtpFailedError(): AppError {
+    return new AppError(ErrorCode.InternalServerError, 'Failed to verify OTP');
+  }
+
+  // Token hết hạn hoặc đã dùng thì chỉ còn cách xin OTP mới, message phải chỉ client quay lại bước đó
+  private invalidResetTokenError(): AppError {
+    return new AppError(
+      ErrorCode.BadRequest,
+      'Invalid or expired reset token, please request a new OTP',
     );
   }
 

@@ -7,9 +7,13 @@ import {
   RegisterDto,
   ResendRegistrationOtpDto,
   ResetPasswordDto,
+  VerifyPasswordResetOtpDto,
   VerifyRegistrationDto,
 } from '../dtos/auth.request.dto';
-import { LoginResponseDto } from '../dtos/auth.response.dto';
+import {
+  LoginResponseDto,
+  PasswordResetTokenResponseDto,
+} from '../dtos/auth.response.dto';
 
 export abstract class IAuthService {
   abstract registerAsync(request: RegisterDto): Promise<Result<void, AppError>>;
@@ -31,6 +35,9 @@ export abstract class IAuthService {
   abstract requestPasswordResetAsync(
     request: ForgotPasswordDto,
   ): Promise<Result<void, AppError>>;
+  abstract verifyPasswordResetOtpAsync(
+    request: VerifyPasswordResetOtpDto,
+  ): Promise<Result<PasswordResetTokenResponseDto, AppError>>;
   abstract resetPasswordAsync(
     request: ResetPasswordDto,
   ): Promise<Result<void, AppError>>;

@@ -45,6 +45,11 @@ describe('AuthService', () => {
     incrementFailedAttempts: jest.fn(),
     resetFailedAttempts: jest.fn(),
   };
+  const passwordResetTokenStore = {
+    saveResetToken: jest.fn(),
+    findResetToken: jest.fn(),
+    deleteResetToken: jest.fn(),
+  };
   const accessTokenIssuer = {
     issueAccessToken: jest.fn(),
   };
@@ -72,6 +77,7 @@ describe('AuthService', () => {
     pendingStore,
     otpStore,
     passwordResetOtpStore,
+    passwordResetTokenStore,
     accessTokenIssuer,
     tokenHasher,
     refreshTokenRepository,
@@ -570,6 +576,7 @@ describe('AuthService', () => {
         pendingStore,
         otpStore,
         passwordResetOtpStore,
+        passwordResetTokenStore,
         accessTokenIssuer,
         tokenHasher,
         refreshTokenRepository,
@@ -1067,19 +1074,18 @@ describe('AuthService', () => {
     );
   });
 
-  describe('resetPasswordAsync', () => {
-    const request = { email, otp: '123456', newPassword: 'N3wStr0ngPass' };
+  describe('verifyPasswordResetOtpAsync', () => {
+    const request = { email, otp: '123456' };
 
     // Mặc định mọi bước đều thành công; từng test ghi đè bước cần làm hỏng
     beforeEach(() => {
       passwordResetOtpStore.findOtp.mockResolvedValue(ok('hashed:123456'));
       passwordHasher.compare.mockResolvedValue(ok(true));
-      passwordHasher.hash.mockResolvedValue(ok('bcrypt-hash'));
-      userRepository.getUserByEmail.mockResolvedValue(ok({ id: 7 }));
-      userRepository.updateUserPassword.mockResolvedValue(ok(undefined));
-      refreshTokenRepository.revokeAllRefreshTokensForUser.mockResolvedValue(
-        ok(undefined),
+      tokenHasher.generateToken.mockReturnValue('reset-token');
+      tokenHasher.hashToken.mockImplementation(
+        (token: string) => `sha256:${token}`,
       );
+      passwordResetTokenStore.saveResetToken.mockResolvedValue(ok(undefined));
       passwordResetOtpStore.deleteOtp.mockResolvedValue(ok(undefined));
       passwordResetOtpStore.resetFailedAttempts.mockResolvedValue(
         ok(undefined),
@@ -1087,30 +1093,27 @@ describe('AuthService', () => {
     });
 
     const expectError = async (code: ErrorCode, message: string) => {
-      const result = await service.resetPasswordAsync(request);
+      const result = await service.verifyPasswordResetOtpAsync(request);
 
       if (result.isOk()) throw new Error('Expected an error result');
       expect(result.error.code).toBe(code);
       expect(result.error.message).toBe(message);
     };
 
-    it('stores the hash of the new password, logs out every session and removes the otp', async () => {
-      const result = await service.resetPasswordAsync(request);
+    it('returns a reset token, stores only its hash and removes the otp', async () => {
+      const result = await service.verifyPasswordResetOtpAsync(request);
 
-      expect(result.isOk()).toBe(true);
-      expect(passwordResetOtpStore.findOtp).toHaveBeenCalledWith(email);
+      if (result.isErr()) throw result.error;
+      expect(result.value).toEqual({ resetToken: 'reset-token' });
       expect(passwordHasher.compare).toHaveBeenCalledWith(
         '123456',
         'hashed:123456',
       );
-      expect(passwordHasher.hash).toHaveBeenCalledWith('N3wStr0ngPass');
-      expect(userRepository.updateUserPassword).toHaveBeenCalledWith(
-        7,
-        'bcrypt-hash',
+      expect(passwordResetTokenStore.saveResetToken).toHaveBeenCalledWith(
+        email,
+        'sha256:reset-token',
+        600,
       );
-      expect(
-        refreshTokenRepository.revokeAllRefreshTokensForUser,
-      ).toHaveBeenCalledWith(7);
       expect(passwordResetOtpStore.deleteOtp).toHaveBeenCalledWith(email);
       expect(passwordResetOtpStore.resetFailedAttempts).toHaveBeenCalledWith(
         email,
@@ -1119,20 +1122,21 @@ describe('AuthService', () => {
       expect(otpStore.findOtp).not.toHaveBeenCalled();
     });
 
-    it('never passes the plain new password to the repository', async () => {
-      await service.resetPasswordAsync(request);
+    it('does not change the password or the sessions yet', async () => {
+      await service.verifyPasswordResetOtpAsync(request);
 
+      expect(userRepository.updateUserPassword).not.toHaveBeenCalled();
       expect(
-        JSON.stringify(userRepository.updateUserPassword.mock.calls),
-      ).not.toContain('N3wStr0ngPass');
+        refreshTokenRepository.revokeAllRefreshTokensForUser,
+      ).not.toHaveBeenCalled();
     });
 
-    it('returns BadRequest without touching the password when no otp is stored', async () => {
+    it('returns BadRequest without issuing a token when no otp is stored', async () => {
       passwordResetOtpStore.findOtp.mockResolvedValue(ok(null));
 
       await expectError(ErrorCode.BadRequest, 'Invalid or expired OTP');
       expect(passwordHasher.compare).not.toHaveBeenCalled();
-      expect(userRepository.updateUserPassword).not.toHaveBeenCalled();
+      expect(passwordResetTokenStore.saveResetToken).not.toHaveBeenCalled();
     });
 
     it('counts a wrong otp and returns BadRequest while under the attempt limit', async () => {
@@ -1144,7 +1148,7 @@ describe('AuthService', () => {
         passwordResetOtpStore.incrementFailedAttempts,
       ).toHaveBeenCalledWith(email, 300);
       expect(passwordResetOtpStore.deleteOtp).not.toHaveBeenCalled();
-      expect(userRepository.updateUserPassword).not.toHaveBeenCalled();
+      expect(passwordResetTokenStore.saveResetToken).not.toHaveBeenCalled();
     });
 
     it('deletes the otp and returns TooManyRequests on the 5th wrong attempt', async () => {
@@ -1156,17 +1160,125 @@ describe('AuthService', () => {
         'Too many attempts, please request a new OTP',
       );
       expect(passwordResetOtpStore.deleteOtp).toHaveBeenCalledWith(email);
+      expect(passwordResetTokenStore.saveResetToken).not.toHaveBeenCalled();
+    });
+
+    it('still returns the token and logs a warning when cleaning up the otp fails', async () => {
+      passwordResetOtpStore.deleteOtp.mockResolvedValue(
+        err(new Error('redis down')),
+      );
+
+      const result = await service.verifyPasswordResetOtpAsync(request);
+
+      expect(result.isOk()).toBe(true);
+      expect(loggerWarn).toHaveBeenCalled();
+    });
+
+    it.each([
+      ['finding the otp', () => passwordResetOtpStore.findOtp],
+      ['comparing the otp', () => passwordHasher.compare],
+      ['saving the reset token', () => passwordResetTokenStore.saveResetToken],
+    ])(
+      'returns a safe InternalServerError and keeps the otp when %s fails',
+      async (_step, getMock) => {
+        getMock().mockResolvedValue(err(new Error('internal detail')));
+
+        await expectError(
+          ErrorCode.InternalServerError,
+          'Failed to verify OTP',
+        );
+        expect(passwordResetOtpStore.deleteOtp).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  describe('resetPasswordAsync', () => {
+    const request = {
+      email,
+      resetToken: 'reset-token',
+      newPassword: 'N3wStr0ngPass',
+    };
+    const invalidResetToken =
+      'Invalid or expired reset token, please request a new OTP';
+
+    // Mặc định mọi bước đều thành công; từng test ghi đè bước cần làm hỏng
+    beforeEach(() => {
+      tokenHasher.hashToken.mockImplementation(
+        (token: string) => `sha256:${token}`,
+      );
+      passwordResetTokenStore.findResetToken.mockResolvedValue(
+        ok('sha256:reset-token'),
+      );
+      passwordHasher.hash.mockResolvedValue(ok('bcrypt-hash'));
+      userRepository.getUserByEmail.mockResolvedValue(ok({ id: 7 }));
+      userRepository.updateUserPassword.mockResolvedValue(ok(undefined));
+      refreshTokenRepository.revokeAllRefreshTokensForUser.mockResolvedValue(
+        ok(undefined),
+      );
+      passwordResetTokenStore.deleteResetToken.mockResolvedValue(ok(undefined));
+    });
+
+    const expectError = async (code: ErrorCode, message: string) => {
+      const result = await service.resetPasswordAsync(request);
+
+      if (result.isOk()) throw new Error('Expected an error result');
+      expect(result.error.code).toBe(code);
+      expect(result.error.message).toBe(message);
+    };
+
+    it('stores the hash of the new password, logs out every session and deletes the reset token', async () => {
+      const result = await service.resetPasswordAsync(request);
+
+      expect(result.isOk()).toBe(true);
+      expect(passwordResetTokenStore.findResetToken).toHaveBeenCalledWith(
+        email,
+      );
+      expect(passwordHasher.hash).toHaveBeenCalledWith('N3wStr0ngPass');
+      expect(userRepository.updateUserPassword).toHaveBeenCalledWith(
+        7,
+        'bcrypt-hash',
+      );
+      expect(
+        refreshTokenRepository.revokeAllRefreshTokensForUser,
+      ).toHaveBeenCalledWith(7);
+      expect(passwordResetTokenStore.deleteResetToken).toHaveBeenCalledWith(
+        email,
+      );
+    });
+
+    it('never passes the plain new password to the repository', async () => {
+      await service.resetPasswordAsync(request);
+
+      expect(
+        JSON.stringify(userRepository.updateUserPassword.mock.calls),
+      ).not.toContain('N3wStr0ngPass');
+    });
+
+    it('returns BadRequest without touching the password when no reset token is stored', async () => {
+      passwordResetTokenStore.findResetToken.mockResolvedValue(ok(null));
+
+      await expectError(ErrorCode.BadRequest, invalidResetToken);
       expect(userRepository.updateUserPassword).not.toHaveBeenCalled();
     });
 
-    it('returns the same BadRequest as a wrong otp when the account no longer exists', async () => {
+    it('returns the same BadRequest and keeps the stored token when the reset token does not match', async () => {
+      passwordResetTokenStore.findResetToken.mockResolvedValue(
+        ok('sha256:another-token'),
+      );
+
+      await expectError(ErrorCode.BadRequest, invalidResetToken);
+      expect(userRepository.updateUserPassword).not.toHaveBeenCalled();
+      expect(passwordResetTokenStore.deleteResetToken).not.toHaveBeenCalled();
+    });
+
+    it('returns the same BadRequest when the account no longer exists', async () => {
       userRepository.getUserByEmail.mockResolvedValue(ok(null));
 
-      await expectError(ErrorCode.BadRequest, 'Invalid or expired OTP');
+      await expectError(ErrorCode.BadRequest, invalidResetToken);
       expect(userRepository.updateUserPassword).not.toHaveBeenCalled();
     });
 
-    it('keeps the otp so the user can retry when logging out the sessions fails', async () => {
+    it('keeps the reset token so the user can retry when logging out the sessions fails', async () => {
       refreshTokenRepository.revokeAllRefreshTokensForUser.mockResolvedValue(
         err(new Error('internal detail')),
       );
@@ -1176,11 +1288,11 @@ describe('AuthService', () => {
         'Failed to reset password',
       );
       expect(userRepository.updateUserPassword).toHaveBeenCalled();
-      expect(passwordResetOtpStore.deleteOtp).not.toHaveBeenCalled();
+      expect(passwordResetTokenStore.deleteResetToken).not.toHaveBeenCalled();
     });
 
-    it('still succeeds and logs a warning when cleaning up the otp fails', async () => {
-      passwordResetOtpStore.deleteOtp.mockResolvedValue(
+    it('still succeeds and logs a warning when deleting the reset token fails', async () => {
+      passwordResetTokenStore.deleteResetToken.mockResolvedValue(
         err(new Error('redis down')),
       );
 
@@ -1191,13 +1303,12 @@ describe('AuthService', () => {
     });
 
     it.each([
-      ['finding the otp', () => passwordResetOtpStore.findOtp],
-      ['comparing the otp', () => passwordHasher.compare],
+      ['finding the reset token', () => passwordResetTokenStore.findResetToken],
       ['looking up the user', () => userRepository.getUserByEmail],
       ['hashing the new password', () => passwordHasher.hash],
       ['updating the password', () => userRepository.updateUserPassword],
     ])(
-      'returns a safe InternalServerError and keeps the otp when %s fails',
+      'returns a safe InternalServerError and keeps the reset token when %s fails',
       async (_step, getMock) => {
         getMock().mockResolvedValue(err(new Error('internal detail')));
 
@@ -1205,7 +1316,7 @@ describe('AuthService', () => {
           ErrorCode.InternalServerError,
           'Failed to reset password',
         );
-        expect(passwordResetOtpStore.deleteOtp).not.toHaveBeenCalled();
+        expect(passwordResetTokenStore.deleteResetToken).not.toHaveBeenCalled();
       },
     );
   });

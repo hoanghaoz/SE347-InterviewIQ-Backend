@@ -20,6 +20,8 @@ import { IRefreshTokenRepository } from './domain/repositories/refresh-token.rep
 import { RefreshTokenRepository } from './infrastructure/refresh-token.repo';
 import { IPasswordResetOtpStore } from './domain/repositories/password-reset-otp-store.interface';
 import { RedisPasswordResetOtpStore } from './infrastructure/redis-password-reset-otp-store';
+import { IPasswordResetTokenStore } from './domain/repositories/password-reset-token-store.interface';
+import { RedisPasswordResetTokenStore } from './infrastructure/redis-password-reset-token-store';
 
 @Module({
   // JwtAccessTokenIssuer tự truyền secret/expiresIn khi ký nên không cấu hình ở đây
@@ -33,6 +35,10 @@ import { RedisPasswordResetOtpStore } from './infrastructure/redis-password-rese
     {
       provide: IPasswordResetOtpStore,
       useClass: RedisPasswordResetOtpStore,
+    },
+    {
+      provide: IPasswordResetTokenStore,
+      useClass: RedisPasswordResetTokenStore,
     },
     {
       provide: IPendingRegistrationStore,

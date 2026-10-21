@@ -9,9 +9,13 @@ import {
   RegisterDto,
   ResendRegistrationOtpDto,
   ResetPasswordDto,
+  VerifyPasswordResetOtpDto,
   VerifyRegistrationDto,
 } from '../application/dtos/auth.request.dto';
-import { LoginResponseDto } from '../application/dtos/auth.response.dto';
+import {
+  LoginResponseDto,
+  PasswordResetTokenResponseDto,
+} from '../application/dtos/auth.response.dto';
 import { IAuthService } from '../application/interfaces/auth.service.interface';
 
 @ApiTags('auth')
@@ -172,10 +176,34 @@ export class AuthController {
     );
   }
 
+  // Tách khỏi bước đặt mật khẩu để OTP sai được báo ngay ở màn nhập OTP
+  @Post('password/verify')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Verify the password reset OTP and get a one-time reset token',
+  })
+  async verifyPasswordResetOtpAsync(
+    @Body() request: VerifyPasswordResetOtpDto,
+  ): Promise<ApiSuccessResponse<PasswordResetTokenResponseDto>> {
+    const result = await this.authService.verifyPasswordResetOtpAsync(request);
+
+    return result.match(
+      (data) =>
+        new ApiSuccessResponse(
+          HttpStatus.OK,
+          data,
+          'OTP verified successfully',
+        ),
+      (error) => {
+        throw toHttpException(error);
+      },
+    );
+  }
+
   @Post('password/reset')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Reset the password with the emailed OTP and log out everywhere',
+    summary: 'Set a new password with the reset token and log out everywhere',
   })
   async resetPasswordAsync(
     @Body() request: ResetPasswordDto,
