@@ -210,7 +210,7 @@ Quản lý trạng thái vòng đời một buổi phỏng vấn mô phỏng c�
 - **`duration_seconds`** (`INT`, Nullable): Thời lượng thực tế (giây, CHECK >= 0).
 - **`started_at`**, **`submitted_at`**, **`completed_at`** (`TIMESTAMPTZ`, Nullable).
 - **`created_at`**, **`updated_at`** (`TIMESTAMPTZ`).
-- **Indexes**: `user_id`, `cv_id`, `status`, composite `(user_id, status)`.
+- **Indexes**: `user_id`, `cv_id`, `status`, composite `(user_id, status)`, composite `(user_id, created_at DESC)` (tối ưu hóa phân trang `GET /api/interview-session`).
 
 ### 3.5 `questions` (Câu hỏi trong phiên)
 Lưu danh sách câu hỏi AI sinh ra riêng biệt cho từng phiên phỏng vấn.
@@ -222,7 +222,7 @@ Lưu danh sách câu hỏi AI sinh ra riêng biệt cho từng phiên phỏng v�
 - **`domain`** (`QuestionDomain`): Lĩnh vực chuyên môn (`TECHNICAL`, `BEHAVIORAL`, `SITUATIONAL`).
 - **`difficulty`** (`QuestionDifficulty`, Default: `MEDIUM`): Mức độ khó (`EASY`, `MEDIUM`, `HARD`).
 - **`created_at`** (`TIMESTAMPTZ`).
-- **Indexes**: `session_id`, unique composite `(session_id, order_index)`.
+- **Indexes**: `session_id`, unique composite `(session_id, order_index)`, composite `(session_id, order_index ASC)` (tối ưu đọc danh sách câu hỏi tuần tự theo phiên).
 
 ### 3.6 `answers` (Câu trả lời của ứng viên)
 Ghi nhận câu trả lời video/audio và bản phiên âm bóc tách được (tối đa 1:1 với `questions`).

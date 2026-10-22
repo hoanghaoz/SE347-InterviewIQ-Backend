@@ -4,24 +4,18 @@ import {
   ScoringDomainErrorValidation,
 } from '../errors/scoring-domain.error';
 
-/** Strength item stored in interview_summaries.strengths (JSONB) */
 export interface StrengthItem {
   category: string;
   title: string;
   description: string;
 }
 
-/** Improvement item stored in interview_summaries.improvements (JSONB) */
 export interface ImprovementItem {
   category: string;
   title: string;
   description: string;
   suggestion?: string;
 }
-
-// ---------------------------------------------------------------------------
-// Score Entity
-// ---------------------------------------------------------------------------
 
 export type ScoreGetParams = {
   readonly id: number;
@@ -165,10 +159,6 @@ export class Score {
     return this.params.createdAt;
   }
 }
-
-// ---------------------------------------------------------------------------
-// InterviewSummary Entity
-// ---------------------------------------------------------------------------
 
 export type InterviewSummaryGetParams = {
   readonly id: number;
@@ -318,10 +308,6 @@ export class InterviewSummary {
     return this.params.createdAt;
   }
 }
-
-// ---------------------------------------------------------------------------
-// ScoringResult Aggregate
-// ---------------------------------------------------------------------------
 
 export class ScoringResult {
   constructor(

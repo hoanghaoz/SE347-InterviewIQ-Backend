@@ -12,6 +12,7 @@ describe('ScoringRepository', () => {
 
   const findUniqueSessionMock = jest.fn<Promise<unknown>, [unknown]>();
   const updateSessionMock = jest.fn<Promise<unknown>, [unknown]>();
+  const updateManySessionMock = jest.fn<Promise<unknown>, [unknown]>();
   const findFirstSessionMock = jest.fn<Promise<unknown>, [unknown]>();
   const upsertScoreMock = jest.fn<Promise<unknown>, [unknown]>();
   const upsertSummaryMock = jest.fn<Promise<unknown>, [unknown]>();
@@ -24,6 +25,7 @@ describe('ScoringRepository', () => {
     interviewSession: {
       findUnique: findUniqueSessionMock,
       update: updateSessionMock,
+      updateMany: updateManySessionMock,
       findFirst: findFirstSessionMock,
     },
     score: {
@@ -42,6 +44,7 @@ describe('ScoringRepository', () => {
   beforeEach(() => {
     findUniqueSessionMock.mockReset();
     updateSessionMock.mockReset();
+    updateManySessionMock.mockReset();
     findFirstSessionMock.mockReset();
     upsertScoreMock.mockReset();
     upsertSummaryMock.mockReset();
@@ -164,6 +167,42 @@ describe('ScoringRepository', () => {
       expect(result.isErr()).toBe(true);
       if (result.isErr()) {
         expect(result.error.message).toBe('Failed to update session status.');
+      }
+    });
+  });
+
+  describe('markSessionFailed', () => {
+    it('should update session status to FAILED when status is SCORING and return ok', async () => {
+      updateManySessionMock.mockResolvedValue({ count: 1 });
+
+      const result = await repository.markSessionFailed(
+        1,
+        'LLM rate limit exceeded after retries',
+      );
+
+      expect(result.isOk()).toBe(true);
+      expect(updateManySessionMock).toHaveBeenCalledWith({
+        where: {
+          id: 1,
+          status: SessionStatus.SCORING,
+        },
+        data: {
+          status: SessionStatus.FAILED,
+        },
+      });
+    });
+
+    it('should return Err when Prisma updateMany fails', async () => {
+      updateManySessionMock.mockRejectedValue(new Error('DB update failure'));
+
+      const result = await repository.markSessionFailed(
+        1,
+        'Some failure reason',
+      );
+
+      expect(result.isErr()).toBe(true);
+      if (result.isErr()) {
+        expect(result.error.message).toBe('Failed to mark session as failed.');
       }
     });
   });

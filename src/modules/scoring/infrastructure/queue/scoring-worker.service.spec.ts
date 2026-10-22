@@ -4,6 +4,7 @@ jest.mock('pg-boss', () => ({
   default: jest.fn(),
 }));
 
+import { ConfigService } from '@nestjs/config';
 import { ok, err } from 'neverthrow';
 import { SessionStatus } from '../../../../../generated/prisma/enums';
 import type { Job, PgBoss } from 'pg-boss';
@@ -59,11 +60,16 @@ describe('ScoringWorkerService', () => {
     ReturnType<IScoringRepository['getSessionOwnerUserId']>,
     Parameters<IScoringRepository['getSessionOwnerUserId']>
   >();
+  const markSessionFailedMock = jest.fn<
+    ReturnType<IScoringRepository['markSessionFailed']>,
+    Parameters<IScoringRepository['markSessionFailed']>
+  >();
 
   const mockScoringRepo: IScoringRepository = {
     findSessionForScoring: findSessionForScoringMock,
     updateSessionStatus: updateSessionStatusMock,
     saveScoringResult: saveScoringResultMock,
+    markSessionFailed: markSessionFailedMock,
     findSessionResult: findSessionResultMock,
     getSessionOwnerUserId: getSessionOwnerUserIdMock,
   };
@@ -76,6 +82,7 @@ describe('ScoringWorkerService', () => {
     data: {
       sessionId: mockSessionId,
       userId: mockUserId,
+      enqueuedAt: '2026-10-19T10:00:00.000Z',
     },
   } as unknown as Job<ScoringJobData>;
 
@@ -85,6 +92,7 @@ describe('ScoringWorkerService', () => {
     findSessionForScoringMock.mockReset();
     updateSessionStatusMock.mockReset();
     saveScoringResultMock.mockReset();
+    markSessionFailedMock.mockReset();
     findSessionResultMock.mockReset();
     getSessionOwnerUserIdMock.mockReset();
 
@@ -104,6 +112,75 @@ describe('ScoringWorkerService', () => {
         { localConcurrency: 2 },
         expect.any(Function),
       );
+    });
+
+    it('should read custom concurrency from ConfigService', async () => {
+      createQueueMock.mockResolvedValue(undefined);
+      workMock.mockResolvedValue('handler-id');
+
+      const mockConfigService = {
+        get: jest
+          .fn()
+          .mockImplementation((key: string, defaultValue?: unknown) => {
+            if (key === 'SCORING_WORKER_CONCURRENCY') return '4';
+            if (key === 'SCORING_WORKER_PACING_MS') return '1500';
+            return defaultValue;
+          }),
+      };
+
+      const workerWithConfig = new ScoringWorkerService(
+        mockBoss,
+        mockScoringRepo,
+        mockConfigService as unknown as ConfigService,
+      );
+
+      await workerWithConfig.onModuleInit();
+
+      expect(workMock).toHaveBeenCalledWith(
+        'scoring-jobs',
+        { localConcurrency: 4 },
+        expect.any(Function),
+      );
+    });
+
+    it('should apply pacing delay when processing consecutive jobs with pacingMs configured', async () => {
+      createQueueMock.mockResolvedValue(undefined);
+      let capturedHandler:
+        | ((jobs: Job<ScoringJobData>[]) => Promise<void>)
+        | undefined;
+      workMock.mockImplementation((_queue, _options, handler) => {
+        capturedHandler = handler;
+        return Promise.resolve('handler-id');
+      });
+
+      const mockConfigService = {
+        get: jest
+          .fn()
+          .mockImplementation((key: string, defaultValue?: unknown) => {
+            if (key === 'SCORING_WORKER_PACING_MS') return 50;
+            return defaultValue;
+          }),
+      };
+
+      const workerWithPacing = new ScoringWorkerService(
+        mockBoss,
+        mockScoringRepo,
+        mockConfigService as unknown as ConfigService,
+      );
+
+      await workerWithPacing.onModuleInit();
+      expect(capturedHandler).toBeDefined();
+
+      findSessionForScoringMock.mockResolvedValue(ok(null));
+
+      const job1 = { ...mockJob, id: 'job-1' };
+      const job2 = { ...mockJob, id: 'job-2' };
+
+      const startTime = Date.now();
+      await capturedHandler!([job1, job2]);
+      const elapsed = Date.now() - startTime;
+
+      expect(elapsed).toBeGreaterThanOrEqual(40);
     });
   });
 
@@ -292,6 +369,122 @@ describe('ScoringWorkerService', () => {
         'LLM rate limit reached',
       );
       expect(saveScoringResultMock).not.toHaveBeenCalled();
+    });
+
+    it('should call markSessionFailed on the final retry attempt (retrycount + 1 >= retrylimit)', async () => {
+      const finalAttemptJob = {
+        ...mockJob,
+        retrycount: 2,
+        retrylimit: 3,
+      } as unknown as Job<ScoringJobData>;
+
+      findSessionForScoringMock.mockResolvedValue(ok(mockContext));
+      updateSessionStatusMock.mockResolvedValue(ok(undefined));
+      saveScoringResultMock.mockResolvedValue(
+        err(new Error('Fatal DB write error')),
+      );
+      markSessionFailedMock.mockResolvedValue(ok(undefined));
+
+      await expect(workerService.handleJob(finalAttemptJob)).rejects.toThrow(
+        'Fatal DB write error',
+      );
+
+      expect(markSessionFailedMock).toHaveBeenCalledWith(
+        mockContext.id,
+        'Fatal DB write error',
+      );
+    });
+
+    it('should not call markSessionFailed on transient retryable failure before final attempt', async () => {
+      const firstAttemptJob = {
+        ...mockJob,
+        retrycount: 0,
+        retrylimit: 3,
+      } as unknown as Job<ScoringJobData>;
+
+      findSessionForScoringMock.mockResolvedValue(ok(mockContext));
+      updateSessionStatusMock.mockResolvedValue(ok(undefined));
+      saveScoringResultMock.mockResolvedValue(
+        err(new Error('Transient DB timeout')),
+      );
+
+      await expect(workerService.handleJob(firstAttemptJob)).rejects.toThrow(
+        'Transient DB timeout',
+      );
+
+      expect(markSessionFailedMock).not.toHaveBeenCalled();
+    });
+
+    it('should call markSessionFailed immediately when encountering non-retryable validation error', async () => {
+      const firstAttemptJob = {
+        ...mockJob,
+        retrycount: 0,
+        retrylimit: 3,
+      } as unknown as Job<ScoringJobData>;
+
+      const invalidEvaluation: ScoringLlmEvaluationResult = {
+        contentScore: 999.0,
+        relevanceScore: 8.5,
+        confidenceScore: 8.0,
+        overallScore: 8.6,
+        overallFeedback: 'Great answer',
+        strengths: [],
+        improvements: [],
+        scoringModel: 'gemini-2.5-flash',
+        promptVersion: 'v1.0',
+      };
+
+      const evaluateSessionMock = jest
+        .fn()
+        .mockResolvedValue(ok(invalidEvaluation));
+      const mockLlmProvider: IScoringLlmProvider = {
+        evaluateSession: evaluateSessionMock,
+      };
+
+      const workerWithLlm = new ScoringWorkerService(
+        mockBoss,
+        mockScoringRepo,
+        mockLlmProvider,
+      );
+
+      findSessionForScoringMock.mockResolvedValue(ok(mockContext));
+      updateSessionStatusMock.mockResolvedValue(ok(undefined));
+      markSessionFailedMock.mockResolvedValue(ok(undefined));
+
+      await expect(workerWithLlm.handleJob(firstAttemptJob)).rejects.toThrow(
+        /must be between 0 and 10/i,
+      );
+
+      expect(markSessionFailedMock).toHaveBeenCalledWith(
+        mockContext.id,
+        expect.stringMatching(/must be between 0 and 10/i),
+      );
+    });
+
+    it('should still rethrow the original error when markSessionFailed returns error', async () => {
+      const finalAttemptJob = {
+        ...mockJob,
+        retrycount: 2,
+        retrylimit: 3,
+      } as unknown as Job<ScoringJobData>;
+
+      findSessionForScoringMock.mockResolvedValue(ok(mockContext));
+      updateSessionStatusMock.mockResolvedValue(ok(undefined));
+      saveScoringResultMock.mockResolvedValue(
+        err(new Error('Permanent failure')),
+      );
+      markSessionFailedMock.mockResolvedValue(
+        err(new Error('Mark failed error')),
+      );
+
+      await expect(workerService.handleJob(finalAttemptJob)).rejects.toThrow(
+        'Permanent failure',
+      );
+
+      expect(markSessionFailedMock).toHaveBeenCalledWith(
+        mockContext.id,
+        'Permanent failure',
+      );
     });
   });
 });
