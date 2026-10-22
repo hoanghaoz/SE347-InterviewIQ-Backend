@@ -18,10 +18,6 @@ import {
   SummaryDto,
 } from '../application/dtos/scoring.response.dto';
 
-// ---------------------------------------------------------------------------
-// Status Enum Mappings
-// ---------------------------------------------------------------------------
-
 const sessionStatusToJobStatus: Partial<
   Record<SessionStatus, ScoringJobStatus>
 > = {
@@ -36,10 +32,6 @@ export function mapSessionStatusToJobStatus(
 ): ScoringJobStatus {
   return sessionStatusToJobStatus[status] ?? ScoringJobStatus.QUEUED;
 }
-
-// ---------------------------------------------------------------------------
-// Prisma Row -> Domain Entity
-// ---------------------------------------------------------------------------
 
 export function mapScoreToDomain(row: PrismaScore): Score {
   return Score.getScore({
@@ -78,10 +70,6 @@ export function mapSummaryToDomain(
     createdAt: row.createdAt,
   });
 }
-
-// ---------------------------------------------------------------------------
-// Domain Entity -> Response DTO
-// ---------------------------------------------------------------------------
 
 export function mapScoreToDto(score: Score): ScoreDto {
   return {

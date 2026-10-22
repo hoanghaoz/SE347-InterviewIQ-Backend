@@ -100,14 +100,12 @@ describe('ScoringQueue Stress & Resilience Test (20 Concurrent Jobs)', () => {
     updateSessionStatusMock.mockResolvedValue(ok(undefined));
     saveScoringResultMock.mockResolvedValue(ok(undefined));
 
-    // Simulate realistic async LLM evaluation with concurrency tracking
     evaluateSessionMock.mockImplementation(async () => {
       currentConcurrentWorkers++;
       if (currentConcurrentWorkers > maxObservedConcurrency) {
         maxObservedConcurrency = currentConcurrentWorkers;
       }
 
-      // Simulate network / processing latency (20ms)
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       currentConcurrentWorkers--;
@@ -171,7 +169,6 @@ describe('ScoringQueue Stress & Resilience Test (20 Concurrent Jobs)', () => {
     );
     expect(registeredHandler).not.toBeNull();
 
-    // Generate 20 concurrent jobs
     const jobs: Job<ScoringJobData>[] = Array.from(
       { length: TOTAL_JOBS },
       (_, i) => {
@@ -190,7 +187,6 @@ describe('ScoringQueue Stress & Resilience Test (20 Concurrent Jobs)', () => {
       },
     );
 
-    // Simulate pg-boss dispatcher: dispatches batches of up to CONCURRENCY_LIMIT concurrent jobs
     const pool = [...jobs];
     const activeTasks: Promise<void>[] = [];
 
@@ -212,25 +208,21 @@ describe('ScoringQueue Stress & Resilience Test (20 Concurrent Jobs)', () => {
     await dispatchNext();
     await Promise.all(activeTasks);
 
-    // 1. Verify 100% of jobs completed without loss
     expect(completedJobIds).toHaveLength(TOTAL_JOBS);
     expect(completedSessionIds).toHaveLength(TOTAL_JOBS);
 
-    // 2. Verify all 20 unique sessions were processed
     const uniqueSessions = new Set(completedSessionIds);
     expect(uniqueSessions.size).toBe(TOTAL_JOBS);
 
-    // 3. Verify concurrency limit was strictly respected
     expect(maxObservedConcurrency).toBeLessThanOrEqual(CONCURRENCY_LIMIT);
 
-    // 4. Verify DB status transitions for each session
     expect(updateSessionStatusMock).toHaveBeenCalledTimes(TOTAL_JOBS);
     expect(saveScoringResultMock).toHaveBeenCalledTimes(TOTAL_JOBS);
     expect(markSessionFailedMock).not.toHaveBeenCalled();
   });
 
   it('gracefully handles partial failures among 20 concurrent jobs without hanging or dropping unaffected jobs', async () => {
-    const failedSessionIndices = new Set([3, 7, 12, 18]); // 4 sessions will fail
+    const failedSessionIndices = new Set([3, 7, 12, 18]);
     const succeededSessionIds: number[] = [];
     const failedSessionIds: number[] = [];
 
@@ -255,7 +247,6 @@ describe('ScoringQueue Stress & Resilience Test (20 Concurrent Jobs)', () => {
       return Promise.resolve(ok(undefined));
     });
 
-    // LLM fails for specific sessions (e.g. rate limit after max retries)
     evaluateSessionMock.mockImplementation(
       (payload: { sessionPublicId: string }) => {
         const id = parseInt(payload.sessionPublicId.split('-')[1], 10);
@@ -321,24 +312,22 @@ describe('ScoringQueue Stress & Resilience Test (20 Concurrent Jobs)', () => {
             userId: `user-${idx}`,
             enqueuedAt: new Date().toISOString(),
           },
-          retrycount: 2, // final retry
+          retrycount: 2,
           retrylimit: 3,
         } as unknown as Job<ScoringJobData>;
       },
     );
 
-    // Process all jobs through worker handler
     for (const job of jobs) {
       try {
         await registeredHandler!([job]);
         const id = parseInt(job.data.sessionId.split('-')[1], 10);
         succeededSessionIds.push(id);
-      } catch {
-        // expected for the failed sessions
+      } catch (err) {
+        void err;
       }
     }
 
-    // 16 jobs succeeded, 4 failed and were properly marked as FAILED via Dead-Letter hook
     expect(succeededSessionIds).toHaveLength(
       TOTAL_JOBS - failedSessionIndices.size,
     );

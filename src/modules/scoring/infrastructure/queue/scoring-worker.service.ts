@@ -83,7 +83,6 @@ export class ScoringWorkerService implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
-    // pg-boss >= 10 yêu cầu queue tồn tại trước khi work/send (idempotent)
     await this.boss.createQueue(SCORING_QUEUE_NAME);
     await this.boss.work<ScoringJobData>(
       SCORING_QUEUE_NAME,
@@ -115,7 +114,6 @@ export class ScoringWorkerService implements OnModuleInit {
     let sessionDbId: number | null = null;
 
     try {
-      // 1. Load session context via repository
       const sessionResult =
         await this.scoringRepo.findSessionForScoring(sessionId);
       if (sessionResult.isErr()) {
@@ -133,14 +131,12 @@ export class ScoringWorkerService implements OnModuleInit {
 
       sessionDbId = session.id;
 
-      // 2. Log candidate CV parsed info if available
       if (session.cvParsedData) {
         this.logger.debug(
           `CV loaded for candidate: ${session.cvParsedData.skills.languages.length} languages, ${session.cvParsedData.experiences.length} experiences`,
         );
       }
 
-      // 3. Mark session as SCORING
       const updateStatusResult = await this.scoringRepo.updateSessionStatus(
         session.id,
         SessionStatus.SCORING,
@@ -152,7 +148,6 @@ export class ScoringWorkerService implements OnModuleInit {
         throw updateStatusResult.error;
       }
 
-      // 4. Scoring logic (delegates to IScoringLlmProvider if registered; fallback baseline rubric for Sprint 2/3)
       let contentScore = 8.0;
       let relevanceScore = 7.5;
       let confidenceScore = 7.0;
@@ -238,7 +233,6 @@ export class ScoringWorkerService implements OnModuleInit {
       }
       const summary = summaryResult.value;
 
-      // 5. Save results atomically via repository
       const saveResult = await this.scoringRepo.saveScoringResult(
         session.id,
         score,

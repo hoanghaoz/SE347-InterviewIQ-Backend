@@ -21,14 +21,12 @@ export const PgBossProvider: Provider = {
     const boss = new PgBoss({
       connectionString,
       schema: 'pgboss',
-      // Dọn dẹp archive tự động, tránh đầy ổ đĩa
       archiveCompletedJobsEvery: '1 day',
       archiveFailedJobsEvery: '1 day',
       deleteArchivedJobsEvery: '7 days',
-      // Giám sát sức khỏe connection
       max: poolSize,
     } as ConstructorOptions);
-    // Không có listener 'error' thì EventEmitter sẽ throw và làm sập cả process
+
     const logger = new Logger('PgBoss');
     boss.on('error', (error: Error) => logger.error(error.message));
 

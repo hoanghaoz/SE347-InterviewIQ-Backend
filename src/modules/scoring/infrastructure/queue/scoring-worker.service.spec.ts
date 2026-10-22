@@ -423,7 +423,7 @@ describe('ScoringWorkerService', () => {
       } as unknown as Job<ScoringJobData>;
 
       const invalidEvaluation: ScoringLlmEvaluationResult = {
-        contentScore: 999.0, // Invalid score > 10
+        contentScore: 999.0,
         relevanceScore: 8.5,
         confidenceScore: 8.0,
         overallScore: 8.6,

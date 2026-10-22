@@ -18,7 +18,6 @@ describe('Scoring Domain Entities', () => {
         expect(score.contentScore).toBe(8.0);
         expect(score.relevanceScore).toBe(7.5);
         expect(score.confidenceScore).toBe(7.0);
-        // 8.0 * 0.4 + 7.5 * 0.4 + 7.0 * 0.2 = 3.2 + 3.0 + 1.4 = 7.6
         expect(score.overallScore).toBe(7.6);
         expect(score.scoredAt).toBeInstanceOf(Date);
       }

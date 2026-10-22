@@ -7,10 +7,6 @@ import type {
 
 export const ISCORING_LLM_PROVIDER = 'ISCORING_LLM_PROVIDER';
 
-/**
- * Payload sent to LLM provider to evaluate an interview session.
- * Contract aligned with Luồng 2 (Hiếu) for Gemini Provider integration.
- */
 export interface ScoringLlmPayload {
   readonly sessionPublicId: string;
   readonly cvParsedData: CvParsedData | null;
@@ -22,9 +18,6 @@ export interface ScoringLlmPayload {
   }>;
 }
 
-/**
- * Normalized evaluation result returned by the LLM Provider.
- */
 export interface ScoringLlmEvaluationResult {
   readonly contentScore: number;
   readonly relevanceScore: number;
@@ -37,10 +30,6 @@ export interface ScoringLlmEvaluationResult {
   readonly promptVersion: string;
 }
 
-/**
- * Contract for AI Scoring Provider (Gemini / LLM).
- * ScoringWorker delegates rubric evaluation to this interface.
- */
 export abstract class IScoringLlmProvider {
   abstract evaluateSession(
     payload: ScoringLlmPayload,

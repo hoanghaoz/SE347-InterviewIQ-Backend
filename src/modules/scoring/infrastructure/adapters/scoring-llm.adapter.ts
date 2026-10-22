@@ -182,12 +182,12 @@ export class ScoringLlmAdapter implements IScoringLlmProvider {
 
   private buildUserPrompt(payload: ScoringLlmPayload): string {
     const cvSection = payload.cvParsedData
-      ? `=== THÔNG TIN HỒ SƠ ỨNG VIÊN (CV) ===\n${JSON.stringify(
+      ? `THÔNG TIN HỒ SƠ ỨNG VIÊN (CV):\n${JSON.stringify(
           payload.cvParsedData,
           null,
           2,
         )}`
-      : '=== THÔNG TIN HỒ SƠ ỨNG VIÊN (CV) ===\nKhông có thông tin CV hoặc CV chưa được phân tích.';
+      : 'THÔNG TIN HỒ SƠ ỨNG VIÊN (CV):\nKhông có thông tin CV hoặc CV chưa được phân tích.';
 
     const questionsSection = payload.questions
       .map((q, idx) => {
@@ -207,10 +207,10 @@ export class ScoringLlmAdapter implements IScoringLlmProvider {
 
 ${cvSection}
 
-=== DANH SÁCH CÂU HỎI & CÂU TRẢ LỜI ===
+DANH SÁCH CÂU HỎI & CÂU TRẢ LỜI:
 ${questionsSection}
 
-=== YÊU CẦU ĐÁNH GIÁ ===
+YÊU CẦU ĐÁNH GIÁ:
 Dựa trên hồ sơ CV và phần trả lời của các câu hỏi trên, hãy thực hiện chấm điểm và phân tích điểm mạnh, điểm cần cải thiện theo đúng JSON Schema đã quy định.`;
   }
 
