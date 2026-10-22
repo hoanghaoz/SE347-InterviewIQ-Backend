@@ -11,7 +11,7 @@ import { IScoringLlmProvider } from '../../application/interfaces/scoring-llm.in
 import { ScoringJobData } from '../../application/dtos/scoring.request.dto';
 import {
   IScoringRepository,
-  ScoringSessionContext,
+  SessionScoringContext,
 } from '../../domain/repositories/scoring.repo.interface';
 import { ScoringWorkerService } from './scoring-worker.service';
 import { SCORING_QUEUE_NAME } from './scoring-queue.service';
@@ -75,26 +75,20 @@ describe('ScoringQueue Stress & Resilience Test (20 Concurrent Jobs)', () => {
 
     findSessionForScoringMock.mockImplementation((publicId: string) => {
       const id = parseInt(publicId.split('-')[1], 10);
-      const context: ScoringSessionContext = {
+      const context: SessionScoringContext = {
         id,
         publicId,
         userId: 100 + id,
-        title: `Concurrent Test Session ${id}`,
-        jobDescription: 'Software Engineer',
         status: SessionStatus.SUBMITTED,
-        totalQuestions: 2,
-        durationSeconds: 120,
         cvParsedData: null,
         questions: [
           {
             id: id * 10 + 1,
-            publicId: `q-${id}-1`,
             orderIndex: 0,
             content: 'What is IoC?',
             answer: {
+              id: id * 100 + 1,
               transcript: 'Inversion of Control pattern',
-              videoUrl: 'https://video.example.com/1',
-              durationSeconds: 60,
               emotionSummary: null,
             },
           },
@@ -247,11 +241,7 @@ describe('ScoringQueue Stress & Resilience Test (20 Concurrent Jobs)', () => {
           id,
           publicId,
           userId: 100 + id,
-          title: `Session ${id}`,
-          jobDescription: 'Backend Engineer',
           status: SessionStatus.SUBMITTED,
-          totalQuestions: 1,
-          durationSeconds: 60,
           cvParsedData: null,
           questions: [],
         }),

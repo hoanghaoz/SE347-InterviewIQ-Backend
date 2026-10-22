@@ -26,10 +26,15 @@ interface StressMetrics {
   avgDurationPerJobMs: number;
 }
 
-async function runStressTest(totalJobs = 20, concurrencyLimit = 2): Promise<StressMetrics> {
+async function runStressTest(
+  totalJobs = 20,
+  concurrencyLimit = 2,
+): Promise<StressMetrics> {
   console.log('='.repeat(65));
   console.log('🚀 MockMate AI: Scoring Queue Stress Test (20 Concurrent Jobs)');
-  console.log(`   Config: Total Jobs = ${totalJobs}, Worker Concurrency = ${concurrencyLimit}`);
+  console.log(
+    `   Config: Total Jobs = ${totalJobs}, Worker Concurrency = ${concurrencyLimit}`,
+  );
   console.log('='.repeat(65));
 
   const startTime = Date.now();
@@ -96,7 +101,9 @@ async function runStressTest(totalJobs = 20, concurrencyLimit = 2): Promise<Stre
   const totalTime = Date.now() - startTime;
   const avgDuration =
     jobDurations.length > 0
-      ? Math.round(jobDurations.reduce((a, b) => a + b, 0) / jobDurations.length)
+      ? Math.round(
+          jobDurations.reduce((a, b) => a + b, 0) / jobDurations.length,
+        )
       : 0;
 
   const metrics: StressMetrics = {
@@ -113,12 +120,17 @@ async function runStressTest(totalJobs = 20, concurrencyLimit = 2): Promise<Stre
   console.log(`   - Total Jobs Dispatched:   ${metrics.totalJobs}`);
   console.log(`   - Completed Successfully: ${metrics.completedJobs} (100%)`);
   console.log(`   - Failed / Dropped Jobs:  ${metrics.failedJobs} (0%)`);
-  console.log(`   - Max Active Concurrency: ${metrics.maxObservedConcurrency} (Limit: ${concurrencyLimit})`);
+  console.log(
+    `   - Max Active Concurrency: ${metrics.maxObservedConcurrency} (Limit: ${concurrencyLimit})`,
+  );
   console.log(`   - Average Time Per Job:   ${metrics.avgDurationPerJobMs} ms`);
   console.log(`   - Total Wall-Clock Time:  ${metrics.totalTimeMs} ms`);
   console.log('='.repeat(65));
 
-  if (metrics.completedJobs === totalJobs && metrics.maxObservedConcurrency <= concurrencyLimit) {
+  if (
+    metrics.completedJobs === totalJobs &&
+    metrics.maxObservedConcurrency <= concurrencyLimit
+  ) {
     console.log('✅ ALL STRESS TEST CONSTRAINTS SATISFIED.\n');
   } else {
     console.error('❌ STRESS TEST FAILED CONSTRAINTS.\n');

@@ -39,6 +39,7 @@ describe('InterviewService', () => {
     Parameters<IScoringService['enqueueAsync']>
   >();
   const getJobStatusAsync = jest.fn();
+  const getSessionResultAsync = jest.fn();
   const service = new InterviewService(
     {
       createInterviewSession,
@@ -48,7 +49,7 @@ describe('InterviewService', () => {
       startInterviewSession,
     },
     { authorizeUserCv },
-    { enqueueAsync, getJobStatusAsync },
+    { enqueueAsync, getJobStatusAsync, getSessionResultAsync },
   );
   const cvPublicId = '00000000-0000-4000-8000-000000000002';
   const authorizedCv: AuthorizeUserCvResult = {
