@@ -12,6 +12,7 @@ model Question {
   answer  Answer?
 
   @@index([sessionId])
+  @@index([sessionId, orderIndex(sort: Asc)])
   @@unique([sessionId, orderIndex])
   @@map("questions")
 }

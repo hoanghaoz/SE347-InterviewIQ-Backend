@@ -101,7 +101,7 @@ describe('InterviewAnswerRepository', () => {
       select: { id: true, userId: true },
     });
     expect(updateSession).toHaveBeenCalledWith({
-      where: { id: 10, userId: 20, status: { in: ['CREATED', 'IN_PROGRESS'] } },
+      where: { id: 10, userId: 20, status: 'IN_PROGRESS' },
       data: { status: 'IN_PROGRESS' },
     });
     expect(findQuestion).toHaveBeenCalledWith({

@@ -1,6 +1,7 @@
 import { Result } from 'neverthrow';
 
 export type CvSignedUpload = {
+  assetFolder: string;
   uploadUrl: string;
   apiKey: string;
   timestamp: number;

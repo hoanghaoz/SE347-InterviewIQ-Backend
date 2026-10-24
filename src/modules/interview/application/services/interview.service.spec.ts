@@ -8,7 +8,12 @@ import { Interview } from '../../domain/entities/interview.entity';
 import { IInterviewRepository } from '../../domain/repositories/interview.repo.interface';
 import { InterviewService } from './interview.service';
 import { IScoringService } from '../../../scoring/application/interfaces/scoring.service.interface';
-import { InterviewSubmissionConflictError } from '../../domain/errors/interview-domain.error';
+import { CommonSessionStatus } from '../../domain/enums/interview-enum';
+import { PageResult } from '../../../../shared/common/pagination';
+import {
+  InterviewStartConflictError,
+  InterviewSubmissionConflictError,
+} from '../../domain/errors/interview-domain.error';
 
 describe('InterviewService', () => {
   const authorizeUserCv = jest.fn<
@@ -27,19 +32,24 @@ describe('InterviewService', () => {
     ReturnType<IInterviewRepository['submitInterviewSession']>,
     Parameters<IInterviewRepository['submitInterviewSession']>
   >();
+  const getInterviewSessions = jest.fn();
+  const startInterviewSession = jest.fn();
   const enqueueAsync = jest.fn<
     ReturnType<IScoringService['enqueueAsync']>,
     Parameters<IScoringService['enqueueAsync']>
   >();
   const getJobStatusAsync = jest.fn();
+  const getSessionResultAsync = jest.fn();
   const service = new InterviewService(
     {
       createInterviewSession,
       authorizeInterviewSession,
       submitInterviewSession,
+      getInterviewSessions,
+      startInterviewSession,
     },
     { authorizeUserCv },
-    { enqueueAsync, getJobStatusAsync },
+    { enqueueAsync, getJobStatusAsync, getSessionResultAsync },
   );
   const cvPublicId = '00000000-0000-4000-8000-000000000002';
   const authorizedCv: AuthorizeUserCvResult = {
@@ -62,6 +72,8 @@ describe('InterviewService', () => {
     authorizeInterviewSession.mockReset();
     submitInterviewSession.mockReset();
     enqueueAsync.mockReset();
+    getInterviewSessions.mockReset();
+    startInterviewSession.mockReset();
   });
 
   it('creates an interview with the authorized internal IDs', async () => {
@@ -117,6 +129,172 @@ describe('InterviewService', () => {
     expect(createInterviewSession).not.toHaveBeenCalled();
   });
 
+  describe('getInterviewSessionAsync', () => {
+    it('returns owner pagination, public IDs, nullable fields and ISO dates', async () => {
+      getInterviewSessions.mockResolvedValue(
+        ok(
+          new PageResult(
+            [
+              {
+                sessionPublicId: 'session',
+                cvPublicId: null,
+                title: 'Backend',
+                status: CommonSessionStatus.CREATED,
+                totalQuestion: 5,
+                jobDescription: null,
+                createdAt: new Date('2026-10-13T08:00:00.000Z'),
+              },
+            ],
+            25,
+            2,
+            2,
+            20,
+          ),
+        ),
+      );
+      const result = await service.getInterviewSessionAsync('user', {
+        pageNumber: 2,
+        pageSize: 20,
+      });
+      if (result.isErr()) throw result.error;
+      expect(result.value).toEqual({
+        items: [
+          {
+            sessionPublicId: 'session',
+            cvPublicId: null,
+            title: 'Backend',
+            status: 'CREATED',
+            totalQuestion: 5,
+            jobDescription: null,
+            createdAt: '2026-10-13T08:00:00.000Z',
+          },
+        ],
+        totalPages: 2,
+        currentPage: 2,
+        pageNumber: 2,
+        pageSize: 20,
+        hasPrevious: true,
+        hasNext: false,
+      });
+      expect(getInterviewSessions).toHaveBeenCalledWith('user', {
+        pageNumber: 2,
+        pageSize: 20,
+      });
+    });
+
+    it('returns an empty out-of-range page', async () => {
+      getInterviewSessions.mockResolvedValue(
+        ok(new PageResult([], 0, 3, 3, 20)),
+      );
+      const result = await service.getInterviewSessionAsync('user', {
+        pageNumber: 3,
+        pageSize: 20,
+      });
+      if (result.isErr()) throw result.error;
+      expect(result.value.items).toEqual([]);
+      expect(result.value.currentPage).toBe(3);
+    });
+
+    it('sanitizes repository errors', async () => {
+      getInterviewSessions.mockResolvedValue(err(new Error('database secret')));
+      const result = await service.getInterviewSessionAsync('user', {
+        pageNumber: 1,
+        pageSize: 20,
+      });
+      if (result.isOk()) throw new Error('Expected list error');
+      expect(result.error.code).toBe(ErrorCode.InternalServerError);
+      expect(result.error.message).not.toContain('database secret');
+    });
+  });
+
+  describe('startInterviewSessionAsync', () => {
+    const startedAt = new Date('2026-10-13T08:00:00.000Z');
+    const start = () => service.startInterviewSessionAsync('user', 'session');
+    beforeEach(() => {
+      jest.useFakeTimers().setSystemTime(startedAt);
+      authorizeInterviewSession.mockResolvedValue(
+        ok({
+          sessionId: 3,
+          userId: 1,
+          cvId: null,
+          status: CommonSessionStatus.CREATED,
+        }),
+      );
+      startInterviewSession.mockResolvedValue(ok(undefined));
+    });
+    afterEach(() => jest.useRealTimers());
+
+    it('starts an owned session without a CV and returns the saved timestamp', async () => {
+      const result = await start();
+      if (result.isErr()) throw result.error;
+      expect(result.value).toEqual({
+        sessionPublicId: 'session',
+        status: 'IN_PROGRESS',
+        startedAt: '2026-10-13T08:00:00.000Z',
+      });
+      expect(authorizeInterviewSession).toHaveBeenCalledWith('session', 'user');
+      expect(startInterviewSession).toHaveBeenCalledWith(1, 3, startedAt);
+      expect(authorizeUserCv).not.toHaveBeenCalled();
+      expect(enqueueAsync).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 for a missing session or another owner', async () => {
+      authorizeInterviewSession.mockResolvedValue(ok(null));
+      const result = await start();
+      if (result.isOk()) throw new Error('Expected unavailable session');
+      expect(result.error.code).toBe(ErrorCode.NotFound);
+      expect(startInterviewSession).not.toHaveBeenCalled();
+    });
+
+    it('sanitizes authorization failures without updating', async () => {
+      authorizeInterviewSession.mockResolvedValue(
+        err(new Error('database secret')),
+      );
+      const result = await start();
+      if (result.isOk()) throw new Error('Expected authorization error');
+      expect(result.error.code).toBe(ErrorCode.InternalServerError);
+      expect(result.error.message).not.toContain('database secret');
+      expect(startInterviewSession).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      CommonSessionStatus.IN_PROGRESS,
+      CommonSessionStatus.SUBMITTED,
+      CommonSessionStatus.SCORING,
+      CommonSessionStatus.COMPLETED,
+      CommonSessionStatus.FAILED,
+      CommonSessionStatus.CANCELLED,
+    ])('rejects %s without updating', async (status) => {
+      authorizeInterviewSession.mockResolvedValue(
+        ok({ sessionId: 3, userId: 1, cvId: 2, status }),
+      );
+      const result = await start();
+      if (result.isOk()) throw new Error('Expected start conflict');
+      expect(result.error.code).toBe(ErrorCode.Conflict);
+      expect(startInterviewSession).not.toHaveBeenCalled();
+    });
+
+    it('returns conflict when an authorized CREATED session loses the update race', async () => {
+      startInterviewSession.mockResolvedValue(
+        err(new InterviewStartConflictError()),
+      );
+      const result = await start();
+      if (result.isOk()) throw new Error('Expected start conflict');
+      expect(result.error.code).toBe(ErrorCode.Conflict);
+      expect(startInterviewSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('sanitizes update failures', async () => {
+      startInterviewSession.mockResolvedValue(
+        err(new Error('database secret')),
+      );
+      const result = await start();
+      if (result.isOk()) throw new Error('Expected update error');
+      expect(result.error.code).toBe(ErrorCode.InternalServerError);
+      expect(result.error.message).not.toContain('database secret');
+    });
+  });
+
   describe('submitInterviewSessionAsync', () => {
     const userPublicId = '00000000-0000-4000-8000-000000000001';
     const sessionPublicId = '00000000-0000-4000-8000-000000000003';
@@ -133,7 +311,12 @@ describe('InterviewService', () => {
       jest.useFakeTimers().setSystemTime(submittedAt);
       authorizeUserCv.mockResolvedValue(ok(authorizedCv));
       authorizeInterviewSession.mockResolvedValue(
-        ok({ sessionId: 3, userId: 1, cvId: 2 }),
+        ok({
+          sessionId: 3,
+          userId: 1,
+          cvId: 2,
+          status: CommonSessionStatus.IN_PROGRESS,
+        }),
       );
       submitInterviewSession.mockResolvedValue(ok(undefined));
       enqueueAsync.mockResolvedValue(ok({ jobId: 'job-id', status: 'QUEUED' }));
@@ -171,7 +354,7 @@ describe('InterviewService', () => {
       expect(enqueueAsync).not.toHaveBeenCalled();
     });
 
-    it('returns not found for a missing, unauthorized, or mismatched session', async () => {
+    it('returns not found for a missing or unauthorized session', async () => {
       authorizeInterviewSession.mockResolvedValue(ok(null));
       const result = await submit();
       expect(result.isErr()).toBe(true);
@@ -180,6 +363,29 @@ describe('InterviewService', () => {
       expect(submitInterviewSession).not.toHaveBeenCalled();
       expect(enqueueAsync).not.toHaveBeenCalled();
     });
+
+    it.each([99, null])(
+      'returns bad request when the session CV is %p instead of the submitted CV',
+      async (sessionCvId) => {
+        authorizeInterviewSession.mockResolvedValue(
+          ok({
+            sessionId: 3,
+            userId: 1,
+            cvId: sessionCvId,
+            status: CommonSessionStatus.IN_PROGRESS,
+          }),
+        );
+        const result = await submit();
+        expect(result.isErr()).toBe(true);
+        if (result.isOk()) throw new Error('Expected CV mismatch');
+        expect(result.error.code).toBe(ErrorCode.BadRequest);
+        expect(result.error.message).toBe(
+          'CV does not belong to this interview session',
+        );
+        expect(submitInterviewSession).not.toHaveBeenCalled();
+        expect(enqueueAsync).not.toHaveBeenCalled();
+      },
+    );
 
     it('does not enqueue when saving fails', async () => {
       submitInterviewSession.mockResolvedValue(
@@ -217,7 +423,6 @@ describe('InterviewService', () => {
       expect(authorizeInterviewSession).toHaveBeenCalledWith(
         sessionPublicId,
         userPublicId,
-        cvPublicId,
       );
       expect(submitInterviewSession).toHaveBeenCalledWith(sessionPublicId, {
         totalQuestions: 7,

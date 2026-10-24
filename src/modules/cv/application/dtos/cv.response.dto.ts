@@ -120,6 +120,12 @@ export class CvSignedParamsResponseDto {
   })
   cloudinaryPublicId!: string;
 
+  @ApiProperty({
+    description: 'Send as `asset_folder`',
+    example: 'InterviewIQ/cvs/9b2e...',
+  })
+  assetFolder!: string;
+
   @ApiProperty({ description: 'Send as `allowed_formats`', example: 'pdf' })
   allowedFormats!: string;
 }

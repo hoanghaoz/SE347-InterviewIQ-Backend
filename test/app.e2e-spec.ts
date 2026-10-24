@@ -30,6 +30,8 @@ const testEnv: Record<string, string> = {
   CLOUDINARY_API_KEY: 'test-key',
   CLOUDINARY_API_SECRET: 'test-secret',
 };
+import { AppController } from './../src/app.controller';
+import { AppService } from './../src/app.service';
 
 describe('AppController (e2e)', () => {
   let app: INestApplication<App>;
@@ -54,6 +56,9 @@ describe('AppController (e2e)', () => {
       .overrideProvider(PG_BOSS_TOKEN)
       .useValue(boss)
       .compile();
+      controllers: [AppController],
+      providers: [AppService],
+    }).compile();
 
     app = moduleFixture.createNestApplication();
     await app.init();

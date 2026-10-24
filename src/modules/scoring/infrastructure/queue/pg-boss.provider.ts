@@ -1,6 +1,6 @@
 import { Logger, Provider } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PgBoss } from 'pg-boss';
+import { ConstructorOptions, PgBoss } from 'pg-boss';
 
 export const PG_BOSS_TOKEN = 'PG_BOSS_INSTANCE';
 
@@ -12,11 +12,21 @@ export const PgBossProvider: Provider = {
       throw new Error('DATABASE_URL is not defined in configuration');
     }
 
+    const rawPoolSize = configService.get<number | string>(
+      'DATABASE_POOL_SIZE',
+      10,
+    );
+    const poolSize = Number(rawPoolSize) || 10;
+
     const boss = new PgBoss({
       connectionString,
       schema: 'pgboss',
-    });
-    // Không có listener 'error' thì EventEmitter sẽ throw và làm sập cả process
+      archiveCompletedJobsEvery: '1 day',
+      archiveFailedJobsEvery: '1 day',
+      deleteArchivedJobsEvery: '7 days',
+      max: poolSize,
+    } as ConstructorOptions);
+
     const logger = new Logger('PgBoss');
     boss.on('error', (error: Error) => logger.error(error.message));
 

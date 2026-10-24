@@ -368,7 +368,7 @@ async function main() {
             'Đưa quy trình Incident Management chuẩn vào checklist xử lý sự cố.',
         },
       ],
-      scoringModel: 'gpt-4o',
+      scoringModel: 'gemini-3.8-flash',
       promptVersion: 'v1.0.0',
       generatedAt: new Date(now.getTime() - 2600 * 1000),
     },

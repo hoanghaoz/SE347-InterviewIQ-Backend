@@ -23,14 +23,16 @@ import {
 import { ICvService } from '../application/interfaces/cv.service.interface';
 
 // Thin controller: read input, call the service, turn Result into HTTP.
+// @Auth is repeated on every route on purpose: RolesGuard reads @Roles from the
+// handler (method), not the class, so a class-level @Auth makes every route 403.
 @Controller('api/cvs')
-@Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
 export class CvController {
   constructor(private readonly cvService: ICvService) {}
 
   // Step 1 of the upload: permission to upload one PDF straight to Cloudinary.
   @Post('signed-params')
   @HttpCode(HttpStatus.OK)
+  @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
   async createSignedParamsAsync(
     @User() user: JwtPayload,
   ): Promise<ApiSuccessResponse<CvSignedParamsResponseDto>> {
@@ -48,6 +50,7 @@ export class CvController {
   // Step 2: after the browser uploaded the file, save the CV metadata.
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
   async createCvAsync(
     @User() user: JwtPayload,
     @Body() request: CreateCvRequestDto,
@@ -68,6 +71,7 @@ export class CvController {
   }
 
   @Get()
+  @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
   async getCvsAsync(
     @User() user: JwtPayload,
   ): Promise<ApiSuccessResponse<CvSummaryResponseDto[]>> {
@@ -87,6 +91,7 @@ export class CvController {
   }
 
   @Get(':id')
+  @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
   async getCvAsync(
     @User() user: JwtPayload,
     // Rejects non-UUID ids with 400 before they reach the database.
