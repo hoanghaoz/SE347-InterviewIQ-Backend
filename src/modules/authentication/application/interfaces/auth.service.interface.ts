@@ -1,6 +1,8 @@
+import type { UUID } from 'crypto';
 import { Result } from 'neverthrow';
 import { AppError } from 'src/shared/common/errorCode';
 import {
+  ChangePasswordDto,
   ForgotPasswordDto,
   LoginDto,
   RefreshTokenDto,
@@ -40,5 +42,11 @@ export abstract class IAuthService {
   ): Promise<Result<PasswordResetTokenResponseDto, AppError>>;
   abstract resetPasswordAsync(
     request: ResetPasswordDto,
+  ): Promise<Result<void, AppError>>;
+  // Khác resetPasswordAsync: user đang đăng nhập, định danh lấy từ access token
+  // (`sub`) và xác thực bằng mật khẩu hiện tại thay vì OTP qua email.
+  abstract changePasswordAsync(
+    userPublicId: UUID,
+    request: ChangePasswordDto,
   ): Promise<Result<void, AppError>>;
 }

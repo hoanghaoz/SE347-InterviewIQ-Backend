@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { randomInt } from 'crypto';
+import { randomInt, type UUID } from 'crypto';
 import { err, ok, type Result } from 'neverthrow';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
 import {
@@ -21,6 +21,7 @@ import {
 } from '../../domain/repositories/refresh-token.repo.interface';
 import { ITokenHasher } from '../../domain/repositories/token-hasher.interface';
 import {
+  ChangePasswordDto,
   ForgotPasswordDto,
   LoginDto,
   RefreshTokenDto,
@@ -514,6 +515,75 @@ export class AuthService implements IAuthService {
     return ok(undefined);
   }
 
+  async changePasswordAsync(
+    userPublicId: UUID,
+    request: ChangePasswordDto,
+  ): Promise<Result<void, AppError>> {
+    const { currentPassword, newPassword } = request;
+
+    // 1. Tra user theo publicId (`sub` của token), không theo email: email trong
+    // token có thể đã cũ sau khi user đổi email ở trang hồ sơ.
+    const userResult =
+      await this.userRepository.getUserCredentialsByPublicId(userPublicId);
+    if (userResult.isErr()) {
+      return err(this.changePasswordFailedError());
+    }
+    // Token còn hiệu lực nhưng tài khoản đã bị xóa
+    if (userResult.value === null) {
+      return err(new AppError(ErrorCode.Unauthorized, 'User no longer exists'));
+    }
+    const user = userResult.value;
+
+    // 2. Mật khẩu hiện tại là thứ chứng minh người đang gọi đúng là chủ tài khoản,
+    // không phải ai đó mượn được access token.
+    const isCurrentPasswordValid = await this.passwordHasher.compare(
+      currentPassword,
+      user.passwordHash,
+    );
+    if (isCurrentPasswordValid.isErr()) {
+      return err(this.changePasswordFailedError());
+    }
+    if (!isCurrentPasswordValid.value) {
+      return err(
+        new AppError(ErrorCode.Unauthorized, 'Current password is incorrect'),
+      );
+    }
+
+    // 3. Đặt lại đúng mật khẩu cũ thì mọi phiên bị đá ra mà chẳng được gì
+    if (newPassword === currentPassword) {
+      return err(
+        new AppError(
+          ErrorCode.BadRequest,
+          'New password must be different from the current password',
+        ),
+      );
+    }
+
+    const passwordHash = await this.passwordHasher.hash(newPassword);
+    if (passwordHash.isErr()) {
+      return err(this.changePasswordFailedError());
+    }
+    const updateResult = await this.userRepository.updateUserPassword(
+      user.id,
+      passwordHash.value,
+    );
+    if (updateResult.isErr()) {
+      return err(this.changePasswordFailedError());
+    }
+
+    // 4. Đá mọi phiên cũ, kể cả thiết bị đang gọi: đổi mật khẩu thường là vì nghi
+    // mật khẩu bị lộ, nên refresh token đã phát ra không được sống tiếp.
+    const revokeAll =
+      await this.refreshTokenRepository.revokeAllRefreshTokensForUser(user.id);
+    if (revokeAll.isErr()) {
+      // Mật khẩu đã đổi xong, chỉ phần dọn phiên lỗi. Vẫn báo 500 để client đi
+      // đăng nhập lại thay vì tin rằng mọi thứ bình thường.
+      return err(this.changePasswordFailedError());
+    }
+
+    return ok(undefined);
+  }
+
   // OTP còn sống lâu hơn (TTL - cooldown) nghĩa là vừa được gửi chưa quá cooldown.
   // Dùng luôn TTL của OTP nên không cần thêm key Redis riêng cho cooldown.
   private async isOtpInCooldownAsync(
@@ -730,6 +800,13 @@ export class AuthService implements IAuthService {
     return new AppError(
       ErrorCode.InternalServerError,
       'Failed to reset password',
+    );
+  }
+
+  private changePasswordFailedError(): AppError {
+    return new AppError(
+      ErrorCode.InternalServerError,
+      'Failed to change password',
     );
   }
 

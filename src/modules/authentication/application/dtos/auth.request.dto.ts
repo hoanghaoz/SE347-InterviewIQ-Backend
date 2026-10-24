@@ -128,3 +128,20 @@ export class RefreshTokenDto {
   @Matches(/^[0-9a-f]{64}$/, { message: 'Invalid refresh token format' })
   refreshToken!: string;
 }
+
+export class ChangePasswordDto {
+  // Không MinLength: luật độ dài áp lúc đặt mật khẩu mới, không áp lại khi xác
+  // thực mật khẩu cũ (mật khẩu cũ có thể được tạo từ thời luật khác).
+  // MaxLength 72 vì bcrypt chỉ đọc 72 byte đầu.
+  @IsString({ message: 'Current password must be a string' })
+  @IsNotEmpty({ message: 'Current password is required' })
+  @MaxLength(72, { message: 'Current password must not exceed 72 characters' })
+  currentPassword!: string;
+
+  // Cùng luật với mật khẩu lúc đăng ký
+  @IsString({ message: 'New password must be a string' })
+  @IsNotEmpty({ message: 'New password is required' })
+  @MinLength(8, { message: 'New password must be at least 8 characters' })
+  @MaxLength(72, { message: 'New password must not exceed 72 characters' })
+  newPassword!: string;
+}

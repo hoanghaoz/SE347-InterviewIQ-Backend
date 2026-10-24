@@ -193,7 +193,8 @@ describe('AuthController (e2e)', () => {
   let users: InMemoryUserRepository;
   let mailer: CapturingEmailSender;
   let refreshTokens: InMemoryRefreshTokenRepository;
-  const jwtService = new JwtService();
+  // Có secret ở đây để JwtAuthGuard (route password/change) verify được token
+  const jwtService = new JwtService({ secret: JWT_SECRET });
 
   const registerRoute = '/api/auth/register';
   const resendRoute = '/api/auth/register/resend';
@@ -204,6 +205,7 @@ describe('AuthController (e2e)', () => {
   const forgotPasswordRoute = '/api/auth/password/forgot';
   const verifyResetOtpRoute = '/api/auth/password/verify';
   const resetPasswordRoute = '/api/auth/password/reset';
+  const changePasswordRoute = '/api/auth/password/change';
   const body = {
     email: 'new.user@example.com',
     password: 'Str0ngPass',
@@ -232,12 +234,26 @@ describe('AuthController (e2e)', () => {
   // Giả lập OTP hiện tại đã gửi được 100s (TTL 300s), qua cooldown 60s
   const passOtpCooldown = (kind: OtpMailKind = 'register') =>
     redis.ttls.set(`auth:otp:${kind}:${body.email}`, 200);
+  const changePassword = (accessToken: string, payload: object) =>
+    request(app.getHttpServer())
+      .post(changePasswordRoute)
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send(payload);
   // Tạo account qua đúng luồng thật để passwordHash là bcrypt thật
   const createAccount = async () => {
     await register().expect(200);
     const otp = mailer.lastOtpFor(body.email);
     await verify({ email: body.email, otp }).expect(201);
   };
+  // Verify vừa đăng ký xong là đã đăng nhập luôn, nên lấy token từ đó
+  const createAccountAndLogIn = async (): Promise<string> => {
+    await register().expect(200);
+    const otp = mailer.lastOtpFor(body.email);
+    const response = await verify({ email: body.email, otp }).expect(201);
+    return (response.body as { data: { accessToken: string } }).data
+      .accessToken;
+  };
+
   beforeEach(async () => {
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
@@ -1273,6 +1289,105 @@ describe('AuthController (e2e)', () => {
       );
       expect(JSON.stringify(response.body)).not.toContain('short');
       expect(JSON.stringify(response.body)).not.toContain('not-a-token');
+    });
+  });
+
+  describe('POST /api/auth/password/change', () => {
+    const newPassword = 'N3wStr0ngPass';
+
+    it('changes the password of the logged-in user and revokes every refresh token', async () => {
+      const accessToken = await createAccountAndLogIn();
+      const hashBefore = users.users.get(body.email)?.passwordHash;
+
+      const response = await changePassword(accessToken, {
+        currentPassword: body.password,
+        newPassword,
+      }).expect(200);
+
+      expect(response.body).toMatchObject({
+        statusCode: 200,
+        success: true,
+        data: null,
+        message: 'Password changed successfully, please log in again',
+      });
+      // Hash thật của bcrypt, không phải mật khẩu thô
+      const hashAfter = users.users.get(body.email)?.passwordHash;
+      expect(hashAfter).toMatch(/^\$2[aby]\$10\$/);
+      expect(hashAfter).not.toBe(hashBefore);
+      expect(hashAfter).not.toContain(newPassword);
+      expect(refreshTokens.tokens.every((t) => t.revokedAt !== null)).toBe(
+        true,
+      );
+    });
+
+    it('lets the user log in with the new password and not with the old one', async () => {
+      const accessToken = await createAccountAndLogIn();
+      await changePassword(accessToken, {
+        currentPassword: body.password,
+        newPassword,
+      }).expect(200);
+
+      await login({ email: body.email, password: body.password }).expect(401);
+      await login({ email: body.email, password: newPassword }).expect(200);
+    });
+
+    it('returns 401 and keeps the old password when the current password is wrong', async () => {
+      const accessToken = await createAccountAndLogIn();
+      const hashBefore = users.users.get(body.email)?.passwordHash;
+
+      const response = await changePassword(accessToken, {
+        currentPassword: 'WrongPass1',
+        newPassword,
+      }).expect(401);
+
+      expect(response.body).toMatchObject({
+        statusCode: 401,
+        success: false,
+        code: ErrorCode.Unauthorized,
+        message: 'Current password is incorrect',
+        path: changePasswordRoute,
+      });
+      expect(users.users.get(body.email)?.passwordHash).toBe(hashBefore);
+    });
+
+    it('returns 401 without a bearer token', async () => {
+      await createAccount();
+
+      await request(app.getHttpServer())
+        .post(changePasswordRoute)
+        .send({ currentPassword: body.password, newPassword })
+        .expect(401);
+    });
+
+    it('returns 400 when the new password repeats the current one', async () => {
+      const accessToken = await createAccountAndLogIn();
+
+      const response = await changePassword(accessToken, {
+        currentPassword: body.password,
+        newPassword: body.password,
+      }).expect(400);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.BadRequest,
+        message: 'New password must be different from the current password',
+      });
+    });
+
+    it('returns field errors without echoing the rejected values', async () => {
+      const accessToken = await createAccountAndLogIn();
+
+      const response = await changePassword(accessToken, {
+        currentPassword: '',
+        newPassword: 'short',
+      }).expect(400);
+
+      const fields = (
+        response.body as { errors: { field: string }[] }
+      ).errors.map((e) => e.field);
+      expect(fields).toEqual(
+        expect.arrayContaining(['currentPassword', 'newPassword']),
+      );
+      expect(JSON.stringify(response.body)).not.toContain('short');
     });
   });
 });
