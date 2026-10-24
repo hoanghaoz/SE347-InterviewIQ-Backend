@@ -17,6 +17,12 @@ export type UserCredentials = {
   readonly passwordHash: string;
 };
 
+// Đủ để ký access token (sub + role). Không có passwordHash vì caller không cần.
+export type UserIdentity = {
+  readonly publicId: UUID;
+  readonly role: CommonUserRole;
+};
+
 export type CreateUserData = {
   readonly email: string;
   readonly passwordHash: string;
@@ -36,4 +42,13 @@ export abstract class IUserRepository {
   abstract getUserCredentialsByEmail(
     email: string,
   ): Promise<Result<UserCredentials | null, Error>>;
+
+  // id là id nội bộ (ví dụ RefreshTokenRecord.userId), không phải publicId
+  abstract getUserById(id: number): Promise<Result<UserIdentity | null, Error>>;
+
+  // passwordHash phải được hash sẵn ở tầng service, repo không tự hash
+  abstract updateUserPassword(
+    id: number,
+    passwordHash: string,
+  ): Promise<Result<void, Error>>;
 }

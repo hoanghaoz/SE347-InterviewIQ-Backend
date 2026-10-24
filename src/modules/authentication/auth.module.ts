@@ -18,6 +18,8 @@ import { ITokenHasher } from './domain/repositories/token-hasher.interface';
 import { Sha256TokenHasher } from './infrastructure/sha256-token-hasher';
 import { IRefreshTokenRepository } from './domain/repositories/refresh-token.repo.interface';
 import { RefreshTokenRepository } from './infrastructure/refresh-token.repo';
+import { IPasswordResetOtpStore } from './domain/repositories/password-reset-otp-store.interface';
+import { RedisPasswordResetOtpStore } from './infrastructure/redis-password-reset-otp-store';
 
 @Module({
   // JwtAccessTokenIssuer tự truyền secret/expiresIn khi ký nên không cấu hình ở đây
@@ -27,6 +29,10 @@ import { RefreshTokenRepository } from './infrastructure/refresh-token.repo';
     {
       provide: IEmailOtpStore,
       useClass: RedisEmailOtpStore,
+    },
+    {
+      provide: IPasswordResetOtpStore,
+      useClass: RedisPasswordResetOtpStore,
     },
     {
       provide: IPendingRegistrationStore,

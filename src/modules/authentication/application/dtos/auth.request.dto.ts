@@ -48,6 +48,15 @@ export class VerifyRegistrationDto {
   otp!: string;
 }
 
+export class ResendRegistrationOtpDto {
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsEmail({}, { message: 'Invalid email format' })
+  @IsNotEmpty({ message: 'Email is required' })
+  email!: string;
+}
+
 export class LoginDto {
   @Transform(({ value }: { value: unknown }) =>
     typeof value === 'string' ? value.trim().toLowerCase() : value,
@@ -62,4 +71,45 @@ export class LoginDto {
   @IsNotEmpty({ message: 'Password is required' })
   @MaxLength(72, { message: 'Password must not exceed 72 characters' })
   password!: string;
+}
+
+export class ForgotPasswordDto {
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsEmail({}, { message: 'Invalid email format' })
+  @IsNotEmpty({ message: 'Email is required' })
+  email!: string;
+}
+
+export class ResetPasswordDto {
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsEmail({}, { message: 'Invalid email format' })
+  @IsNotEmpty({ message: 'Email is required' })
+  email!: string;
+
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString({ message: 'OTP must be a string' })
+  @Matches(/^\d{6}$/, { message: 'OTP must be exactly 6 digits' })
+  otp!: string;
+
+  // Cùng luật với mật khẩu lúc đăng ký
+  @IsString({ message: 'New password must be a string' })
+  @IsNotEmpty({ message: 'New password is required' })
+  @MinLength(8, { message: 'New password must be at least 8 characters' })
+  @MaxLength(72, { message: 'New password must not exceed 72 characters' })
+  newPassword!: string;
+}
+
+export class RefreshTokenDto {
+  // Token là 32 byte random dạng hex (Sha256TokenHasher.generateToken).
+  // Sai format thì chặn ở đây, không để chuỗi rác chạm tới DB.
+  @IsString({ message: 'Refresh token must be a string' })
+  @IsNotEmpty({ message: 'Refresh token is required' })
+  @Matches(/^[0-9a-f]{64}$/, { message: 'Invalid refresh token format' })
+  refreshToken!: string;
 }

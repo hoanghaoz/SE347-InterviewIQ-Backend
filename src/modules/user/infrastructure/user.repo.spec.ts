@@ -10,8 +10,9 @@ jest.mock('../../../shared/infrastructure/database/prisma.service', () => ({
 describe('UserRepository', () => {
   const findUnique = jest.fn();
   const create = jest.fn();
+  const update = jest.fn();
   const prisma = {
-    user: { findUnique, create },
+    user: { findUnique, create, update },
   } as unknown as PrismaService;
   const repository = new UserRepository(prisma);
 
@@ -148,6 +149,36 @@ describe('UserRepository', () => {
 
       if (result.isOk()) throw new Error('Expected repository error');
       expect(result.error.message).toBe('Failed to find user credentials');
+      expect(result.error.message).not.toContain(databaseMessage);
+    });
+  });
+
+  describe('updateUserPassword', () => {
+    it('updates only the password hash of the given user', async () => {
+      update.mockResolvedValue({ id: 1 });
+
+      const result = await repository.updateUserPassword(1, 'new-hash');
+
+      expect(result.isOk()).toBe(true);
+      // select id để Prisma không trả passwordHash về
+      expect(update).toHaveBeenCalledWith({
+        where: { id: 1 },
+        data: { passwordHash: 'new-hash' },
+        select: { id: true },
+      });
+    });
+
+    it('returns a generic error and hides the database message when Prisma fails', async () => {
+      // P2025: không có user nào với id này
+      const databaseMessage = 'Record to update not found.';
+      update.mockRejectedValue(
+        Object.assign(new Error(databaseMessage), { code: 'P2025' }),
+      );
+
+      const result = await repository.updateUserPassword(999, 'new-hash');
+
+      if (result.isOk()) throw new Error('Expected repository error');
+      expect(result.error.message).toBe('Failed to update user password');
       expect(result.error.message).not.toContain(databaseMessage);
     });
   });

@@ -5,12 +5,15 @@ import { RedisService } from '../../../shared/infrastructure/redis/redis.service
 
 @Injectable()
 export class RedisEmailOtpStore implements IEmailOtpStore {
-  private readonly logger = new Logger(RedisEmailOtpStore.name);
+  private readonly logger = new Logger(this.constructor.name);
+  // Mỗi luồng OTP có key riêng để OTP của luồng này không dùng được cho luồng khác.
+  // Class con override purpose để có store cho luồng mới.
+  protected readonly purpose: string = 'register';
 
   constructor(private readonly redisService: RedisService) {}
 
   private buildKey(email: string): string {
-    return `auth:otp:register:${email.trim().toLowerCase()}`;
+    return `auth:otp:${this.purpose}:${email.trim().toLowerCase()}`;
   }
   public async saveOtp(
     email: string,
@@ -61,7 +64,7 @@ export class RedisEmailOtpStore implements IEmailOtpStore {
   }
 
   private buildFailedAttemptsKey(email: string): string {
-    return `auth:otp:failed-attempts:${email.trim().toLowerCase()}`;
+    return `auth:otp:failed-attempts:${this.purpose}:${email.trim().toLowerCase()}`;
   }
 
   public async incrementFailedAttempts(

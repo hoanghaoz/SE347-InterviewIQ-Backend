@@ -21,7 +21,7 @@ describe('RedisEmailOtpStore', () => {
 
   const email = 'a@x.com';
   const key = 'auth:otp:register:a@x.com';
-  const attemptsKey = 'auth:otp:failed-attempts:a@x.com';
+  const attemptsKey = 'auth:otp:failed-attempts:register:a@x.com';
 
   beforeEach(() => {
     jest.resetAllMocks();
