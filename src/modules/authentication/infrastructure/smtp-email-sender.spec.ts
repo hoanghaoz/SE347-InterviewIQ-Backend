@@ -100,6 +100,7 @@ describe('SmtpEmailSender', () => {
         expect.objectContaining({
           from: mailpitEnv.MAIL_FROM,
           to: 'a@x.com',
+          subject: 'Mã xác thực đăng ký',
           text: expect.stringContaining('012345') as string,
           html: expect.stringContaining('012345') as string,
         }),
@@ -125,6 +126,39 @@ describe('SmtpEmailSender', () => {
       expect(loggerError).toHaveBeenCalled();
       const logged = JSON.stringify(loggerError.mock.calls);
       expect(logged).not.toContain('012345');
+    });
+  });
+
+  describe('sendPasswordResetOtp', () => {
+    it('sends the otp with its own subject and a warning for unrequested resets', async () => {
+      sendMail.mockResolvedValue({ messageId: 'id' });
+      const sender = buildSender();
+
+      const result = await sender.sendPasswordResetOtp('a@x.com', '012345');
+
+      expect(result.isOk()).toBe(true);
+      expect(sendMail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          from: mailpitEnv.MAIL_FROM,
+          to: 'a@x.com',
+          subject: 'Mã đặt lại mật khẩu',
+          text: expect.stringContaining('012345') as string,
+          html: expect.stringContaining('012345') as string,
+        }),
+      );
+      const [mail] = sendMail.mock.calls[0] as [{ text: string }];
+      expect(mail.text).toContain('Nếu bạn không yêu cầu đặt lại mật khẩu');
+    });
+
+    it('returns a safe error without logging the otp when sending fails', async () => {
+      sendMail.mockRejectedValue(new Error('smtp internal detail'));
+      const sender = buildSender();
+
+      const result = await sender.sendPasswordResetOtp('a@x.com', '012345');
+
+      if (result.isOk()) throw new Error('Expected an error result');
+      expect(result.error.message).not.toContain('smtp internal detail');
+      expect(JSON.stringify(loggerError.mock.calls)).not.toContain('012345');
     });
   });
 });

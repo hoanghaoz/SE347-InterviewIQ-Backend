@@ -19,6 +19,7 @@ import { CvModule } from './modules/cv/cv.module';
 import { RedisModule } from './shared/infrastructure/redis/redis.module';
 import { AuthModule } from './modules/authentication/auth.module';
 import { ScoringModule } from './modules/scoring/scoring.module';
+import { UserModule } from './modules/user/user.module';
 import { LlmPlaygroundModule } from './modules/llm-playground/llm-playground.module';
 
 @Module({
@@ -33,6 +34,7 @@ import { LlmPlaygroundModule } from './modules/llm-playground/llm-playground.mod
     RedisModule,
     AuthModule,
     ScoringModule,
+    UserModule,
     LlmPlaygroundModule,
   ],
   controllers: [AppController],

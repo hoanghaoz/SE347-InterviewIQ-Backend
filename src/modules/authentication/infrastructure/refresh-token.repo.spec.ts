@@ -8,8 +8,9 @@ jest.mock('../../../shared/infrastructure/database/prisma.service', () => ({
 
 describe('RefreshTokenRepository', () => {
   const create = jest.fn();
+  const updateMany = jest.fn();
   const prisma = {
-    refreshToken: { create },
+    refreshToken: { create, updateMany },
   } as unknown as PrismaService;
   const repository = new RefreshTokenRepository(prisma);
   const data = {
@@ -64,6 +65,40 @@ describe('RefreshTokenRepository', () => {
 
       if (result.isOk()) throw new Error('Expected an error result');
       expect(result.error.message).toBe('Failed to create refresh token');
+      expect(result.error.message).not.toContain('db internal detail');
+      expect(loggerError).toHaveBeenCalled();
+    });
+  });
+
+  describe('revokeRefreshTokenByHash', () => {
+    it('revokes only the matching token that is not revoked yet', async () => {
+      updateMany.mockResolvedValue({ count: 1 });
+
+      const result = await repository.revokeRefreshTokenByHash('hashed-token');
+
+      expect(result.isOk()).toBe(true);
+      expect(updateMany).toHaveBeenCalledWith({
+        where: { tokenHash: 'hashed-token', revokedAt: null },
+        data: { revokedAt: expect.any(Date) as Date },
+      });
+    });
+
+    it('returns ok when no token matches', async () => {
+      updateMany.mockResolvedValue({ count: 0 });
+
+      const result = await repository.revokeRefreshTokenByHash('unknown');
+
+      expect(result.isOk()).toBe(true);
+      expect(loggerError).not.toHaveBeenCalled();
+    });
+
+    it('returns a safe error and logs when Prisma fails', async () => {
+      updateMany.mockRejectedValue(new Error('db internal detail'));
+
+      const result = await repository.revokeRefreshTokenByHash('hashed-token');
+
+      if (result.isOk()) throw new Error('Expected an error result');
+      expect(result.error.message).toBe('Failed to revoke refresh token');
       expect(result.error.message).not.toContain('db internal detail');
       expect(loggerError).toHaveBeenCalled();
     });

@@ -15,3 +15,12 @@ export class LoginResponseDto {
   })
   refreshToken!: string;
 }
+
+export class PasswordResetTokenResponseDto {
+  @ApiProperty({
+    description:
+      'One-time token for POST /api/auth/password/reset, valid for 10 minutes',
+    example: '2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae',
+  })
+  resetToken!: string;
+}
