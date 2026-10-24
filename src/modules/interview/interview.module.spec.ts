@@ -50,7 +50,7 @@ describe('InterviewModule', () => {
     };
     const findUnique = jest
       .fn()
-      .mockResolvedValue({ id: 3, userId: 1, cvId: 2 });
+      .mockResolvedValue({ id: 3, userId: 1, cvId: 2, status: 'IN_PROGRESS' });
     const update = jest
       .fn()
       .mockResolvedValue({ publicId: 'session-public-id' });
@@ -161,7 +161,7 @@ describe('InterviewModule', () => {
       question: {
         findUnique: jest
           .fn()
-          .mockResolvedValue({ session: { status: 'CREATED' } }),
+          .mockResolvedValue({ session: { status: 'IN_PROGRESS' } }),
       },
       $transaction: jest.fn(
         (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),

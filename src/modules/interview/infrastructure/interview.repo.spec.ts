@@ -1,6 +1,9 @@
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import type { CvSnapshot } from '../../cv/domain/repositories/cv.repo.interface';
-import { InterviewSubmissionConflictError } from '../domain/errors/interview-domain.error';
+import {
+  InterviewStartConflictError,
+  InterviewSubmissionConflictError,
+} from '../domain/errors/interview-domain.error';
 import { Interview } from '../domain/entities/interview.entity';
 import { CommonSessionStatus } from '../domain/enums/interview-enum';
 import { PrismaService } from '../../../shared/infrastructure/database/prisma.service';
@@ -14,8 +17,10 @@ describe('InterviewRepository', () => {
   const create = jest.fn();
   const update = jest.fn();
   const findUnique = jest.fn();
+  const findMany = jest.fn();
+  const count = jest.fn();
   const prisma = {
-    interviewSession: { create, update, findUnique },
+    interviewSession: { create, update, findUnique, findMany, count },
   } as unknown as PrismaService;
   const repository = new InterviewRepository(prisma);
 
@@ -23,6 +28,8 @@ describe('InterviewRepository', () => {
     create.mockReset();
     update.mockReset();
     findUnique.mockReset();
+    findMany.mockReset();
+    count.mockReset();
   });
 
   it('returns the publicId from the newly created session', async () => {
@@ -73,30 +80,34 @@ describe('InterviewRepository', () => {
   });
 
   describe('authorizeInterviewSession', () => {
-    it('requires the session, user, and CV public IDs to match', async () => {
-      findUnique.mockResolvedValue({ id: 3, userId: 1, cvId: 2 });
+    it('authorizes by session and owner public IDs and returns status', async () => {
+      findUnique.mockResolvedValue({
+        id: 3,
+        userId: 1,
+        cvId: null,
+        status: 'CREATED',
+      });
       const result = await repository.authorizeInterviewSession(
         'session',
         'user',
-        'cv',
       );
-      expect(result.isOk()).toBe(true);
       if (result.isErr()) throw result.error;
-      expect(result.value).toEqual({ sessionId: 3, userId: 1, cvId: 2 });
+      expect(result.value).toEqual({
+        sessionId: 3,
+        userId: 1,
+        cvId: null,
+        status: CommonSessionStatus.CREATED,
+      });
       expect(findUnique).toHaveBeenCalledWith({
-        where: {
-          publicId: 'session',
-          user: { publicId: 'user' },
-          cv: { publicId: 'cv' },
-        },
-        select: { id: true, cvId: true, userId: true },
+        where: { publicId: 'session', user: { publicId: 'user' } },
+        select: { id: true, cvId: true, userId: true, status: true },
       });
     });
 
     it('returns null for an unavailable session', async () => {
       findUnique.mockResolvedValue(null);
       expect(
-        await repository.authorizeInterviewSession('session', 'user', 'cv'),
+        await repository.authorizeInterviewSession('session', 'user'),
       ).toEqual({ value: null });
     });
 
@@ -105,10 +116,156 @@ describe('InterviewRepository', () => {
       const result = await repository.authorizeInterviewSession(
         'session',
         'user',
-        'cv',
       );
       expect(result.isErr()).toBe(true);
       if (result.isOk()) throw new Error('Expected authorization error');
+      expect(result.error.message).not.toContain('database secret');
+    });
+  });
+
+  describe('getInterviewSessions', () => {
+    it('filters list and count by public owner, paginates with stable order and maps nullable CVs', async () => {
+      findMany.mockResolvedValue([
+        {
+          publicId: 'session',
+          cv: { publicId: 'cv' },
+          title: 'Backend',
+          status: 'CREATED',
+          totalQuestions: 5,
+          jobDescription: 'Developer',
+          createdAt: new Date('2026-10-13T08:00:00.000Z'),
+        },
+        {
+          publicId: 'session-no-cv',
+          cv: null,
+          title: 'No CV',
+          status: 'IN_PROGRESS',
+          totalQuestions: 7,
+          jobDescription: null,
+          createdAt: new Date('2026-10-12T08:00:00.000Z'),
+        },
+      ]);
+      count.mockResolvedValue(5);
+      const result = await repository.getInterviewSessions('user', {
+        pageNumber: 2,
+        pageSize: 2,
+      });
+      if (result.isErr()) throw result.error;
+      expect(result.value).toEqual({
+        items: [
+          {
+            sessionPublicId: 'session',
+            cvPublicId: 'cv',
+            title: 'Backend',
+            status: CommonSessionStatus.CREATED,
+            totalQuestion: 5,
+            jobDescription: 'Developer',
+            createdAt: new Date('2026-10-13T08:00:00.000Z'),
+          },
+          {
+            sessionPublicId: 'session-no-cv',
+            cvPublicId: null,
+            title: 'No CV',
+            status: CommonSessionStatus.IN_PROGRESS,
+            totalQuestion: 7,
+            jobDescription: null,
+            createdAt: new Date('2026-10-12T08:00:00.000Z'),
+          },
+        ],
+        totalPages: 3,
+        currentPage: 2,
+        pageNumber: 2,
+        pageSize: 2,
+        hasPrevious: true,
+        hasNext: true,
+      });
+      expect(findMany).toHaveBeenCalledWith({
+        where: { user: { publicId: 'user' } },
+        skip: 2,
+        take: 2,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: {
+          publicId: true,
+          cv: { select: { publicId: true } },
+          title: true,
+          status: true,
+          jobDescription: true,
+          totalQuestions: true,
+          createdAt: true,
+        },
+      });
+      expect(count).toHaveBeenCalledWith({
+        where: { user: { publicId: 'user' } },
+      });
+    });
+    it.each([0, 5])(
+      'returns empty items for empty or out-of-range lists with count %s',
+      async (total) => {
+        findMany.mockResolvedValue([]);
+        count.mockResolvedValue(total);
+        const result = await repository.getInterviewSessions('user', {
+          pageNumber: 10,
+          pageSize: 2,
+        });
+        if (result.isErr()) throw result.error;
+        expect(result.value.items).toEqual([]);
+        expect(result.value.totalPages).toBe(total === 0 ? 0 : 3);
+        expect(result.value.currentPage).toBe(10);
+      },
+    );
+    it.each(['list', 'count'])(
+      'sanitizes %s query failures',
+      async (source) => {
+        findMany.mockResolvedValue([]);
+        count.mockResolvedValue(0);
+        (source === 'list' ? findMany : count).mockRejectedValue(
+          new Error('database secret'),
+        );
+        const result = await repository.getInterviewSessions('user', {
+          pageNumber: 1,
+          pageSize: 20,
+        });
+        if (result.isOk()) throw new Error('Expected list error');
+        expect(result.error.message).not.toContain('database secret');
+      },
+    );
+  });
+
+  describe('startInterviewSession', () => {
+    const startedAt = new Date('2026-10-13T08:00:00.000Z');
+    it('updates only the owned CREATED session and saves the supplied time', async () => {
+      update.mockResolvedValue({});
+      const result = await repository.startInterviewSession(1, 3, startedAt);
+      if (result.isErr()) throw result.error;
+      expect(result.value).toBeUndefined();
+      expect(update).toHaveBeenCalledWith({
+        where: { id: 3, userId: 1, status: 'CREATED' },
+        data: { status: 'IN_PROGRESS', startedAt },
+      });
+    });
+    it('maps a lost race P2025 to conflict without retrying or overwriting the first timestamp', async () => {
+      update.mockRejectedValue(
+        new PrismaClientKnownRequestError('database secret', {
+          code: 'P2025',
+          clientVersion: '7.8.0',
+        }),
+      );
+      const result = await repository.startInterviewSession(1, 3, startedAt);
+      if (result.isOk()) throw new Error('Expected conflict');
+      expect(result.error).toBeInstanceOf(InterviewStartConflictError);
+      expect(update).toHaveBeenCalledTimes(1);
+    });
+    it.each([
+      new Error('database secret'),
+      new PrismaClientKnownRequestError('database secret', {
+        code: 'P2002',
+        clientVersion: '7.8.0',
+      }),
+    ])('sanitizes other update failures', async (error) => {
+      update.mockRejectedValue(error);
+      const result = await repository.startInterviewSession(1, 3, startedAt);
+      if (result.isOk()) throw new Error('Expected update error');
+      expect(result.error).not.toBeInstanceOf(InterviewStartConflictError);
       expect(result.error.message).not.toContain('database secret');
     });
   });
@@ -153,7 +310,7 @@ describe('InterviewRepository', () => {
       expect(update).toHaveBeenCalledWith({
         where: {
           publicId: 'session-public-id',
-          status: { in: ['CREATED', 'IN_PROGRESS', 'SUBMITTED'] },
+          status: { in: ['IN_PROGRESS'] },
         },
         data: {
           totalQuestions: 7,

@@ -11,6 +11,8 @@ import {
 // Cloudinary stores PDFs as the `image` resource type (enables page previews).
 const RESOURCE_TYPE = 'image';
 const ALLOWED_FORMATS = 'pdf';
+// App folder in the Media Library; the Cloudinary account is shared with other projects.
+const ROOT_FOLDER = 'InterviewIQ';
 
 type CloudinaryCredentials = {
   cloudName: string;
@@ -33,11 +35,23 @@ export class CloudinaryFileStorage implements ICvFileStorage {
     }
     const { cloudName, apiKey, apiSecret } = credentials.value;
 
+    // Media Library folder = ROOT_FOLDER + the public id without its last segment:
+    // "cvs/<userPublicId>/<uuid>" -> "InterviewIQ/cvs/<userPublicId>".
+    // Display only (lookups use public_id). Derived here, never taken from the client.
+    const parentPath = cloudinaryPublicId.slice(
+      0,
+      cloudinaryPublicId.lastIndexOf('/'),
+    );
+    const assetFolder = `${ROOT_FOLDER}/${parentPath}`;
+
     // Cloudinary rejects signatures whose timestamp is older than 1 hour.
     const timestamp = Math.floor(Date.now() / 1000);
+    // Every param the browser sends (except file and api_key) must be signed,
+    // otherwise Cloudinary answers "Invalid Signature".
     const paramsToSign = {
       timestamp,
       public_id: cloudinaryPublicId,
+      asset_folder: assetFolder,
       allowed_formats: ALLOWED_FORMATS,
     };
     // HMAC-style hash of the params + secret. The secret itself never leaves the server.
@@ -53,6 +67,7 @@ export class CloudinaryFileStorage implements ICvFileStorage {
       signature,
       cloudinaryPublicId,
       allowedFormats: ALLOWED_FORMATS,
+      assetFolder,
     });
   }
 
@@ -76,13 +91,18 @@ export class CloudinaryFileStorage implements ICvFileStorage {
         format: resource.format,
       });
     } catch (error) {
-      // The SDK rejects with { error: { http_code } }; 404 = no such file.
-      const httpCode = (error as { error?: { http_code?: number } }).error
-        ?.http_code;
-      if (httpCode === 404) {
-        return ok(null);
+      // The SDK rejects with { error: { http_code, message }, request_options, ... }.
+      const details = (
+        error as { error?: { http_code?: number; message?: unknown } }
+      ).error;
+      if (details?.http_code === 404) {
+        return ok(null); // no such file
       }
-      this.logger.error(`Cloudinary getFile failed: ${JSON.stringify(error)}`);
+      // Never log the whole error object: request_options.auth is "api_key:api_secret".
+      this.logger.error(
+        `Cloudinary getFile failed: HTTP ${details?.http_code ?? 'unknown'}` +
+          ` - ${typeof details?.message === 'string' ? details.message : 'no message'}`,
+      );
       return err(new Error('Failed to read file from storage.'));
     }
   }

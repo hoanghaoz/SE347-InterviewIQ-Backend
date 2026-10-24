@@ -3,6 +3,12 @@ export enum ScoringDomainError {
   InvalidUserId = 'INVALID_USER_ID',
   JobAlreadyQueued = 'JOB_ALREADY_QUEUED',
   JobNotFound = 'JOB_NOT_FOUND',
+  ScoreOutOfRange = 'SCORE_OUT_OF_RANGE',
+  OverallFeedbackEmpty = 'OVERALL_FEEDBACK_EMPTY',
+  OverallFeedbackTooLong = 'OVERALL_FEEDBACK_TOO_LONG',
+  InvalidStrengths = 'INVALID_STRENGTHS',
+  InvalidImprovements = 'INVALID_IMPROVEMENTS',
+  InvalidScoringModel = 'INVALID_SCORING_MODEL',
 }
 
 export class ScoringDomainErrorValidation extends Error {
@@ -11,5 +17,6 @@ export class ScoringDomainErrorValidation extends Error {
     message: string,
   ) {
     super(message);
+    this.name = 'ScoringDomainErrorValidation';
   }
 }

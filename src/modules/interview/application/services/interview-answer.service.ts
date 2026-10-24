@@ -180,10 +180,7 @@ export class InterviewAnswerService implements IInterviewAnswerService {
           'Interview question not found or unavailable',
         ),
       );
-    if (
-      question.value.status !== CommonSessionStatus.CREATED &&
-      question.value.status !== CommonSessionStatus.IN_PROGRESS
-    ) {
+    if (question.value.status !== CommonSessionStatus.IN_PROGRESS) {
       return err(
         new AppError(
           ErrorCode.Conflict,

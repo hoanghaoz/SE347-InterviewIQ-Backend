@@ -26,5 +26,6 @@ model InterviewSession {
   @@index([cvId])
   @@index([status])
   @@index([userId, status])
+  @@index([userId, createdAt(sort: Desc)])
   @@map("interview_sessions")
 }
