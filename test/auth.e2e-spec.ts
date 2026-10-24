@@ -7,7 +7,6 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
-import { randomUUID, type UUID } from 'crypto';
 import { err, ok, type Result } from 'neverthrow';
 import request from 'supertest';
 import type { App } from 'supertest/types';
@@ -35,11 +34,8 @@ import {
 import { ITokenHasher } from '../src/modules/authentication/domain/repositories/token-hasher.interface';
 import { JwtAccessTokenIssuer } from '../src/modules/authentication/infrastructure/jwt-access-token-issuer';
 import { Sha256TokenHasher } from '../src/modules/authentication/infrastructure/sha256-token-hasher';
-import {
-  CreateUserData,
-  IUserRepository,
-  UserAlreadyExistsError,
-} from '../src/modules/user/domain/repositories/user.repo.interface';
+import { IUserRepository } from '../src/modules/user/domain/repositories/user.repo.interface';
+import { InMemoryUserRepository } from './support/in-memory-user.repository';
 import { CommonUserRole } from '../src/shared/common/commonEnum';
 import { AllExceptionsFilter } from '../src/shared/common/exceptions.filter';
 import { ErrorCode } from '../src/shared/common/errorCode';
@@ -93,60 +89,6 @@ class InMemoryRedis {
     const next = Number(this.store.get(key) ?? '0') + 1;
     this.store.set(key, String(next));
     return Promise.resolve(next);
-  }
-}
-
-class InMemoryUserRepository implements IUserRepository {
-  readonly users = new Map<
-    string,
-    CreateUserData & { id: number; publicId: UUID }
-  >();
-
-  getUserByEmail(email: string) {
-    const user = this.users.get(email);
-    return Promise.resolve(ok(user ? { id: user.id } : null));
-  }
-  createUser(data: CreateUserData) {
-    if (this.users.has(data.email)) {
-      return Promise.resolve(err(new UserAlreadyExistsError()));
-    }
-    const id = this.users.size + 1;
-    this.users.set(data.email, { ...data, id, publicId: randomUUID() });
-    return Promise.resolve(ok({ id }));
-  }
-  getUserCredentialsByEmail(email: string) {
-    const user = this.users.get(email);
-    return Promise.resolve(
-      ok(
-        user
-          ? {
-              id: user.id,
-              publicId: user.publicId,
-              email: user.email,
-              role: CommonUserRole.USER,
-              passwordHash: user.passwordHash,
-            }
-          : null,
-      ),
-    );
-  }
-  getUserById(id: number) {
-    const user = [...this.users.values()].find((u) => u.id === id);
-    return Promise.resolve(
-      ok(user ? { publicId: user.publicId, role: CommonUserRole.USER } : null),
-    );
-  }
-  // Giống Prisma update: không có user thì lỗi
-  updateUserPassword(
-    id: number,
-    passwordHash: string,
-  ): Promise<Result<void, Error>> {
-    const user = [...this.users.values()].find((u) => u.id === id);
-    if (!user) {
-      return Promise.resolve(err(new Error('Failed to update user password')));
-    }
-    this.users.set(user.email, { ...user, passwordHash });
-    return Promise.resolve(ok(undefined));
   }
 }
 
@@ -296,7 +238,6 @@ describe('AuthController (e2e)', () => {
     const otp = mailer.lastOtpFor(body.email);
     await verify({ email: body.email, otp }).expect(201);
   };
-
   beforeEach(async () => {
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);

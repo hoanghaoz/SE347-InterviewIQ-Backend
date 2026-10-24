@@ -19,6 +19,7 @@ import { CvModule } from './modules/cv/cv.module';
 import { RedisModule } from './shared/infrastructure/redis/redis.module';
 import { AuthModule } from './modules/authentication/auth.module';
 import { ScoringModule } from './modules/scoring/scoring.module';
+import { UserModule } from './modules/user/user.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { ScoringModule } from './modules/scoring/scoring.module';
     RedisModule,
     AuthModule,
     ScoringModule,
+    UserModule,
   ],
   controllers: [AppController],
   providers: [

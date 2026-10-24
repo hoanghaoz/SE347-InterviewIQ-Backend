@@ -13,7 +13,11 @@ describe('AuthService', () => {
     getUserByEmail: jest.fn(),
     createUser: jest.fn(),
     getUserCredentialsByEmail: jest.fn(),
+    getUserCredentialsByPublicId: jest.fn(),
     getUserById: jest.fn(),
+    getUserProfileByPublicId: jest.fn(),
+    updateUserProfile: jest.fn(),
+    updateUserAvatarUrl: jest.fn(),
     updateUserPassword: jest.fn(),
   };
   const passwordHasher = {
