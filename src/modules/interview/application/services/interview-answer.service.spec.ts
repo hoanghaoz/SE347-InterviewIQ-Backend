@@ -130,6 +130,7 @@ describe('InterviewAnswerService', () => {
   );
 
   it.each([
+    CommonSessionStatus.CREATED,
     CommonSessionStatus.SUBMITTED,
     CommonSessionStatus.SCORING,
     CommonSessionStatus.COMPLETED,
@@ -226,7 +227,7 @@ describe('InterviewAnswerService', () => {
     },
   );
 
-  it.each([CommonSessionStatus.CREATED, CommonSessionStatus.IN_PROGRESS])(
+  it.each([CommonSessionStatus.IN_PROGRESS])(
     'saves trusted video metadata and transcript in %s',
     async (status) => {
       getQuestionForUser.mockResolvedValue(ok({ status }));

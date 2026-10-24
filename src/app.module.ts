@@ -20,6 +20,7 @@ import { RedisModule } from './shared/infrastructure/redis/redis.module';
 import { AuthModule } from './modules/authentication/auth.module';
 import { ScoringModule } from './modules/scoring/scoring.module';
 import { UserModule } from './modules/user/user.module';
+import { LlmPlaygroundModule } from './modules/llm-playground/llm-playground.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { UserModule } from './modules/user/user.module';
     AuthModule,
     ScoringModule,
     UserModule,
+    LlmPlaygroundModule,
   ],
   controllers: [AppController],
   providers: [

@@ -1,6 +1,9 @@
 import { Result } from 'neverthrow';
 import { AppError } from '../../../../shared/common/errorCode';
-import { ScoringJobStatusResponseDto } from '../dtos/scoring.response.dto';
+import {
+  ScoringJobStatusResponseDto,
+  SessionResultResponseDto,
+} from '../dtos/scoring.response.dto';
 
 export interface EnqueueResult {
   jobId: string;
@@ -18,4 +21,10 @@ export abstract class IScoringService {
     userId: string,
     userRole?: string,
   ): Promise<Result<ScoringJobStatusResponseDto, AppError>>;
+
+  abstract getSessionResultAsync(
+    sessionId: string,
+    userId: string,
+    userRole?: string,
+  ): Promise<Result<SessionResultResponseDto, AppError>>;
 }
