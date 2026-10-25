@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { randomUUID } from 'crypto';
+import { randomUUID, type UUID } from 'crypto';
 import { err, ok } from 'neverthrow';
 import { CommonUserRole } from '../../../../shared/common/commonEnum';
 import { ErrorCode } from '../../../../shared/common/errorCode';
@@ -13,7 +13,11 @@ describe('AuthService', () => {
     getUserByEmail: jest.fn(),
     createUser: jest.fn(),
     getUserCredentialsByEmail: jest.fn(),
+    getUserCredentialsByPublicId: jest.fn(),
     getUserById: jest.fn(),
+    getUserProfileByPublicId: jest.fn(),
+    updateUserProfile: jest.fn(),
+    updateUserAvatarUrl: jest.fn(),
     updateUserPassword: jest.fn(),
   };
   const passwordHasher = {
@@ -1317,6 +1321,123 @@ describe('AuthService', () => {
           'Failed to reset password',
         );
         expect(passwordResetTokenStore.deleteResetToken).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  describe('changePasswordAsync', () => {
+    const userPublicId = '7f1c2a3b-4d5e-4f60-8a9b-0c1d2e3f4a5b' as UUID;
+    const request = {
+      currentPassword: 'Str0ngPass',
+      newPassword: 'N3wStr0ngPass',
+    };
+
+    // Mặc định mọi bước đều thành công; từng test ghi đè bước cần làm hỏng
+    beforeEach(() => {
+      userRepository.getUserCredentialsByPublicId.mockResolvedValue(
+        ok({
+          id: 7,
+          publicId: userPublicId,
+          email,
+          role: CommonUserRole.USER,
+          passwordHash: 'bcrypt-old',
+        }),
+      );
+      passwordHasher.compare.mockResolvedValue(ok(true));
+      passwordHasher.hash.mockResolvedValue(ok('bcrypt-new'));
+      userRepository.updateUserPassword.mockResolvedValue(ok(undefined));
+      refreshTokenRepository.revokeAllRefreshTokensForUser.mockResolvedValue(
+        ok(undefined),
+      );
+    });
+
+    const expectError = async (code: ErrorCode, message: string) => {
+      const result = await service.changePasswordAsync(userPublicId, request);
+
+      if (result.isOk()) throw new Error('Expected an error result');
+      expect(result.error.code).toBe(code);
+      expect(result.error.message).toBe(message);
+    };
+
+    it('checks the current password, stores the new hash and logs out every session', async () => {
+      const result = await service.changePasswordAsync(userPublicId, request);
+
+      expect(result.isOk()).toBe(true);
+      expect(passwordHasher.compare).toHaveBeenCalledWith(
+        'Str0ngPass',
+        'bcrypt-old',
+      );
+      expect(passwordHasher.hash).toHaveBeenCalledWith('N3wStr0ngPass');
+      expect(userRepository.updateUserPassword).toHaveBeenCalledWith(
+        7,
+        'bcrypt-new',
+      );
+      expect(
+        refreshTokenRepository.revokeAllRefreshTokensForUser,
+      ).toHaveBeenCalledWith(7);
+    });
+
+    // Email trong token có thể đã cũ sau khi user đổi email ở trang hồ sơ
+    it('identifies the user by the token subject, never by the email in the token', async () => {
+      await service.changePasswordAsync(userPublicId, request);
+
+      expect(userRepository.getUserCredentialsByPublicId).toHaveBeenCalledWith(
+        userPublicId,
+      );
+      expect(userRepository.getUserCredentialsByEmail).not.toHaveBeenCalled();
+    });
+
+    it('returns 401 and keeps the password when the current password is wrong', async () => {
+      passwordHasher.compare.mockResolvedValue(ok(false));
+
+      await expectError(
+        ErrorCode.Unauthorized,
+        'Current password is incorrect',
+      );
+      expect(userRepository.updateUserPassword).not.toHaveBeenCalled();
+      expect(
+        refreshTokenRepository.revokeAllRefreshTokensForUser,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('returns 401 when the token is valid but the account is gone', async () => {
+      userRepository.getUserCredentialsByPublicId.mockResolvedValue(ok(null));
+
+      await expectError(ErrorCode.Unauthorized, 'User no longer exists');
+      expect(userRepository.updateUserPassword).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 when the new password equals the current one', async () => {
+      const result = await service.changePasswordAsync(userPublicId, {
+        currentPassword: 'Str0ngPass',
+        newPassword: 'Str0ngPass',
+      });
+
+      if (result.isOk()) throw new Error('Expected an error result');
+      expect(result.error.code).toBe(ErrorCode.BadRequest);
+      expect(userRepository.updateUserPassword).not.toHaveBeenCalled();
+      expect(
+        refreshTokenRepository.revokeAllRefreshTokensForUser,
+      ).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['loading the user', () => userRepository.getUserCredentialsByPublicId],
+      ['hashing the new password', () => passwordHasher.hash],
+      ['updating the password', () => userRepository.updateUserPassword],
+      [
+        'revoking the sessions',
+        () => refreshTokenRepository.revokeAllRefreshTokensForUser,
+      ],
+    ])(
+      'returns a safe InternalServerError when %s fails',
+      async (_step, getMock) => {
+        getMock().mockResolvedValue(err(new Error('internal detail')));
+
+        await expectError(
+          ErrorCode.InternalServerError,
+          'Failed to change password',
+        );
       },
     );
   });

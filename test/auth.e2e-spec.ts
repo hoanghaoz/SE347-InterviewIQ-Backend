@@ -35,11 +35,8 @@ import {
 import { ITokenHasher } from '../src/modules/authentication/domain/repositories/token-hasher.interface';
 import { JwtAccessTokenIssuer } from '../src/modules/authentication/infrastructure/jwt-access-token-issuer';
 import { Sha256TokenHasher } from '../src/modules/authentication/infrastructure/sha256-token-hasher';
-import {
-  CreateUserData,
-  IUserRepository,
-  UserAlreadyExistsError,
-} from '../src/modules/user/domain/repositories/user.repo.interface';
+import { IUserRepository } from '../src/modules/user/domain/repositories/user.repo.interface';
+import { InMemoryUserRepository } from './support/in-memory-user.repository';
 import { CommonUserRole } from '../src/shared/common/commonEnum';
 import { AllExceptionsFilter } from '../src/shared/common/exceptions.filter';
 import { ErrorCode } from '../src/shared/common/errorCode';
@@ -96,35 +93,35 @@ class InMemoryRedis {
   }
 }
 
-class InMemoryUserRepository implements IUserRepository {
-  readonly users = new Map<
-    string,
-    CreateUserData & { id: number; publicId: UUID }
-  >();
+type StoredRefreshToken = CreateRefreshTokenData & {
+  readonly id: number;
+  revokedAt: Date | null;
+};
 
-  getUserByEmail(email: string) {
-    const user = this.users.get(email);
-    return Promise.resolve(ok(user ? { id: user.id } : null));
+class InMemoryRefreshTokenRepository implements IRefreshTokenRepository {
+  readonly tokens: StoredRefreshToken[] = [];
+
+  // Khai báo rõ kiểu trả về để test có thể mock nhánh err()
+  createRefreshToken(
+    data: CreateRefreshTokenData,
+  ): Promise<Result<void, Error>> {
+    this.tokens.push({ ...data, id: this.tokens.length + 1, revokedAt: null });
+    return Promise.resolve(ok(undefined));
   }
-  createUser(data: CreateUserData) {
-    if (this.users.has(data.email)) {
-      return Promise.resolve(err(new UserAlreadyExistsError()));
-    }
-    const id = this.users.size + 1;
-    this.users.set(data.email, { ...data, id, publicId: randomUUID() });
-    return Promise.resolve(ok({ id }));
-  }
-  getUserCredentialsByEmail(email: string) {
-    const user = this.users.get(email);
+
+  getRefreshTokenByHash(
+    tokenHash: string,
+  ): Promise<Result<RefreshTokenRecord | null, Error>> {
+    const token = this.tokens.find((t) => t.tokenHash === tokenHash);
+    // Trả bản copy như DB, để service không sửa được dữ liệu đã lưu
     return Promise.resolve(
       ok(
-        user
+        token
           ? {
-              id: user.id,
-              publicId: user.publicId,
-              email: user.email,
-              role: CommonUserRole.USER,
-              passwordHash: user.passwordHash,
+              id: token.id,
+              userId: token.userId,
+              expiresAt: token.expiresAt,
+              revokedAt: token.revokedAt,
             }
           : null,
       ),
@@ -146,6 +143,41 @@ class InMemoryUserRepository implements IUserRepository {
       return Promise.resolve(err(new Error('Failed to update user password')));
     }
     this.users.set(user.email, { ...user, passwordHash });
+
+  // Không có await giữa bước check và revoke nên đã atomic trong JS,
+  // giống updateMany có điều kiện revokedAt: null của bản Prisma
+  rotateRefreshToken(
+    oldTokenId: number,
+    newToken: CreateRefreshTokenData,
+  ): Promise<Result<void, Error>> {
+    const old = this.tokens.find((t) => t.id === oldTokenId);
+    if (!old || old.revokedAt !== null) {
+      return Promise.resolve(err(new RefreshTokenAlreadyRevokedError()));
+    }
+    old.revokedAt = new Date();
+    this.tokens.push({
+      ...newToken,
+      id: this.tokens.length + 1,
+      revokedAt: null,
+    });
+    return Promise.resolve(ok(undefined));
+  }
+
+  revokeAllRefreshTokensForUser(userId: number): Promise<Result<void, Error>> {
+    const now = new Date();
+    for (const token of this.tokens) {
+      if (token.userId === userId && token.revokedAt === null) {
+        token.revokedAt = now;
+      }
+    }
+    return Promise.resolve(ok(undefined));
+  }
+
+  revokeRefreshTokenByHash(tokenHash: string): Promise<Result<void, Error>> {
+    const token = this.tokens.find((t) => t.tokenHash === tokenHash);
+    if (token && token.revokedAt === null) {
+      token.revokedAt = new Date();
+    }
     return Promise.resolve(ok(undefined));
   }
 }
@@ -236,6 +268,12 @@ class CapturingEmailSender implements IEmailSender {
     this.sent.push({ email, otp, kind: 'reset-password' });
     return Promise.resolve(ok(undefined));
   }
+    return Promise.resolve(ok(undefined));
+  }
+  sendPasswordResetOtp(email: string, otp: string) {
+    this.sent.push({ email, otp, kind: 'reset-password' });
+    return Promise.resolve(ok(undefined));
+  }
   lastOtpFor(email: string, kind: OtpMailKind = 'register'): string {
     const otp = [...this.sent]
       .reverse()
@@ -252,6 +290,8 @@ describe('AuthController (e2e)', () => {
   let mailer: CapturingEmailSender;
   let refreshTokens: InMemoryRefreshTokenRepository;
   const jwtService = new JwtService();
+  // Có secret ở đây để JwtAuthGuard (route password/change) verify được token
+  const jwtService = new JwtService({ secret: JWT_SECRET });
 
   const registerRoute = '/api/auth/register';
   const resendRoute = '/api/auth/register/resend';
@@ -262,6 +302,7 @@ describe('AuthController (e2e)', () => {
   const forgotPasswordRoute = '/api/auth/password/forgot';
   const verifyResetOtpRoute = '/api/auth/password/verify';
   const resetPasswordRoute = '/api/auth/password/reset';
+  const changePasswordRoute = '/api/auth/password/change';
   const body = {
     email: 'new.user@example.com',
     password: 'Str0ngPass',
@@ -290,11 +331,24 @@ describe('AuthController (e2e)', () => {
   // Giả lập OTP hiện tại đã gửi được 100s (TTL 300s), qua cooldown 60s
   const passOtpCooldown = (kind: OtpMailKind = 'register') =>
     redis.ttls.set(`auth:otp:${kind}:${body.email}`, 200);
+  const changePassword = (accessToken: string, payload: object) =>
+    request(app.getHttpServer())
+      .post(changePasswordRoute)
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send(payload);
   // Tạo account qua đúng luồng thật để passwordHash là bcrypt thật
   const createAccount = async () => {
     await register().expect(200);
     const otp = mailer.lastOtpFor(body.email);
     await verify({ email: body.email, otp }).expect(201);
+  };
+  // Verify vừa đăng ký xong là đã đăng nhập luôn, nên lấy token từ đó
+  const createAccountAndLogIn = async (): Promise<string> => {
+    await register().expect(200);
+    const otp = mailer.lastOtpFor(body.email);
+    const response = await verify({ email: body.email, otp }).expect(201);
+    return (response.body as { data: { accessToken: string } }).data
+      .accessToken;
   };
 
   beforeEach(async () => {
@@ -1332,6 +1386,105 @@ describe('AuthController (e2e)', () => {
       );
       expect(JSON.stringify(response.body)).not.toContain('short');
       expect(JSON.stringify(response.body)).not.toContain('not-a-token');
+    });
+  });
+
+  describe('POST /api/auth/password/change', () => {
+    const newPassword = 'N3wStr0ngPass';
+
+    it('changes the password of the logged-in user and revokes every refresh token', async () => {
+      const accessToken = await createAccountAndLogIn();
+      const hashBefore = users.users.get(body.email)?.passwordHash;
+
+      const response = await changePassword(accessToken, {
+        currentPassword: body.password,
+        newPassword,
+      }).expect(200);
+
+      expect(response.body).toMatchObject({
+        statusCode: 200,
+        success: true,
+        data: null,
+        message: 'Password changed successfully, please log in again',
+      });
+      // Hash thật của bcrypt, không phải mật khẩu thô
+      const hashAfter = users.users.get(body.email)?.passwordHash;
+      expect(hashAfter).toMatch(/^\$2[aby]\$10\$/);
+      expect(hashAfter).not.toBe(hashBefore);
+      expect(hashAfter).not.toContain(newPassword);
+      expect(refreshTokens.tokens.every((t) => t.revokedAt !== null)).toBe(
+        true,
+      );
+    });
+
+    it('lets the user log in with the new password and not with the old one', async () => {
+      const accessToken = await createAccountAndLogIn();
+      await changePassword(accessToken, {
+        currentPassword: body.password,
+        newPassword,
+      }).expect(200);
+
+      await login({ email: body.email, password: body.password }).expect(401);
+      await login({ email: body.email, password: newPassword }).expect(200);
+    });
+
+    it('returns 401 and keeps the old password when the current password is wrong', async () => {
+      const accessToken = await createAccountAndLogIn();
+      const hashBefore = users.users.get(body.email)?.passwordHash;
+
+      const response = await changePassword(accessToken, {
+        currentPassword: 'WrongPass1',
+        newPassword,
+      }).expect(401);
+
+      expect(response.body).toMatchObject({
+        statusCode: 401,
+        success: false,
+        code: ErrorCode.Unauthorized,
+        message: 'Current password is incorrect',
+        path: changePasswordRoute,
+      });
+      expect(users.users.get(body.email)?.passwordHash).toBe(hashBefore);
+    });
+
+    it('returns 401 without a bearer token', async () => {
+      await createAccount();
+
+      await request(app.getHttpServer())
+        .post(changePasswordRoute)
+        .send({ currentPassword: body.password, newPassword })
+        .expect(401);
+    });
+
+    it('returns 400 when the new password repeats the current one', async () => {
+      const accessToken = await createAccountAndLogIn();
+
+      const response = await changePassword(accessToken, {
+        currentPassword: body.password,
+        newPassword: body.password,
+      }).expect(400);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.BadRequest,
+        message: 'New password must be different from the current password',
+      });
+    });
+
+    it('returns field errors without echoing the rejected values', async () => {
+      const accessToken = await createAccountAndLogIn();
+
+      const response = await changePassword(accessToken, {
+        currentPassword: '',
+        newPassword: 'short',
+      }).expect(400);
+
+      const fields = (
+        response.body as { errors: { field: string }[] }
+      ).errors.map((e) => e.field);
+      expect(fields).toEqual(
+        expect.arrayContaining(['currentPassword', 'newPassword']),
+      );
+      expect(JSON.stringify(response.body)).not.toContain('short');
     });
   });
 });

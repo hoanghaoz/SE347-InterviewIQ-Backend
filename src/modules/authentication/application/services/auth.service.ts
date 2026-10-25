@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { randomInt } from 'crypto';
+import { randomInt, type UUID } from 'crypto';
 import { err, ok, type Result } from 'neverthrow';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
 import {
@@ -21,6 +21,7 @@ import {
 } from '../../domain/repositories/refresh-token.repo.interface';
 import { ITokenHasher } from '../../domain/repositories/token-hasher.interface';
 import {
+  ChangePasswordDto,
   ForgotPasswordDto,
   LoginDto,
   RefreshTokenDto,
@@ -452,6 +453,131 @@ export class AuthService implements IAuthService {
       this.logger.warn('Failed to clean up password reset OTP after verify');
     }
 
+    }
+
+    // 5. Absolute expiry: token mới giữ nguyên expiresAt của token cũ,
+    // hết hạn thì phải login lại dù user vẫn đang hoạt động
+    const refreshToken = this.tokenHasher.generateToken();
+    const rotateResult = await this.refreshTokenRepository.rotateRefreshToken(
+      token.id,
+      {
+        userId: token.userId,
+        tokenHash: this.tokenHasher.hashToken(refreshToken),
+        expiresAt: token.expiresAt,
+      },
+    );
+    if (rotateResult.isErr()) {
+      // Request khác vừa rotate token này (client gửi trùng): không thu hồi hết
+      // như bước 2 vì đa số là retry vô hại, chỉ từ chối request này
+      if (rotateResult.error instanceof RefreshTokenAlreadyRevokedError) {
+        return err(this.invalidRefreshTokenError());
+      }
+      return err(this.refreshFailedError());
+    }
+
+    return ok({ accessToken: accessTokenResult.value, refreshToken });
+  }
+
+  async logoutAsync(request: RefreshTokenDto): Promise<Result<void, AppError>> {
+    // Token không tồn tại / đã revoke / hết hạn đều trả ok như RFC 7009:
+    // phiên đó vốn đã không dùng được nên mục đích logout đã đạt, và không lộ trạng thái token.
+    // Không thu hồi mọi phiên khi gặp token đã revoke như refreshAsync: logout lại bằng token cũ
+    // thường chỉ là client retry, kẻ trộm token dùng logout cũng không lấy được gì.
+    const revokeResult =
+      await this.refreshTokenRepository.revokeRefreshTokenByHash(
+        this.tokenHasher.hashToken(request.refreshToken),
+      );
+    if (revokeResult.isErr()) {
+      return err(
+        new AppError(ErrorCode.InternalServerError, 'Failed to logout'),
+      );
+    }
+
+    return ok(undefined);
+  }
+
+  async requestPasswordResetAsync(
+    request: ForgotPasswordDto,
+  ): Promise<Result<void, AppError>> {
+    const { email } = request;
+
+    // Email lạ và đang trong cooldown đều trả ok như khi gửi thật:
+    // response không cho biết email nào đã có tài khoản
+    const userResult = await this.userRepository.getUserByEmail(email);
+    if (userResult.isErr()) {
+      return err(this.passwordResetRequestFailedError());
+    }
+    if (userResult.value === null) {
+      return ok(undefined);
+    }
+
+    // OTP trước còn dùng được nên trong cooldown chỉ cần không gửi mail mới
+    const inCooldown = await this.isOtpInCooldownAsync(
+      this.passwordResetOtpStore,
+      email,
+    );
+    if (inCooldown.isErr()) {
+      return err(this.passwordResetRequestFailedError());
+    }
+    if (inCooldown.value) {
+      return ok(undefined);
+    }
+
+    const otp = await this.issueOtpAsync(this.passwordResetOtpStore, email);
+    if (otp.isErr()) {
+      return err(otp.error);
+    }
+
+    const sendOtp = await this.emailSender.sendPasswordResetOtp(
+      email,
+      otp.value,
+    );
+    if (sendOtp.isErr()) {
+      return err(
+        new AppError(ErrorCode.InternalServerError, 'Failed to send OTP email'),
+      );
+    }
+
+    return ok(undefined);
+  }
+
+  async verifyPasswordResetOtpAsync(
+    request: VerifyPasswordResetOtpDto,
+  ): Promise<Result<PasswordResetTokenResponseDto, AppError>> {
+    const { email, otp } = request;
+
+    // 1. Chỉ chủ email mới đi tiếp được. Sai quá MAX_OTP_ATTEMPTS thì OTP bị xóa như luồng đăng ký
+    const otpCheck = await this.checkOtpAsync(
+      this.passwordResetOtpStore,
+      email,
+      otp,
+      this.verifyPasswordResetOtpFailedError(),
+    );
+    if (otpCheck.isErr()) {
+      return err(otpCheck.error);
+    }
+
+    // 2. Đổi OTP lấy reset token cho bước đặt mật khẩu. Store chỉ giữ hash
+    const resetToken = this.tokenHasher.generateToken();
+    const saveToken = await this.passwordResetTokenStore.saveResetToken(
+      email,
+      this.tokenHasher.hashToken(resetToken),
+      PASSWORD_RESET_TOKEN_TTL_SECONDS,
+    );
+    if (saveToken.isErr()) {
+      // OTP chưa bị xóa nên user gửi lại đúng OTP đó là được
+      return err(this.verifyPasswordResetOtpFailedError());
+    }
+
+    // 3. OTP chỉ dùng một lần. Lỗi dọn dẹp chỉ log: verify lại cũng chỉ ghi đè token cũ
+    const cleanups = await Promise.all([
+      this.passwordResetOtpStore.deleteOtp(email),
+      this.passwordResetOtpStore.resetFailedAttempts(email),
+    ]);
+    if (cleanups.some((result) => result.isErr())) {
+      this.logger.warn('Failed to clean up password reset OTP after verify');
+    }
+
     return ok({ resetToken });
   }
 
@@ -509,6 +635,75 @@ export class AuthService implements IAuthService {
       await this.passwordResetTokenStore.deleteResetToken(email);
     if (deleteToken.isErr()) {
       this.logger.warn('Failed to delete password reset token');
+    }
+
+    return ok(undefined);
+  }
+
+  async changePasswordAsync(
+    userPublicId: UUID,
+    request: ChangePasswordDto,
+  ): Promise<Result<void, AppError>> {
+    const { currentPassword, newPassword } = request;
+
+    // 1. Tra user theo publicId (`sub` của token), không theo email: email trong
+    // token có thể đã cũ sau khi user đổi email ở trang hồ sơ.
+    const userResult =
+      await this.userRepository.getUserCredentialsByPublicId(userPublicId);
+    if (userResult.isErr()) {
+      return err(this.changePasswordFailedError());
+    }
+    // Token còn hiệu lực nhưng tài khoản đã bị xóa
+    if (userResult.value === null) {
+      return err(new AppError(ErrorCode.Unauthorized, 'User no longer exists'));
+    }
+    const user = userResult.value;
+
+    // 2. Mật khẩu hiện tại là thứ chứng minh người đang gọi đúng là chủ tài khoản,
+    // không phải ai đó mượn được access token.
+    const isCurrentPasswordValid = await this.passwordHasher.compare(
+      currentPassword,
+      user.passwordHash,
+    );
+    if (isCurrentPasswordValid.isErr()) {
+      return err(this.changePasswordFailedError());
+    }
+    if (!isCurrentPasswordValid.value) {
+      return err(
+        new AppError(ErrorCode.Unauthorized, 'Current password is incorrect'),
+      );
+    }
+
+    // 3. Đặt lại đúng mật khẩu cũ thì mọi phiên bị đá ra mà chẳng được gì
+    if (newPassword === currentPassword) {
+      return err(
+        new AppError(
+          ErrorCode.BadRequest,
+          'New password must be different from the current password',
+        ),
+      );
+    }
+
+    const passwordHash = await this.passwordHasher.hash(newPassword);
+    if (passwordHash.isErr()) {
+      return err(this.changePasswordFailedError());
+    }
+    const updateResult = await this.userRepository.updateUserPassword(
+      user.id,
+      passwordHash.value,
+    );
+    if (updateResult.isErr()) {
+      return err(this.changePasswordFailedError());
+    }
+
+    // 4. Đá mọi phiên cũ, kể cả thiết bị đang gọi: đổi mật khẩu thường là vì nghi
+    // mật khẩu bị lộ, nên refresh token đã phát ra không được sống tiếp.
+    const revokeAll =
+      await this.refreshTokenRepository.revokeAllRefreshTokensForUser(user.id);
+    if (revokeAll.isErr()) {
+      // Mật khẩu đã đổi xong, chỉ phần dọn phiên lỗi. Vẫn báo 500 để client đi
+      // đăng nhập lại thay vì tin rằng mọi thứ bình thường.
+      return err(this.changePasswordFailedError());
     }
 
     return ok(undefined);
@@ -730,6 +925,13 @@ export class AuthService implements IAuthService {
     return new AppError(
       ErrorCode.InternalServerError,
       'Failed to reset password',
+    );
+  }
+
+  private changePasswordFailedError(): AppError {
+    return new AppError(
+      ErrorCode.InternalServerError,
+      'Failed to change password',
     );
   }
 
