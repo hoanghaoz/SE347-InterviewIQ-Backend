@@ -47,6 +47,11 @@ export class InterviewController {
   @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
   @ApiOperation({
     summary: 'List interview sessions owned by the current user',
+    deprecated: true,
+    description:
+      'Deprecated: use GET /api/interviews (interview-history module) instead. ' +
+      'That endpoint adds fromDate/toDate/status filters, overallScore and a pageSize cap. ' +
+      'Field differences are listed in docs/api-contract-interview-history.md section 5.',
   })
   @ApiQuery({ type: PaginationQueryDto })
   @ApiOkResponse({
