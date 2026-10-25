@@ -1,8 +1,13 @@
 import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { toHttpException } from '../../../shared/common/app-error.mapper';
+import { CommonUserRole } from '../../../shared/common/commonEnum';
+import type { JwtPayload } from '../../../shared/common/jwt.payload.interface';
+import { Auth } from '../../../shared/decorators/auth.decorator';
+import { User } from '../../../shared/decorators/user.decorator';
 import { ApiSuccessResponse } from '../../../shared/response/apiResponse';
 import {
+  ChangePasswordDto,
   ForgotPasswordDto,
   LoginDto,
   RefreshTokenDto,
@@ -216,6 +221,36 @@ export class AuthController {
           HttpStatus.OK,
           null,
           'Password reset successfully',
+        ),
+      (error) => {
+        throw toHttpException(error);
+      },
+    );
+  }
+
+  // Cần access token, khác hẳn luồng password/forgot dành cho người không đăng nhập được
+  @Post('password/change')
+  @HttpCode(HttpStatus.OK)
+  @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
+  @ApiOperation({
+    summary: 'Change the password of the logged-in user and log out everywhere',
+  })
+  async changePasswordAsync(
+    @User() user: JwtPayload,
+    @Body() request: ChangePasswordDto,
+  ): Promise<ApiSuccessResponse<null>> {
+    const result = await this.authService.changePasswordAsync(
+      user.sub,
+      request,
+    );
+
+    // Mọi refresh token đã bị revoke nên client phải đăng nhập lại: nói rõ trong message
+    return result.match(
+      () =>
+        new ApiSuccessResponse(
+          HttpStatus.OK,
+          null,
+          'Password changed successfully, please log in again',
         ),
       (error) => {
         throw toHttpException(error);

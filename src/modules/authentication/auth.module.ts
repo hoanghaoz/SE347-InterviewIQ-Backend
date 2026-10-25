@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
+import { JwtAuthGuard } from '../../shared/common/jwt.guard';
+import { RolesGuard } from '../../shared/decorators/roles.guard';
 import { IEmailOtpStore } from './domain/repositories/email-otp-store.interface';
 import { RedisEmailOtpStore } from './infrastructure/redis-email-otp-store';
 import { IPendingRegistrationStore } from './domain/repositories/pending-registration-store.interface';
@@ -24,10 +27,22 @@ import { IPasswordResetTokenStore } from './domain/repositories/password-reset-t
 import { RedisPasswordResetTokenStore } from './infrastructure/redis-password-reset-token-store';
 
 @Module({
-  // JwtAccessTokenIssuer tự truyền secret/expiresIn khi ký nên không cấu hình ở đây
-  imports: [UserModule, JwtModule.register({})],
+  imports: [
+    UserModule,
+    // JwtAccessTokenIssuer tự truyền secret/expiresIn khi ký, nhưng JwtAuthGuard
+    // (dùng cho password/change) gọi verifyAsync không truyền secret nên cần ở đây
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get<string>('JWT_SECRET'),
+      }),
+    }),
+  ],
   controllers: [AuthController],
   providers: [
+    JwtAuthGuard,
+    RolesGuard,
     {
       provide: IEmailOtpStore,
       useClass: RedisEmailOtpStore,
