@@ -1,6 +1,9 @@
 import { Result } from 'neverthrow';
 import { AppError } from '../../../../shared/common/errorCode';
-import { CreateCvRequestDto } from '../dtos/cv.request.dto';
+import {
+  CreateCvRequestDto,
+  UpdateParsedDataRequestDto,
+} from '../dtos/cv.request.dto';
 import {
   CvResponseDto,
   CvSignedParamsResponseDto,
@@ -24,5 +27,16 @@ export abstract class ICvService {
   abstract getCvAsync(
     userPublicId: string,
     cvPublicId: string,
+  ): Promise<Result<CvResponseDto, AppError>>;
+
+  abstract parseCvAsync(
+    userPublicId: string,
+    cvPublicId: string,
+  ): Promise<Result<CvResponseDto, AppError>>;
+
+  abstract updateParsedDataAsync(
+    userPublicId: string,
+    cvPublicId: string,
+    request: UpdateParsedDataRequestDto,
   ): Promise<Result<CvResponseDto, AppError>>;
 }
