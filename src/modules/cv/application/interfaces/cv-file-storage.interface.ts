@@ -28,4 +28,9 @@ export abstract class ICvFileStorage {
   abstract getFile(
     cloudinaryPublicId: string,
   ): Promise<Result<CvStoredFile | null, Error>>;
+
+  // The file bytes. null when no file exists under that id.
+  abstract downloadFile(
+    cloudinaryPublicId: string,
+  ): Promise<Result<Uint8Array | null, Error>>;
 }

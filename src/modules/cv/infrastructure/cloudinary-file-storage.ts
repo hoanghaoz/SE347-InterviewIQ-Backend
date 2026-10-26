@@ -13,6 +13,10 @@ const RESOURCE_TYPE = 'image';
 const ALLOWED_FORMATS = 'pdf';
 // App folder in the Media Library; the Cloudinary account is shared with other projects.
 const ROOT_FOLDER = 'InterviewIQ';
+const DOWNLOAD_URL_TTL_SECONDS = 60;
+const DOWNLOAD_TIMEOUT_MS = 20_000;
+// The upload limit is 5 MB; this only guards against a response that is far bigger.
+const MAX_DOWNLOAD_BYTES = 6 * 1024 * 1024;
 
 type CloudinaryCredentials = {
   cloudName: string;
@@ -104,6 +108,59 @@ export class CloudinaryFileStorage implements ICvFileStorage {
           ` - ${typeof details?.message === 'string' ? details.message : 'no message'}`,
       );
       return err(new Error('Failed to read file from storage.'));
+    }
+  }
+
+  async downloadFile(
+    cloudinaryPublicId: string,
+  ): Promise<Result<Uint8Array | null, Error>> {
+    const credentials = this.getCredentials();
+    if (credentials.isErr()) {
+      return err(credentials.error);
+    }
+
+    // A signed, short-lived URL made with the API secret. Unlike the public delivery
+    // URL it still works when "Allow delivery of PDF and ZIP files" is off (401).
+    const url = cloudinary.utils.private_download_url(
+      cloudinaryPublicId,
+      ALLOWED_FORMATS,
+      {
+        resource_type: RESOURCE_TYPE,
+        type: 'upload',
+        expires_at: Math.floor(Date.now() / 1000) + DOWNLOAD_URL_TTL_SECONDS,
+      },
+    );
+
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      });
+      if (response.status === 404) {
+        return ok(null);
+      }
+      if (!response.ok) {
+        this.logger.error(
+          `Cloudinary download failed: HTTP ${response.status}`,
+        );
+        return err(new Error('Failed to download file from storage.'));
+      }
+
+      const declaredBytes = Number(response.headers.get('content-length'));
+      const bytes =
+        declaredBytes > MAX_DOWNLOAD_BYTES
+          ? null
+          : new Uint8Array(await response.arrayBuffer());
+      if (bytes === null || bytes.byteLength > MAX_DOWNLOAD_BYTES) {
+        this.logger.error('Cloudinary download is larger than allowed');
+        return err(new Error('Downloaded file is too large.'));
+      }
+      return ok(bytes);
+    } catch (error) {
+      // Never log the URL (it carries the api key and signature) or the raw error.
+      this.logger.error(
+        `Cloudinary download failed: ${error instanceof Error ? error.name : 'unknown error'}`,
+      );
+      return err(new Error('Failed to download file from storage.'));
     }
   }
 
