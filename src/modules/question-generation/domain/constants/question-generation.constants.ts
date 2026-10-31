@@ -1,0 +1,5 @@
+export const MIN_QUESTION_COUNT = 3;
+export const MAX_QUESTION_COUNT = 10;
+export const DEFAULT_QUESTION_COUNT = 5;
+export const MAX_QUESTION_CONTENT_LENGTH = 500;
+export const DEFAULT_GENERATION_TIMEOUT_MS = 45_000;
