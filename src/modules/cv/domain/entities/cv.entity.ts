@@ -114,6 +114,39 @@ export class Cv {
     return ok(undefined);
   }
 
+  completeParsing(result: {
+    rawText: string;
+    parsedData: CvParsedData;
+    parserVersion: string;
+  }): Cv {
+    return new Cv({
+      ...this.params,
+      parseStatus: ParseStatus.COMPLETED,
+      rawText: result.rawText,
+      parsedData: result.parsedData,
+      parserVersion: result.parserVersion,
+    });
+  }
+
+  failParsing(): Cv {
+    return new Cv({
+      ...this.params,
+      parseStatus: ParseStatus.FAILED,
+      parsedData: null,
+    });
+  }
+
+  canEditParsedData(): boolean {
+    return (
+      this.params.parseStatus === ParseStatus.COMPLETED &&
+      this.params.parsedData !== null
+    );
+  }
+
+  withParsedData(parsedData: CvParsedData): Cv {
+    return new Cv({ ...this.params, parsedData });
+  }
+
   get fileName(): string {
     return this.params.fileName;
   }

@@ -17,12 +17,14 @@ describe('CvController', () => {
       Reflect.hasMetadata(METHOD_METADATA, prototype[name] as object),
   );
 
-  it('finds the 4 CV routes', () => {
+  it('finds the 6 CV routes', () => {
     expect(routeNames.sort()).toEqual([
       'createCvAsync',
       'createSignedParamsAsync',
       'getCvAsync',
       'getCvsAsync',
+      'parseCvAsync',
+      'updateParsedDataAsync',
     ]);
   });
 
@@ -33,6 +35,8 @@ describe('CvController', () => {
     'createSignedParamsAsync',
     'getCvAsync',
     'getCvsAsync',
+    'parseCvAsync',
+    'updateParsedDataAsync',
   ])('%s has @Roles on the method, so RolesGuard can read it', (name) => {
     const handler = prototype[name] as (...args: never[]) => unknown;
 

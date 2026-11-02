@@ -1,5 +1,5 @@
-import type { Cv as CvRow } from 'generated/prisma/client';
-import { ParseStatus as PrismaParseStatus } from 'generated/prisma/enums';
+import type { Cv as CvRow } from '../../../../generated/prisma/client';
+import { ParseStatus as PrismaParseStatus } from '../../../../generated/prisma/enums';
 import { Cv } from '../domain/entities/cv.entity';
 import { ParseStatus } from '../domain/enums/cv.enum';
 import { CvParsedData } from '../domain/types/cv-parsed-data.type';

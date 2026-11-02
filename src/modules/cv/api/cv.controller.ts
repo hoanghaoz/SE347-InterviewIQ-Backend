@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
 } from '@nestjs/common';
 import { toHttpException } from '../../../shared/common/app-error.mapper';
@@ -14,7 +15,10 @@ import type { JwtPayload } from '../../../shared/common/jwt.payload.interface';
 import { Auth } from '../../../shared/decorators/auth.decorator';
 import { User } from '../../../shared/decorators/user.decorator';
 import { ApiSuccessResponse } from '../../../shared/response/apiResponse';
-import { CreateCvRequestDto } from '../application/dtos/cv.request.dto';
+import {
+  CreateCvRequestDto,
+  UpdateParsedDataRequestDto,
+} from '../application/dtos/cv.request.dto';
 import {
   CvResponseDto,
   CvSignedParamsResponseDto,
@@ -102,6 +106,50 @@ export class CvController {
     return result.match(
       (dto) =>
         new ApiSuccessResponse(HttpStatus.OK, dto, 'CV retrieved successfully'),
+      (error) => {
+        throw toHttpException(error);
+      },
+    );
+  }
+
+  // Reads the PDF and fills parsedData. A parse that fails still answers 200 with
+  // parseStatus FAILED; 404 = not your CV, 409 = already parsed or being parsed.
+  @Post(':id/parse')
+  @HttpCode(HttpStatus.OK)
+  @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
+  async parseCvAsync(
+    @User() user: JwtPayload,
+    @Param('id', ParseUUIDPipe) cvPublicId: string,
+  ): Promise<ApiSuccessResponse<CvResponseDto>> {
+    const result = await this.cvService.parseCvAsync(user.sub, cvPublicId);
+
+    return result.match(
+      (dto) =>
+        new ApiSuccessResponse(HttpStatus.OK, dto, 'CV parsed successfully'),
+      (error) => {
+        throw toHttpException(error);
+      },
+    );
+  }
+
+  // Manual correction of the parsed data: replaces the whole object.
+  @Patch(':id/parsed-data')
+  @HttpCode(HttpStatus.OK)
+  @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
+  async updateParsedDataAsync(
+    @User() user: JwtPayload,
+    @Param('id', ParseUUIDPipe) cvPublicId: string,
+    @Body() request: UpdateParsedDataRequestDto,
+  ): Promise<ApiSuccessResponse<CvResponseDto>> {
+    const result = await this.cvService.updateParsedDataAsync(
+      user.sub,
+      cvPublicId,
+      request,
+    );
+
+    return result.match(
+      (dto) =>
+        new ApiSuccessResponse(HttpStatus.OK, dto, 'Parsed data updated'),
       (error) => {
         throw toHttpException(error);
       },

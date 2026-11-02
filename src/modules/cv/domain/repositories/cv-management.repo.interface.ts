@@ -8,6 +8,11 @@ export class CvFileAlreadySavedError extends Error {
   }
 }
 
+export type StartParseOutcome =
+  | { status: 'started'; cv: Cv }
+  | { status: 'not_found' }
+  | { status: 'not_parsable' };
+
 // Repository used only inside the cv module (not exported).
 export abstract class ICvManagementRepository {
   // Internal user id for a JWT `sub`; null when the user no longer exists.
@@ -26,4 +31,18 @@ export abstract class ICvManagementRepository {
     userPublicId: string,
     cvPublicId: string,
   ): Promise<Result<Cv | null, Error>>;
+
+  // Atomically moves the CV to PROCESSING, so two requests can never parse it at once.
+  // Allowed from PENDING, FAILED, or PROCESSING older than staleBefore (a crashed parse).
+  abstract tryStartParse(
+    userPublicId: string,
+    cvPublicId: string,
+    staleBefore: Date,
+  ): Promise<Result<StartParseOutcome, Error>>;
+
+  // Stores status, rawText, parsedData and parserVersion of a finished parse.
+  abstract saveParseResult(cv: Cv): Promise<Result<Cv, Error>>;
+
+  // Stores only parsedData (manual edit).
+  abstract saveParsedData(cv: Cv): Promise<Result<Cv, Error>>;
 }

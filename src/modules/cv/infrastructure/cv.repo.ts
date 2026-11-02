@@ -7,11 +7,13 @@ import {
 import {
   CvFileAlreadySavedError,
   ICvManagementRepository,
+  StartParseOutcome,
 } from '../domain/repositories/cv-management.repo.interface';
 import { Cv } from '../domain/entities/cv.entity';
 import { CvParsedData } from '../domain/types/cv-parsed-data.type';
-import { PrismaService } from 'src/shared/infrastructure/database/prisma.service';
-import { ParseStatus } from 'generated/prisma/enums';
+import { PrismaService } from '../../../shared/infrastructure/database/prisma.service';
+import { Prisma } from '../../../../generated/prisma/client';
+import { ParseStatus } from '../../../../generated/prisma/enums';
 import { mapCvToDomain, mapParseStatusToPrisma } from './cv.mapper';
 
 @Injectable()
@@ -145,4 +147,82 @@ export class CvRepository implements ICvRepository, ICvManagementRepository {
       return err(new Error('Failed to load CV.'));
     }
   }
+
+  async tryStartParse(
+    userPublicId: string,
+    cvPublicId: string,
+    staleBefore: Date,
+  ): Promise<Result<StartParseOutcome, Error>> {
+    try {
+      const owner = {
+        publicId: cvPublicId,
+        user: { publicId: userPublicId },
+      };
+      // One UPDATE decides who wins: only a row still PENDING/FAILED (or a stale
+      // PROCESSING) matches, so a second request gets count 0.
+      const claimed = await this.prismaService.cv.updateMany({
+        where: {
+          ...owner,
+          OR: [
+            { parseStatus: { in: [ParseStatus.PENDING, ParseStatus.FAILED] } },
+            {
+              parseStatus: ParseStatus.PROCESSING,
+              updatedAt: { lt: staleBefore },
+            },
+          ],
+        },
+        data: { parseStatus: ParseStatus.PROCESSING },
+      });
+
+      const row = await this.prismaService.cv.findFirst({ where: owner });
+      if (!row) {
+        return ok({ status: 'not_found' });
+      }
+      if (claimed.count === 0) {
+        return ok({ status: 'not_parsable' });
+      }
+      return ok({ status: 'started', cv: mapCvToDomain(row) });
+    } catch (error) {
+      this.logger.error(`tryStartParse failed: ${error}`);
+      return err(new Error('Failed to start parsing.'));
+    }
+  }
+
+  async saveParseResult(cv: Cv): Promise<Result<Cv, Error>> {
+    try {
+      const row = await this.prismaService.cv.update({
+        where: { publicId: cv.publicId },
+        data: {
+          parseStatus: mapParseStatusToPrisma(cv.parseStatus),
+          rawText: cv.rawText,
+          parsedData: toJsonInput(cv.parsedData),
+          parserVersion: cv.parserVersion,
+        },
+      });
+      return ok(mapCvToDomain(row));
+    } catch (error) {
+      this.logger.error(`saveParseResult failed: ${error}`);
+      return err(new Error('Failed to save the parse result.'));
+    }
+  }
+
+  async saveParsedData(cv: Cv): Promise<Result<Cv, Error>> {
+    try {
+      const row = await this.prismaService.cv.update({
+        where: { publicId: cv.publicId },
+        data: { parsedData: toJsonInput(cv.parsedData) },
+      });
+      return ok(mapCvToDomain(row));
+    } catch (error) {
+      this.logger.error(`saveParsedData failed: ${error}`);
+      return err(new Error('Failed to save the parsed data.'));
+    }
+  }
+}
+
+// A JSONB column needs Prisma.DbNull to store SQL NULL; a plain null is rejected.
+function toJsonInput(
+  parsedData: CvParsedData | null,
+): Prisma.InputJsonValue | typeof Prisma.DbNull {
+  return parsedData === null ? Prisma.DbNull : parsedData;
 }
