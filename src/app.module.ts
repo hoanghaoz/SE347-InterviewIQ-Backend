@@ -14,6 +14,7 @@ import { LoggerMiddleware } from './shared/common/logger.middleware';
 import { ErrorCode } from './shared/common/errorCode';
 import { mapValidationErrors } from './shared/common/validation-error.mapper';
 import { PrismaModule } from './shared/infrastructure/database/prisma.module';
+import { InterviewHistoryModule } from './modules/interview-history/interview-history.module';
 import { InterviewModule } from './modules/interview/interview.module';
 import { CvModule } from './modules/cv/cv.module';
 import { RedisModule } from './shared/infrastructure/redis/redis.module';
@@ -31,6 +32,7 @@ import { QuestionGenerationModule } from './modules/question-generation/question
     PrismaModule,
     ConfigModule,
     InterviewModule,
+    InterviewHistoryModule,
     CvModule,
     RedisModule,
     AuthModule,
