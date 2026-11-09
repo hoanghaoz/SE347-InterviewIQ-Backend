@@ -7,3 +7,11 @@ export enum CommonSessionStatus {
   FAILED = 'FAILED',
   CANCELLED = 'CANCELLED',
 }
+
+// Giống enum Prisma `CheatEventType`; domain không import generated/prisma.
+export enum CommonCheatEventType {
+  TAB_SWITCH = 'TAB_SWITCH',
+  WINDOW_BLUR = 'WINDOW_BLUR',
+  FACE_MISSING = 'FACE_MISSING',
+  MULTIPLE_FACES = 'MULTIPLE_FACES',
+}
