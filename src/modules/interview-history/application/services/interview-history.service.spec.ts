@@ -1,6 +1,9 @@
 import { ok, err } from 'neverthrow';
 import { ErrorCode } from '../../../../shared/common/errorCode';
-import { CommonSessionStatus } from '../../../interview/domain/enums/interview-enum';
+import {
+  CommonCheatEventType,
+  CommonSessionStatus,
+} from '../../../interview/domain/enums/interview-enum';
 import { InterviewHistoryService } from './interview-history.service';
 
 describe('InterviewHistoryService', () => {
@@ -23,10 +26,23 @@ describe('InterviewHistoryService', () => {
     totalQuestions: 5,
     durationSeconds: 842,
     overallScore: 7.5,
+    cheatEventCount: 0,
     startedAt: new Date('2026-10-20T08:00:00.000Z'),
     completedAt: new Date('2026-10-20T08:14:02.000Z'),
     createdAt: new Date('2026-10-20T07:58:11.000Z'),
   };
+
+  const cheatLogData = (
+    cheatLogPublicId: string,
+    eventType: CommonCheatEventType,
+    occurredAt: string,
+  ) => ({
+    cheatLogPublicId,
+    eventType,
+    description: null,
+    occurredAt: new Date(occurredAt),
+    createdAt: new Date(occurredAt),
+  });
 
   const detailData = {
     sessionPublicId,
@@ -40,6 +56,7 @@ describe('InterviewHistoryService', () => {
     completedAt: new Date('2026-10-20T08:14:02.000Z'),
     createdAt: new Date('2026-10-20T07:58:11.000Z'),
     cv: { cvPublicId, fileName: 'nguyen-van-a-cv.pdf' },
+    cheatLogs: [] as ReturnType<typeof cheatLogData>[],
   };
 
   const query = { pageNumber: 1, pageSize: 20 };
@@ -68,11 +85,30 @@ describe('InterviewHistoryService', () => {
           totalQuestions: 5,
           durationSeconds: 842,
           overallScore: 7.5,
+          isFlagged: false,
+          cheatEventCount: 0,
           startedAt: '2026-10-20T08:00:00.000Z',
           completedAt: '2026-10-20T08:14:02.000Z',
           createdAt: '2026-10-20T07:58:11.000Z',
         },
       ]);
+    });
+
+    it('flags a session that has cheat events and exposes the count', async () => {
+      interviewHistoryRepo.getInterviewHistory.mockResolvedValue(
+        ok({ items: [{ ...itemData, cheatEventCount: 3 }], totalItems: 1 }),
+      );
+
+      const result = await service.getInterviewHistoryAsync(
+        userPublicId,
+        query,
+      );
+
+      if (result.isErr()) throw result.error;
+      expect(result.value.items[0]).toMatchObject({
+        isFlagged: true,
+        cheatEventCount: 3,
+      });
     });
 
     it('keeps a not-yet-scored session in the list with null score and null timestamps', async () => {
@@ -254,6 +290,74 @@ describe('InterviewHistoryService', () => {
         score: null,
         summary: null,
         questions: [],
+        isFlagged: false,
+        cheatSummary: {
+          totalCount: 0,
+          countsByType: {
+            TAB_SWITCH: 0,
+            WINDOW_BLUR: 0,
+            FACE_MISSING: 0,
+            MULTIPLE_FACES: 0,
+          },
+        },
+        cheatLogs: [],
+      });
+    });
+
+    it('flags the session and summarises its cheat logs by type', async () => {
+      const logId1 = '00000000-0000-4000-8000-0000000000a1';
+      const logId2 = '00000000-0000-4000-8000-0000000000a2';
+      const logId3 = '00000000-0000-4000-8000-0000000000a3';
+      interviewHistoryRepo.getInterviewDetail.mockResolvedValue(
+        ok({
+          ...detailData,
+          cheatLogs: [
+            cheatLogData(
+              logId1,
+              CommonCheatEventType.TAB_SWITCH,
+              '2026-10-20T08:01:00.000Z',
+            ),
+            cheatLogData(
+              logId2,
+              CommonCheatEventType.TAB_SWITCH,
+              '2026-10-20T08:02:00.000Z',
+            ),
+            cheatLogData(
+              logId3,
+              CommonCheatEventType.FACE_MISSING,
+              '2026-10-20T08:03:00.000Z',
+            ),
+          ],
+        }),
+      );
+
+      const result = await service.getInterviewAsync(
+        userPublicId,
+        sessionPublicId,
+      );
+
+      if (result.isErr()) throw result.error;
+      expect(result.value.isFlagged).toBe(true);
+      expect(result.value.cheatSummary).toEqual({
+        totalCount: 3,
+        countsByType: {
+          TAB_SWITCH: 2,
+          WINDOW_BLUR: 0,
+          FACE_MISSING: 1,
+          MULTIPLE_FACES: 0,
+        },
+      });
+      expect(result.value.cheatLogs.map((log) => log.id)).toEqual([
+        logId1,
+        logId2,
+        logId3,
+      ]);
+      expect(result.value.cheatLogs[0]).toEqual({
+        id: logId1,
+        eventType: 'TAB_SWITCH',
+        description: null,
+        occurredAt: '2026-10-20T08:01:00.000Z',
+        createdAt: '2026-10-20T08:01:00.000Z',
       });
     });
 

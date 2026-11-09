@@ -1,6 +1,9 @@
 import { Logger } from '@nestjs/common';
 import { PrismaService } from '../../../shared/infrastructure/database/prisma.service';
-import { CommonSessionStatus } from '../../interview/domain/enums/interview-enum';
+import {
+  CommonCheatEventType,
+  CommonSessionStatus,
+} from '../../interview/domain/enums/interview-enum';
 import { InterviewHistoryRepository } from './interview-history.repo';
 
 jest.mock('../../../shared/infrastructure/database/prisma.service', () => ({
@@ -19,6 +22,7 @@ describe('InterviewHistoryRepository', () => {
   const userPublicId = '00000000-0000-4000-8000-000000000001';
   const sessionPublicId = '00000000-0000-4000-8000-000000000003';
   const cvPublicId = '00000000-0000-4000-8000-000000000002';
+  const cheatLogPublicId = '00000000-0000-4000-8000-000000000004';
   const pagination = { pageNumber: 1, pageSize: 20 };
 
   // Pin đúng các cột được đọc: nếu ai thêm jobDescription hay cvSnapshot vào
@@ -33,6 +37,7 @@ describe('InterviewHistoryRepository', () => {
     completedAt: true,
     createdAt: true,
     score: { select: { overallScore: true } },
+    _count: { select: { cheatLogs: true } },
   };
 
   const DETAIL_SELECT = {
@@ -47,6 +52,16 @@ describe('InterviewHistoryRepository', () => {
     completedAt: true,
     createdAt: true,
     cv: { select: { publicId: true, fileName: true } },
+    cheatLogs: {
+      select: {
+        publicId: true,
+        eventType: true,
+        description: true,
+        occurredAt: true,
+        createdAt: true,
+      },
+      orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+    },
   };
 
   const ownerWhere = { user: { publicId: userPublicId } };
@@ -61,6 +76,7 @@ describe('InterviewHistoryRepository', () => {
     completedAt: new Date('2026-10-20T08:14:02.000Z'),
     createdAt: new Date('2026-10-20T07:58:11.000Z'),
     score: { overallScore: 7.5 },
+    _count: { cheatLogs: 2 },
   };
 
   beforeEach(() => {
@@ -190,10 +206,25 @@ describe('InterviewHistoryRepository', () => {
         totalQuestions: 5,
         durationSeconds: 842,
         overallScore: 7.5,
+        cheatEventCount: 2,
         startedAt: sessionRow.startedAt,
         completedAt: sessionRow.completedAt,
         createdAt: sessionRow.createdAt,
       });
+    });
+
+    it('reports a cheatEventCount of 0 for a clean session', async () => {
+      findMany.mockResolvedValue([{ ...sessionRow, _count: { cheatLogs: 0 } }]);
+      count.mockResolvedValue(1);
+
+      const result = await repository.getInterviewHistory(
+        userPublicId,
+        pagination,
+        {},
+      );
+
+      if (result.isErr()) throw result.error;
+      expect(result.value.items[0].cheatEventCount).toBe(0);
     });
 
     it('returns overallScore null when the session has not been scored', async () => {
@@ -240,6 +271,15 @@ describe('InterviewHistoryRepository', () => {
       completedAt: new Date('2026-10-20T08:14:02.000Z'),
       createdAt: new Date('2026-10-20T07:58:11.000Z'),
       cv: { publicId: cvPublicId, fileName: 'nguyen-van-a-cv.pdf' },
+      cheatLogs: [
+        {
+          publicId: cheatLogPublicId,
+          eventType: 'TAB_SWITCH',
+          description: 'Switched tab',
+          occurredAt: new Date('2026-10-20T08:05:00.000Z'),
+          createdAt: new Date('2026-10-20T08:05:01.000Z'),
+        },
+      ],
     };
 
     it('requires both the session id and the owner in the same query', async () => {
@@ -286,7 +326,28 @@ describe('InterviewHistoryRepository', () => {
         completedAt: detailRow.completedAt,
         createdAt: detailRow.createdAt,
         cv: { cvPublicId, fileName: 'nguyen-van-a-cv.pdf' },
+        cheatLogs: [
+          {
+            cheatLogPublicId,
+            eventType: CommonCheatEventType.TAB_SWITCH,
+            description: 'Switched tab',
+            occurredAt: new Date('2026-10-20T08:05:00.000Z'),
+            createdAt: new Date('2026-10-20T08:05:01.000Z'),
+          },
+        ],
       });
+    });
+
+    it('returns an empty cheatLogs array when the session has no violation', async () => {
+      findFirst.mockResolvedValue({ ...detailRow, cheatLogs: [] });
+
+      const result = await repository.getInterviewDetail(
+        userPublicId,
+        sessionPublicId,
+      );
+
+      if (result.isErr()) throw result.error;
+      expect(result.value?.cheatLogs).toEqual([]);
     });
 
     it('returns cv null when the CV was detached or deleted', async () => {
