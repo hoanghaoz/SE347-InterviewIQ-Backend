@@ -1,5 +1,6 @@
 import { err, ok } from 'neverthrow';
 import { ErrorCode } from '../../../../shared/common/errorCode';
+import { recordMetrics } from '../../../../shared/telemetry/metric-recorder.testing';
 import { Cv, type CvGetParams } from '../../domain/entities/cv.entity';
 import type { CvParsedData } from '../../domain/types/cv-parsed-data.type';
 import { ParseStatus } from '../../domain/enums/cv.enum';
@@ -401,6 +402,73 @@ describe('CvService', () => {
 
       expect(result._unsafeUnwrapErr().code).toBe(
         ErrorCode.InternalServerError,
+      );
+    });
+
+    describe('telemetry', () => {
+      let recorded: ReturnType<typeof recordMetrics>;
+
+      beforeEach(() => {
+        recorded = recordMetrics();
+      });
+
+      afterEach(() => {
+        recorded.stop();
+      });
+
+      it('counts a parsed CV and times every pipeline step', async () => {
+        happyPath();
+
+        await service.parseCvAsync(userPublicId, cvId);
+
+        expect(recorded.named('cv.parse.outcome')[0].attributes).toEqual({
+          outcome: 'parsed',
+          step: 'none',
+        });
+        expect(
+          recorded
+            .named('cv.parse.duration')
+            .map((metric) => [
+              metric.attributes.step,
+              metric.attributes.outcome,
+            ]),
+        ).toEqual([
+          ['download', 'ok'],
+          ['extract', 'ok'],
+          ['parse', 'ok'],
+          ['save', 'ok'],
+        ]);
+      });
+
+      it.each([
+        ['download', () => storage.downloadFile.mockResolvedValue(ok(null))],
+        [
+          'extract',
+          () =>
+            extractor.extractTextAsync.mockResolvedValue(err(new Error('x'))),
+        ],
+        [
+          'text',
+          () => extractor.extractTextAsync.mockResolvedValue(ok('  12  ')),
+        ],
+        [
+          'parse',
+          () => parser.parseAsync.mockResolvedValue(err(new Error('x'))),
+        ],
+      ])(
+        'counts a failure at the %s step even though the request succeeds',
+        async (step, breakStep) => {
+          happyPath();
+          breakStep();
+
+          const result = await service.parseCvAsync(userPublicId, cvId);
+
+          expect(result.isOk()).toBe(true);
+          expect(recorded.named('cv.parse.outcome')[0].attributes).toEqual({
+            outcome: 'failed',
+            step,
+          });
+        },
       );
     });
   });

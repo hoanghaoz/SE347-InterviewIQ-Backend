@@ -1,7 +1,13 @@
 import { randomUUID } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
+import { Span } from '@opentelemetry/api';
 import { err, ok, type Result } from 'neverthrow';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
+import { instruments, startTimer } from '../../../../shared/telemetry/metrics';
+import {
+  markSpanError,
+  withResultSpan,
+} from '../../../../shared/telemetry/telemetry';
 import { Cv } from '../../domain/entities/cv.entity';
 import {
   MIN_CV_TEXT_LENGTH,
@@ -35,6 +41,7 @@ function userFilePrefix(userPublicId: string): string {
 const PARSE_STALE_AFTER_MS = 3 * 60 * 1000;
 
 type ParseStep = 'download' | 'extract' | 'text' | 'parse';
+type TimedStep = ParseStep | 'save';
 type ParseFailure = { step: ParseStep; message: string };
 type ParseSuccess = Parameters<Cv['completeParsing']>[0];
 
@@ -174,9 +181,19 @@ export class CvService implements ICvService {
     return ok(toCvResponse(result.value));
   }
 
-  async parseCvAsync(
+  parseCvAsync(
     userPublicId: string,
     cvPublicId: string,
+  ): Promise<Result<CvResponseDto, AppError>> {
+    return withResultSpan('cv.parse', { 'cv.id': cvPublicId }, (span) =>
+      this.parseCvInternalAsync(userPublicId, cvPublicId, span),
+    );
+  }
+
+  private async parseCvInternalAsync(
+    userPublicId: string,
+    cvPublicId: string,
+    span: Span,
   ): Promise<Result<CvResponseDto, AppError>> {
     const started = await this.cvRepo.tryStartParse(
       userPublicId,
@@ -202,7 +219,20 @@ export class CvService implements ICvService {
 
     const cv = started.value.cv;
     const outcome = await this.runParsePipelineAsync(cv);
+    // The HTTP call succeeds even when the parse fails, so surface it here.
+    span.setAttribute('cv.parse.outcome', outcome.isOk() ? 'parsed' : 'failed');
+    instruments().cvParseOutcome.add(1, {
+      outcome: outcome.isOk() ? 'parsed' : 'failed',
+      step: outcome.isOk() ? 'none' : outcome.error.step,
+    });
     if (outcome.isErr()) {
+      span.setAttribute('cv.parse.failed_step', outcome.error.step);
+      markSpanError(
+        span,
+        Object.assign(new Error(outcome.error.message), {
+          code: `CV_PARSE_${outcome.error.step.toUpperCase()}_FAILED`,
+        }),
+      );
       this.logger.warn(
         `Parsing CV ${cvPublicId} failed at step "${outcome.error.step}": ${outcome.error.message}`,
       );
@@ -211,7 +241,9 @@ export class CvService implements ICvService {
     const finished = outcome.isOk()
       ? cv.completeParsing(outcome.value)
       : cv.failParsing();
-    const saved = await this.cvRepo.saveParseResult(finished);
+    const saved = await this.timedStepAsync('save', () =>
+      this.cvRepo.saveParseResult(finished),
+    );
     if (saved.isErr()) {
       return err(
         new AppError(
@@ -261,11 +293,29 @@ export class CvService implements ICvService {
     return ok(toCvResponse(saved.value));
   }
 
+  /** Runs one pipeline step as a child span and records its duration. */
+  private async timedStepAsync<T, E>(
+    step: TimedStep,
+    fn: () => Promise<Result<T, E>>,
+  ): Promise<Result<T, E>> {
+    const elapsedSeconds = startTimer();
+    let outcome = 'error';
+    try {
+      const result = await withResultSpan(`cv.parse.${step}`, {}, fn);
+      outcome = result.isOk() ? 'ok' : 'error';
+      return result;
+    } finally {
+      instruments().cvParseDuration.record(elapsedSeconds(), { step, outcome });
+    }
+  }
+
   private async runParsePipelineAsync(
     cv: Cv,
   ): Promise<Result<ParseSuccess, ParseFailure>> {
     try {
-      const file = await this.fileStorage.downloadFile(cv.cloudinaryPublicId);
+      const file = await this.timedStepAsync('download', () =>
+        this.fileStorage.downloadFile(cv.cloudinaryPublicId),
+      );
       if (file.isErr()) {
         return err({ step: 'download', message: file.error.message });
       }
@@ -273,7 +323,10 @@ export class CvService implements ICvService {
         return err({ step: 'download', message: 'File not found in storage' });
       }
 
-      const extracted = await this.textExtractor.extractTextAsync(file.value);
+      const fileBuffer = file.value;
+      const extracted = await this.timedStepAsync('extract', () =>
+        this.textExtractor.extractTextAsync(fileBuffer),
+      );
       if (extracted.isErr()) {
         return err({ step: 'extract', message: extracted.error.message });
       }
@@ -286,7 +339,9 @@ export class CvService implements ICvService {
         });
       }
 
-      const parsed = await this.cvParser.parseAsync(rawText);
+      const parsed = await this.timedStepAsync('parse', () =>
+        this.cvParser.parseAsync(rawText),
+      );
       if (parsed.isErr()) {
         return err({ step: 'parse', message: parsed.error.message });
       }
