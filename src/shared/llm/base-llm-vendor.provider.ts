@@ -1,6 +1,8 @@
 import type { Logger } from '@nestjs/common';
 import { err, ok, Result } from 'neverthrow';
 import { AppError, ErrorCode } from '../common/errorCode';
+import { instruments, startTimer } from '../telemetry/metrics';
+import { withResultSpan } from '../telemetry/telemetry';
 import {
   describeLlmError,
   LLM_UNAVAILABLE_MESSAGE,
@@ -68,7 +70,11 @@ export abstract class BaseLlmVendorProvider implements ILlmProvider {
     const { schema, ...textRequest } = request;
 
     for (let attempt = 1; attempt <= MAX_JSON_ATTEMPTS; attempt++) {
-      const completion = await this.tryCompleteAsync(textRequest, schema);
+      const completion = await this.tryCompleteAsync(
+        textRequest,
+        schema,
+        attempt,
+      );
 
       if (completion.isErr()) {
         return err(completion.error);
@@ -85,6 +91,11 @@ export abstract class BaseLlmVendorProvider implements ILlmProvider {
       this.logger.warn(
         `${this.providerName} returned invalid JSON (attempt ${attempt}/${MAX_JSON_ATTEMPTS})`,
       );
+      instruments().llmJsonRetry.add(1, {
+        provider: this.providerName,
+        purpose: request.purpose ?? 'unknown',
+        final: attempt === MAX_JSON_ATTEMPTS,
+      });
     }
 
     return err(
@@ -95,7 +106,66 @@ export abstract class BaseLlmVendorProvider implements ILlmProvider {
     );
   }
 
-  private async tryCompleteAsync(
+  /** One vendor attempt, traced as `llm.generate` and recorded in `llm.request.duration`. */
+  private tryCompleteAsync(
+    request: LlmTextRequest,
+    jsonSchema?: Record<string, unknown>,
+    jsonAttempt?: number,
+  ): Promise<Result<LlmRawCompletion, AppError>> {
+    const purpose = request.purpose ?? 'unknown';
+    const labels = {
+      provider: this.providerName,
+      model: this.model,
+      purpose,
+    };
+
+    return withResultSpan(
+      'llm.generate',
+      {
+        'gen_ai.system': this.providerName,
+        'gen_ai.request.model': this.model,
+        'llm.purpose': purpose,
+        ...(jsonAttempt === undefined
+          ? {}
+          : { 'llm.json_attempt': jsonAttempt }),
+      },
+      async (span) => {
+        const elapsedSeconds = startTimer();
+        const result = await this.completeSafelyAsync(request, jsonSchema);
+
+        if (result.isOk()) {
+          const { usage } = result.value;
+          if (usage?.inputTokens !== undefined) {
+            span.setAttribute('gen_ai.usage.input_tokens', usage.inputTokens);
+            instruments().llmTokens.add(usage.inputTokens, {
+              ...labels,
+              direction: 'input',
+            });
+          }
+          if (usage?.outputTokens !== undefined) {
+            span.setAttribute('gen_ai.usage.output_tokens', usage.outputTokens);
+            instruments().llmTokens.add(usage.outputTokens, {
+              ...labels,
+              direction: 'output',
+            });
+          }
+          instruments().llmRequestDuration.record(elapsedSeconds(), {
+            ...labels,
+            outcome: 'ok',
+          });
+        } else {
+          instruments().llmRequestDuration.record(elapsedSeconds(), {
+            ...labels,
+            outcome: 'error',
+            error_code: result.error.code,
+          });
+        }
+        return result;
+      },
+    );
+  }
+
+  private async completeSafelyAsync(
     request: LlmTextRequest,
     jsonSchema?: Record<string, unknown>,
   ): Promise<Result<LlmRawCompletion, AppError>> {

@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { err, ok } from 'neverthrow';
 import { AppError, ErrorCode } from '../common/errorCode';
+import { recordMetrics } from '../telemetry/metric-recorder.testing';
 import { FallbackLlmProvider } from './fallback-llm.provider';
 import { LLM_UNAVAILABLE_MESSAGE } from './llm-error.mapper';
 import type {
@@ -103,5 +104,51 @@ describe('FallbackLlmProvider', () => {
     });
 
     expect(result._unsafeUnwrap().data).toEqual({ a: 1 });
+  });
+
+  describe('telemetry', () => {
+    let recorded: ReturnType<typeof recordMetrics>;
+
+    beforeEach(() => {
+      recorded = recordMetrics();
+    });
+
+    afterEach(() => {
+      recorded.stop();
+    });
+
+    it('counts a fallback, and both-failed only when the secondary fails too', async () => {
+      primary.generateText.mockResolvedValue(
+        err(new AppError(ErrorCode.TooManyRequests, 'rate')),
+      );
+      secondary.generateText.mockResolvedValueOnce(ok(textResult('groq')));
+
+      await fallback.generateText({ prompt: 'hi' });
+
+      expect(recorded.named('llm.fallback.triggered')).toHaveLength(1);
+      expect(recorded.named('llm.fallback.triggered')[0].attributes).toEqual({
+        primary_error_code: ErrorCode.TooManyRequests,
+      });
+      expect(recorded.named('llm.fallback.both_failed')).toHaveLength(0);
+
+      secondary.generateText.mockResolvedValueOnce(
+        err(new AppError(ErrorCode.InternalServerError, 'down')),
+      );
+
+      await fallback.generateText({ prompt: 'hi' });
+
+      expect(recorded.named('llm.fallback.both_failed')[0].attributes).toEqual({
+        primary_error_code: ErrorCode.TooManyRequests,
+        secondary_error_code: ErrorCode.InternalServerError,
+      });
+    });
+
+    it('does not count a fallback when the primary succeeds', async () => {
+      primary.generateText.mockResolvedValue(ok(textResult('gemini')));
+
+      await fallback.generateText({ prompt: 'hi' });
+
+      expect(recorded.named('llm.fallback.triggered')).toHaveLength(0);
+    });
   });
 });

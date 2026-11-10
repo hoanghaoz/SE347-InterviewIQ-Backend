@@ -55,7 +55,7 @@ function createInstruments() {
     ),
     llmJsonRetry: counter(
       'llm.json.retry',
-      'LLM returned invalid JSON and the call was retried',
+      'LLM returned invalid JSON (final=true when no retry is left)',
     ),
 
     // Scoring

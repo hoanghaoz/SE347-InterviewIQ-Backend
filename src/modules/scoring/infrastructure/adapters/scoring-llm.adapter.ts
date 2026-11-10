@@ -145,6 +145,7 @@ export class ScoringLlmAdapter implements IScoringLlmProvider {
         prompt: userPrompt,
         schema: SCORING_RUBRIC_SCHEMA,
         temperature: 0.2,
+        purpose: 'scoring',
       });
 
     if (llmResult.isErr()) {

@@ -10,6 +10,8 @@ export interface LlmTextRequest {
   systemPrompt?: string;
   temperature?: number;
   maxOutputTokens?: number;
+  /** Business reason for the call (e.g. `cv_parse`); used only as a telemetry label. */
+  purpose?: string;
 }
 
 export interface LlmJsonRequest extends LlmTextRequest {

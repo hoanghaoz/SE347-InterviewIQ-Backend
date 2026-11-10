@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { ErrorCode } from '../common/errorCode';
+import { recordMetrics } from '../telemetry/metric-recorder.testing';
 import { BaseLlmVendorProvider } from './base-llm-vendor.provider';
 import { LLM_UNAVAILABLE_MESSAGE } from './llm-error.mapper';
 import type {
@@ -176,6 +177,79 @@ describe('BaseLlmVendorProvider', () => {
 
       expect(result.isErr()).toBe(true);
       expect(provider.completeMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('telemetry', () => {
+    let recorded: ReturnType<typeof recordMetrics>;
+
+    beforeEach(() => {
+      recorded = recordMetrics();
+    });
+
+    afterEach(() => {
+      recorded.stop();
+    });
+
+    it('records latency and token usage labelled with the call purpose', async () => {
+      provider.completeMock.mockResolvedValue({
+        text: 'hello',
+        usage: { inputTokens: 10, outputTokens: 4 },
+      });
+
+      await provider.generateText({ prompt: 'hi', purpose: 'scoring' });
+
+      expect(recorded.named('llm.request.duration')).toEqual([
+        {
+          name: 'llm.request.duration',
+          value: expect.any(Number) as number,
+          attributes: {
+            provider: 'gemini',
+            model: 'fake-model',
+            purpose: 'scoring',
+            outcome: 'ok',
+          },
+        },
+      ]);
+      expect(
+        recorded
+          .named('llm.tokens')
+          .map((m) => [m.value, m.attributes.direction]),
+      ).toEqual([
+        [10, 'input'],
+        [4, 'output'],
+      ]);
+    });
+
+    it('records the error code when the vendor call fails', async () => {
+      provider.completeMock.mockRejectedValue({ status: 429 });
+
+      await provider.generateText({ prompt: 'hi' });
+
+      expect(recorded.named('llm.request.duration')[0].attributes).toEqual(
+        expect.objectContaining({
+          purpose: 'unknown',
+          outcome: 'error',
+          error_code: ErrorCode.TooManyRequests,
+        }),
+      );
+    });
+
+    it('counts invalid JSON responses and flags the last one as final', async () => {
+      provider.completeMock.mockResolvedValue({ text: 'not json' });
+
+      await provider.generateJson({
+        prompt: 'hi',
+        schema: {},
+        purpose: 'cv_parse',
+      });
+
+      expect(recorded.named('llm.json.retry').map((m) => m.attributes)).toEqual(
+        [
+          { provider: 'gemini', purpose: 'cv_parse', final: false },
+          { provider: 'gemini', purpose: 'cv_parse', final: true },
+        ],
+      );
     });
   });
 });

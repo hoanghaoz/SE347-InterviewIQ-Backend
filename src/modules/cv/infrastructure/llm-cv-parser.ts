@@ -105,6 +105,7 @@ export class LlmCvParser implements ICvParser {
       schema: CV_PARSED_DATA_SCHEMA,
       temperature: 0,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
+      purpose: 'cv_parse',
     });
     if (llmResult.isErr()) {
       return err(new Error(llmResult.error.message));

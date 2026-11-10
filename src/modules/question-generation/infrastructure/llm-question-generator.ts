@@ -76,6 +76,7 @@ export class LlmQuestionGenerator implements IQuestionGenerator {
         schema,
         temperature: TEMPERATURE,
         maxOutputTokens: MAX_OUTPUT_TOKENS,
+        purpose: 'question_generation',
       });
       if (response.isErr()) {
         this.logger.warn(`LLM call failed: ${response.error.message}`);
