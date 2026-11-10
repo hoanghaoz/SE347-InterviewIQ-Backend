@@ -7,6 +7,7 @@ import {
   ScoringJobInfo,
 } from '../../application/interfaces/scoring.queue.interface';
 import { ScoringJobStatus } from '../../domain/enums/scoring-enum';
+import { injectTraceContext } from '../../../../shared/telemetry/telemetry';
 import { PG_BOSS_TOKEN } from './pg-boss.provider';
 
 export const SCORING_QUEUE_NAME = 'scoring-jobs';
@@ -39,7 +40,11 @@ export class ScoringQueueService implements IScoringQueue {
   }
 
   async enqueue(data: ScoringJobData): Promise<string | null> {
-    return this.boss.send(SCORING_QUEUE_NAME, data, {
+    const payload: ScoringJobData = {
+      ...data,
+      traceContext: data.traceContext ?? injectTraceContext(),
+    };
+    return this.boss.send(SCORING_QUEUE_NAME, payload, {
       singletonKey: data.sessionId,
       retryLimit: this.retryLimit,
       retryDelay: this.retryDelay,

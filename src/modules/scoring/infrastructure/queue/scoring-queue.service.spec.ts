@@ -5,7 +5,13 @@ jest.mock('pg-boss', () => ({
 }));
 
 import { ConfigService } from '@nestjs/config';
+import { context, propagation, trace } from '@opentelemetry/api';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import type { PgBoss } from 'pg-boss';
+import {
+  activeTraceIds,
+  withSpan,
+} from '../../../../shared/telemetry/telemetry';
 import { ScoringJobData } from '../../application/dtos/scoring.request.dto';
 import { ScoringJobStatus } from '../../domain/enums/scoring-enum';
 import {
@@ -43,7 +49,7 @@ describe('ScoringQueueService', () => {
       expect(jobId).toBe('job-123');
       expect(mockBoss.send).toHaveBeenCalledWith(
         SCORING_QUEUE_NAME,
-        mockJobData,
+        { ...mockJobData, traceContext: {} },
         {
           singletonKey: mockJobData.sessionId,
           retryLimit: 3,
@@ -75,7 +81,7 @@ describe('ScoringQueueService', () => {
       expect(jobId).toBe('job-custom');
       expect(mockBoss.send).toHaveBeenCalledWith(
         SCORING_QUEUE_NAME,
-        mockJobData,
+        { ...mockJobData, traceContext: {} },
         {
           singletonKey: mockJobData.sessionId,
           retryLimit: 5,
@@ -84,6 +90,34 @@ describe('ScoringQueueService', () => {
           expireInSeconds: 600,
         },
       );
+    });
+  });
+
+  describe('enqueue trace propagation', () => {
+    const provider = new NodeTracerProvider();
+
+    beforeAll(() => provider.register());
+    afterAll(async () => {
+      await provider.shutdown();
+      trace.disable();
+      context.disable();
+      propagation.disable();
+    });
+
+    it('stores the active trace context in the job payload', async () => {
+      mockBoss.send.mockResolvedValue('job-traced');
+      const service = new ScoringQueueService(mockBoss as unknown as PgBoss);
+
+      let traceId = '';
+      await withSpan('unit.enqueue', {}, async () => {
+        traceId = activeTraceIds()!.traceId;
+        await service.enqueue(mockJobData);
+      });
+
+      const payload = (
+        mockBoss.send.mock.calls as unknown[][]
+      )[0][1] as ScoringJobData;
+      expect(payload.traceContext?.traceparent).toContain(traceId);
     });
   });
 

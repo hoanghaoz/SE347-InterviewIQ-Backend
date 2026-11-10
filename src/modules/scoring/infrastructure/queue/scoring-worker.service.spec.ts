@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { ok, err } from 'neverthrow';
 import { SessionStatus } from '../../../../../generated/prisma/enums';
 import type { Job, PgBoss } from 'pg-boss';
+import { recordMetrics } from '../../../../shared/telemetry/metric-recorder.testing';
 import { ScoringJobData } from '../../application/dtos/scoring.request.dto';
 import {
   IScoringLlmProvider,
@@ -485,6 +486,108 @@ describe('ScoringWorkerService', () => {
         mockContext.id,
         'Permanent failure',
       );
+    });
+
+    describe('telemetry', () => {
+      let recorded: ReturnType<typeof recordMetrics>;
+
+      beforeEach(() => {
+        recorded = recordMetrics();
+      });
+
+      afterEach(() => {
+        recorded.stop();
+      });
+
+      it('counts a completed job and records duration and queue wait', async () => {
+        findSessionForScoringMock.mockResolvedValue(ok(mockContext));
+        updateSessionStatusMock.mockResolvedValue(ok(undefined));
+        saveScoringResultMock.mockResolvedValue(ok(undefined));
+
+        await workerService.handleJob(mockJob);
+
+        expect(recorded.named('scoring.jobs.completed')).toHaveLength(1);
+        expect(recorded.named('scoring.queue.wait_time')).toHaveLength(1);
+        expect(recorded.named('scoring.job.duration')[0].attributes).toEqual({
+          outcome: 'completed',
+        });
+        expect(recorded.named('scoring.jobs.failed')).toHaveLength(0);
+      });
+
+      it('does not record queue wait again on a retry', async () => {
+        const retryJob = {
+          ...mockJob,
+          retrycount: 1,
+          retrylimit: 3,
+        } as unknown as Job<ScoringJobData>;
+        findSessionForScoringMock.mockResolvedValue(ok(null));
+
+        await workerService.handleJob(retryJob);
+
+        expect(recorded.named('scoring.queue.wait_time')).toHaveLength(0);
+      });
+
+      it('flags a job whose session is gone', async () => {
+        findSessionForScoringMock.mockResolvedValue(ok(null));
+
+        await workerService.handleJob(mockJob);
+
+        expect(recorded.named('scoring.jobs.session_missing')).toHaveLength(1);
+        expect(recorded.named('scoring.jobs.completed')).toHaveLength(0);
+        expect(recorded.named('scoring.job.duration')[0].attributes).toEqual({
+          outcome: 'session_missing',
+        });
+      });
+
+      it('marks a transient failure as not final', async () => {
+        const firstAttemptJob = {
+          ...mockJob,
+          retrycount: 0,
+          retrylimit: 3,
+        } as unknown as Job<ScoringJobData>;
+        findSessionForScoringMock.mockResolvedValue(ok(mockContext));
+        updateSessionStatusMock.mockResolvedValue(ok(undefined));
+        saveScoringResultMock.mockResolvedValue(err(new Error('timeout')));
+
+        await expect(
+          workerService.handleJob(firstAttemptJob),
+        ).rejects.toThrow();
+
+        expect(recorded.named('scoring.jobs.failed')[0].attributes).toEqual({
+          final: false,
+          error_code: 'Error',
+        });
+        expect(recorded.named('scoring.sessions.marked_failed')).toHaveLength(
+          0,
+        );
+        expect(recorded.named('scoring.job.duration')[0].attributes).toEqual({
+          outcome: 'failed',
+        });
+      });
+
+      it('marks the last attempt as final and counts the failed session', async () => {
+        const finalAttemptJob = {
+          ...mockJob,
+          retrycount: 2,
+          retrylimit: 3,
+        } as unknown as Job<ScoringJobData>;
+        findSessionForScoringMock.mockResolvedValue(ok(mockContext));
+        updateSessionStatusMock.mockResolvedValue(ok(undefined));
+        saveScoringResultMock.mockResolvedValue(err(new Error('fatal')));
+        markSessionFailedMock.mockResolvedValue(ok(undefined));
+
+        await expect(
+          workerService.handleJob(finalAttemptJob),
+        ).rejects.toThrow();
+
+        expect(recorded.named('scoring.jobs.failed')[0].attributes).toEqual({
+          final: true,
+          error_code: 'Error',
+        });
+        expect(recorded.named('scoring.sessions.marked_failed')).toHaveLength(
+          1,
+        );
+      });
     });
   });
 });
