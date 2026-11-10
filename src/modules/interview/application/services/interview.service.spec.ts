@@ -1,4 +1,5 @@
 import { err, ok } from 'neverthrow';
+import { recordMetrics } from '../../../../shared/telemetry/metric-recorder.testing';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
 import {
   ICvRepository,
@@ -16,6 +17,16 @@ import {
 } from '../../domain/errors/interview-domain.error';
 
 describe('InterviewService', () => {
+  let recorded: ReturnType<typeof recordMetrics>;
+
+  beforeEach(() => {
+    recorded = recordMetrics();
+  });
+
+  afterEach(() => {
+    recorded.stop();
+  });
+
   const authorizeUserCv = jest.fn<
     ReturnType<ICvRepository['authorizeUserCv']>,
     Parameters<ICvRepository['authorizeUserCv']>
@@ -93,6 +104,18 @@ describe('InterviewService', () => {
     expect(interview.userId).toBe(1);
     expect(interview.cvId).toBe(2);
     expect(interview.jobDescription).toBeNull();
+  });
+
+  it('counts a created session', async () => {
+    authorizeUserCv.mockResolvedValue(ok(authorizedCv));
+    createInterviewSession.mockResolvedValue(ok('session-public-id'));
+
+    await service.createInterviewSessionAsync('user-public-id', {
+      cvPublicId,
+      title: 'Backend interview',
+    });
+
+    expect(recorded.named('interview.session.created')).toHaveLength(1);
   });
 
   it('maps domain validation errors to a specific bad request', async () => {
@@ -236,6 +259,14 @@ describe('InterviewService', () => {
       expect(startInterviewSession).toHaveBeenCalledWith(1, 3, startedAt);
       expect(authorizeUserCv).not.toHaveBeenCalled();
       expect(enqueueAsync).not.toHaveBeenCalled();
+    });
+
+    it('counts a started session only when the start succeeds', async () => {
+      await start();
+      startInterviewSession.mockResolvedValue(err(new Error('db')));
+      await start();
+
+      expect(recorded.named('interview.session.started')).toHaveLength(1);
     });
 
     it('returns 404 for a missing session or another owner', async () => {
@@ -483,6 +514,32 @@ describe('InterviewService', () => {
         expect(submitInterviewSession).toHaveBeenCalledTimes(1);
       },
     );
+
+    it('counts a submitted session without an enqueue failure on success', async () => {
+      await submit();
+
+      expect(recorded.named('interview.session.submitted')).toHaveLength(1);
+      expect(recorded.named('interview.submit.enqueue_failed')).toHaveLength(0);
+    });
+
+    it('flags a session that was submitted but could not be enqueued', async () => {
+      enqueueAsync.mockResolvedValueOnce(
+        err(new AppError(ErrorCode.Conflict, 'already queued')),
+      );
+      await submit();
+      enqueueAsync.mockRejectedValueOnce(new Error('queue down'));
+      await submit();
+
+      expect(recorded.named('interview.session.submitted')).toHaveLength(2);
+      expect(
+        recorded
+          .named('interview.submit.enqueue_failed')
+          .map((m) => m.attributes),
+      ).toEqual([
+        { error_code: ErrorCode.Conflict },
+        { error_code: ErrorCode.InternalServerError },
+      ]);
+    });
 
     it('sanitizes unexpected queue exceptions and permits another submission attempt', async () => {
       enqueueAsync.mockRejectedValueOnce(new Error('queue credentials'));

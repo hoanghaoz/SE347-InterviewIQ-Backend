@@ -1,4 +1,5 @@
 import { err, ok } from 'neverthrow';
+import { recordMetrics } from '../../../../shared/telemetry/metric-recorder.testing';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
 import { CommonSessionStatus } from '../../domain/enums/interview-enum';
 import {
@@ -10,6 +11,16 @@ import { IInterviewVideoStorage } from '../interfaces/interview-video-storage.in
 import { InterviewAnswerService } from './interview-answer.service';
 
 describe('InterviewAnswerService', () => {
+  let recorded: ReturnType<typeof recordMetrics>;
+
+  beforeEach(() => {
+    recorded = recordMetrics();
+  });
+
+  afterEach(() => {
+    recorded.stop();
+  });
+
   const getQuestionForUser = jest.fn<
     ReturnType<IInterviewAnswerRepository['getQuestionForUser']>,
     Parameters<IInterviewAnswerRepository['getQuestionForUser']>
@@ -254,6 +265,22 @@ describe('InterviewAnswerService', () => {
       expect(result.value).not.toHaveProperty('questionId');
     },
   );
+
+  it('labels each answer save by outcome', async () => {
+    await save();
+    getVideo.mockResolvedValueOnce(ok(null));
+    await save();
+    getVideo.mockResolvedValueOnce(err(new Error('cloudinary')));
+    await save();
+    saveAnswer.mockResolvedValueOnce(err(new InterviewAnswerConflictError()));
+    await save();
+    getQuestionForUser.mockResolvedValueOnce(ok(null));
+    await save();
+
+    expect(
+      recorded.named('interview.answer.saved').map((m) => m.attributes.outcome),
+    ).toEqual(['saved', 'rejected', 'error', 'conflict', 'not_found']);
+  });
 
   it.each([
     [new InterviewAnswerConflictError(), ErrorCode.Conflict],

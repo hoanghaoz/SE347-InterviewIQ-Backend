@@ -1,5 +1,6 @@
 import type { ConfigService } from '@nestjs/config';
 import { err, ok } from 'neverthrow';
+import { recordMetrics } from '../../../shared/telemetry/metric-recorder.testing';
 import { AppError, ErrorCode } from '../../../shared/common/errorCode';
 import type { ILlmProvider } from '../../../shared/llm/llm.provider';
 import type { QuestionGenerationInput } from '../application/interfaces/question-generator.interface';
@@ -44,7 +45,10 @@ describe('LlmQuestionGenerator', () => {
   let generateJson: jest.Mock;
   let generator: LlmQuestionGenerator;
 
+  let recorded: ReturnType<typeof recordMetrics>;
+
   beforeEach(() => {
+    recorded = recordMetrics();
     generateJson = jest.fn();
     generator = new LlmQuestionGenerator(
       { generateJson } as unknown as ILlmProvider,
@@ -54,6 +58,7 @@ describe('LlmQuestionGenerator', () => {
 
   afterEach(() => {
     jest.useRealTimers();
+    recorded.stop();
   });
 
   it('returns the validated questions with order indexes', async () => {
@@ -106,6 +111,35 @@ describe('LlmQuestionGenerator', () => {
     expect(error.message).toBe(GENERATION_FAILED_MESSAGE);
   });
 
+  it('times the generation and counts a regeneration after invalid output', async () => {
+    generateJson
+      .mockResolvedValueOnce(llmResult({ questions: [] }))
+      .mockResolvedValueOnce(llmResult(validOutput));
+
+    await generator.generateAsync(input);
+
+    expect(
+      recorded.named('question_generation.duration').map((m) => m.attributes),
+    ).toEqual([{ outcome: 'ok' }]);
+    expect(
+      recorded
+        .named('question_generation.validation_retry')
+        .map((m) => m.attributes),
+    ).toEqual([{ final: false }]);
+  });
+
+  it('labels the duration as error when generation fails', async () => {
+    generateJson.mockResolvedValue(
+      err(new AppError(ErrorCode.InternalServerError, 'down')),
+    );
+
+    await generator.generateAsync(input);
+
+    expect(
+      recorded.named('question_generation.duration')[0].attributes,
+    ).toEqual({ outcome: 'error' });
+  });
+
   it('does not retry when the LLM call fails and hides its message', async () => {
     generateJson.mockResolvedValue(
       err(new AppError(ErrorCode.TooManyRequests, 'quota exceeded for key x')),
@@ -127,6 +161,7 @@ describe('LlmQuestionGenerator', () => {
 
     const error = (await pending)._unsafeUnwrapErr();
     expect(error.message).toBe(GENERATION_FAILED_MESSAGE);
+    expect(recorded.named('question_generation.timeout')).toHaveLength(1);
   });
 });
 

@@ -3,6 +3,8 @@ import { Injectable } from '@nestjs/common';
 import { isUUID } from 'class-validator';
 import { err, ok, type Result } from 'neverthrow';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
+import { instruments } from '../../../../shared/telemetry/metrics';
+import { withResultSpan } from '../../../../shared/telemetry/telemetry';
 import {
   INTERVIEW_VIDEO_FORMATS,
   MAX_INTERVIEW_VIDEO_BYTES,
@@ -84,7 +86,31 @@ export class InterviewAnswerService implements IInterviewAnswerService {
     return ok(signed.value);
   }
 
-  async saveAnswerAsync(
+  saveAnswerAsync(
+    userPublicId: string,
+    sessionPublicId: string,
+    questionPublicId: string,
+    request: SaveInterviewAnswerRequestDto,
+  ): Promise<Result<InterviewAnswerResponseDto, AppError>> {
+    return withResultSpan(
+      'interview.answer.save',
+      { 'session.id': sessionPublicId, 'question.id': questionPublicId },
+      async () => {
+        const result = await this.saveAnswerInternalAsync(
+          userPublicId,
+          sessionPublicId,
+          questionPublicId,
+          request,
+        );
+        instruments().interviewAnswerSaved.add(1, {
+          outcome: result.isOk() ? 'saved' : answerOutcome(result.error),
+        });
+        return result;
+      },
+    );
+  }
+
+  private async saveAnswerInternalAsync(
     userPublicId: string,
     sessionPublicId: string,
     questionPublicId: string,
@@ -189,5 +215,18 @@ export class InterviewAnswerService implements IInterviewAnswerService {
       );
     }
     return ok(undefined);
+  }
+}
+
+function answerOutcome(error: AppError): string {
+  switch (error.code) {
+    case ErrorCode.BadRequest:
+      return 'rejected';
+    case ErrorCode.Conflict:
+      return 'conflict';
+    case ErrorCode.NotFound:
+      return 'not_found';
+    default:
+      return 'error';
   }
 }
