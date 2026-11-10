@@ -7,6 +7,7 @@ import {
   IAvatarStorage,
   StoredAvatar,
 } from '../application/interfaces/avatar-storage.interface';
+import { trackCloudinaryCall } from '../../../shared/telemetry/external-call';
 
 const RESOURCE_TYPE = 'image';
 
@@ -41,9 +42,8 @@ export class CloudinaryAvatarStorage implements IAvatarStorage {
     }
 
     try {
-      const uploaded = await this.uploadBuffer(
-        avatarPublicId(userPublicId),
-        file.buffer,
+      const uploaded = await trackCloudinaryCall('avatar_upload', () =>
+        this.uploadBuffer(avatarPublicId(userPublicId), file.buffer),
       );
       // secure_url chứa version mới sau mỗi lần ghi đè, nên URL trả về luôn khác
       // lần trước và trình duyệt không hiển thị ảnh cũ từ cache.
