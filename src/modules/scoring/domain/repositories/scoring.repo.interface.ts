@@ -12,15 +12,20 @@ export interface SessionScoringContext {
   readonly publicId: string;
   readonly userId: number;
   readonly status: SessionStatus;
+  readonly title?: string;
+  readonly jobDescription?: string | null;
   readonly cvParsedData: CvParsedData | null;
   readonly questions: ReadonlyArray<{
     readonly id: number;
     readonly content: string;
     readonly orderIndex: number;
+    readonly domain?: string;
+    readonly difficulty?: string;
     readonly answer: {
       readonly id: number;
       readonly transcript: string | null;
       readonly emotionSummary: unknown;
+      readonly durationSeconds?: number | null;
     } | null;
   }>;
 }

@@ -110,6 +110,139 @@ describe('ScoringRepository', () => {
       }
     });
 
+    it('should prioritize cvSnapshot.parsedData when session.cv is null or modified after submit', async () => {
+      findUniqueSessionMock.mockResolvedValue({
+        id: 2,
+        publicId: mockSessionPublicId,
+        userId: 10,
+        status: SessionStatus.SUBMITTED,
+        cvSnapshot: {
+          sourceCvPublicId: 'cv-uuid-1',
+          fileName: 'snapshot-cv.pdf',
+          fileUrl: 'https://example.com/snapshot-cv.pdf',
+          fileSize: 1024,
+          rawText: 'Snapshot CV',
+          parsedData: {
+            summary: 'Snapshot summary at submission time',
+            skills: {
+              languages: ['TypeScript', 'Rust'],
+              frameworks: ['NestJS'],
+              databases: ['PostgreSQL'],
+              tools: ['Docker'],
+            },
+            experiences: [],
+            education: [],
+            projects: [],
+          },
+          parserVersion: 'v1.0',
+        },
+        cv: {
+          id: 5,
+          parsedData: {
+            summary: 'Edited summary after submission',
+            skills: {
+              languages: ['Python'],
+              frameworks: [],
+              databases: [],
+              tools: [],
+            },
+            experiences: [],
+          },
+        },
+        questions: [],
+      });
+
+      const result =
+        await repository.findSessionForScoring(mockSessionPublicId);
+
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value?.cvParsedData?.summary).toBe(
+          'Snapshot summary at submission time',
+        );
+        expect(result.value?.cvParsedData?.skills.languages).toEqual([
+          'TypeScript',
+          'Rust',
+        ]);
+      }
+    });
+
+    it('should still read cvSnapshot.parsedData when original CV was deleted (session.cv is null)', async () => {
+      findUniqueSessionMock.mockResolvedValue({
+        id: 3,
+        publicId: mockSessionPublicId,
+        userId: 10,
+        status: SessionStatus.SUBMITTED,
+        cvSnapshot: {
+          parsedData: {
+            skills: {
+              languages: ['Go'],
+              frameworks: [],
+              databases: [],
+              tools: [],
+            },
+            experiences: [],
+          },
+        },
+        cv: null,
+        questions: [],
+      });
+
+      const result =
+        await repository.findSessionForScoring(mockSessionPublicId);
+
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value?.cvParsedData?.skills.languages).toEqual(['Go']);
+      }
+    });
+
+    it('should return extended session and question metadata (title, jobDescription, domain, difficulty, durationSeconds)', async () => {
+      findUniqueSessionMock.mockResolvedValue({
+        id: 4,
+        publicId: mockSessionPublicId,
+        userId: 10,
+        status: SessionStatus.SUBMITTED,
+        title: 'Backend Engineer Interview',
+        jobDescription: 'Require strong NestJS and PostgreSQL experience.',
+        cvSnapshot: null,
+        cv: null,
+        questions: [
+          {
+            id: 100,
+            content: 'How does PostgreSQL MVCC work?',
+            orderIndex: 1,
+            domain: 'TECHNICAL',
+            difficulty: 'HARD',
+            answer: {
+              id: 200,
+              transcript: 'MVCC uses tuple visibility...',
+              emotionSummary: {
+                dominant: 'neutral',
+                distribution: { neutral: 0.8, happy: 0.2 },
+              },
+              durationSeconds: 95,
+            },
+          },
+        ],
+      });
+
+      const result =
+        await repository.findSessionForScoring(mockSessionPublicId);
+
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        const ctx = result.value;
+        expect(ctx?.title).toBe('Backend Engineer Interview');
+        expect(ctx?.jobDescription).toBe(
+          'Require strong NestJS and PostgreSQL experience.',
+        );
+        expect(ctx?.questions[0]?.domain).toBe('TECHNICAL');
+        expect(ctx?.questions[0]?.difficulty).toBe('HARD');
+        expect(ctx?.questions[0]?.answer?.durationSeconds).toBe(95);
+      }
+    });
+
     it('should return null when session does not exist', async () => {
       findUniqueSessionMock.mockResolvedValue(null);
 
@@ -235,13 +368,17 @@ describe('ScoringRepository', () => {
       createdAt: fixedDate,
     });
 
-    it('should execute transaction saving Score, InterviewSummary and updating session status', async () => {
+    it('should execute transaction saving Score, InterviewSummary and updating session status with SUBMITTED/SCORING guard', async () => {
+      updateManySessionMock.mockResolvedValue({ count: 1 });
       transactionMock.mockImplementation(
         async (callback: (tx: unknown) => Promise<unknown>) => {
           const tx = {
             score: { upsert: upsertScoreMock },
             interviewSummary: { upsert: upsertSummaryMock },
-            interviewSession: { update: updateSessionMock },
+            interviewSession: {
+              update: updateSessionMock,
+              updateMany: updateManySessionMock,
+            },
           };
           await callback(tx);
         },
@@ -266,12 +403,40 @@ describe('ScoringRepository', () => {
       expect(summaryArg.where.sessionId).toBe(1);
       expect(summaryArg.create.overallFeedback).toBe('Good candidate');
 
-      const sessionArg = updateSessionMock.mock.calls[0][0] as {
-        where: { id: number };
-        data: { status: SessionStatus };
+      const sessionArg = updateManySessionMock.mock.calls[0][0] as {
+        where: { id: number; status: { in: SessionStatus[] } };
+        data: { status: SessionStatus; completedAt: Date };
       };
       expect(sessionArg.where.id).toBe(1);
+      expect(sessionArg.where.status).toEqual({
+        in: [SessionStatus.SUBMITTED, SessionStatus.SCORING],
+      });
       expect(sessionArg.data.status).toBe(SessionStatus.COMPLETED);
+      expect(sessionArg.data.completedAt).toBeInstanceOf(Date);
+    });
+
+    it('should rollback transaction and return Err when session is no longer in SUBMITTED or SCORING status (count === 0)', async () => {
+      updateManySessionMock.mockResolvedValue({ count: 0 });
+      transactionMock.mockImplementation(
+        async (callback: (tx: unknown) => Promise<unknown>) => {
+          const tx = {
+            score: { upsert: upsertScoreMock },
+            interviewSummary: { upsert: upsertSummaryMock },
+            interviewSession: {
+              update: updateSessionMock,
+              updateMany: updateManySessionMock,
+            },
+          };
+          await callback(tx);
+        },
+      );
+
+      const result = await repository.saveScoringResult(1, score, summary);
+
+      expect(result.isErr()).toBe(true);
+      if (result.isErr()) {
+        expect(result.error.message).toBe('Failed to save scoring result.');
+      }
     });
 
     it('should return Err when transaction fails', async () => {
