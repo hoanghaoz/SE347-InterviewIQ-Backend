@@ -45,9 +45,15 @@ prometheus.remote_write "local" {
 
 otelcol.processor.attributes "loki_labels" {
   action {
+    key    = "loki.resource.labels"
+    action = "insert"
+    value  = "service.name"
+  }
+
+  action {
     key    = "loki.attribute.labels"
     action = "insert"
-    value  = "event.domain, event.name"
+    value  = "log.context"
   }
 
   output {
