@@ -1,14 +1,20 @@
 import { Injectable } from '@nestjs/common';
 import { err, ok, type Result } from 'neverthrow';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
+import { CommonCheatEventType } from '../../../interview/domain/enums/interview-enum';
 import { PageResult } from '../../../../shared/common/pagination';
 import {
   IInterviewHistoryRepository,
+  InterviewHistoryCheatLogData,
   InterviewHistoryDetailData,
   InterviewHistoryFilter,
   InterviewHistoryItemData,
 } from '../../domain/repositories/interview-history.repo.interface';
 import { InterviewHistoryQueryDto } from '../dtos/interview-history.request.dto';
+import type {
+  CheatLogDto,
+  CheatSummaryDto,
+} from '../../../interview/application/dtos/cheat-log.response.dto';
 import {
   InterviewHistoryDetailDto,
   InterviewHistoryItemDto,
@@ -108,6 +114,8 @@ function toInterviewHistoryItem(
     totalQuestions: data.totalQuestions,
     durationSeconds: data.durationSeconds,
     overallScore: data.overallScore,
+    isFlagged: data.cheatEventCount > 0,
+    cheatEventCount: data.cheatEventCount,
     startedAt: data.startedAt?.toISOString() ?? null,
     completedAt: data.completedAt?.toISOString() ?? null,
     createdAt: data.createdAt.toISOString(),
@@ -133,5 +141,32 @@ function toInterviewHistoryDetail(
     score: null,
     summary: null,
     questions: [],
+    isFlagged: data.cheatLogs.length > 0,
+    cheatSummary: toCheatSummary(data.cheatLogs),
+    cheatLogs: data.cheatLogs.map(toCheatLogDto),
   };
+}
+
+function toCheatLogDto(log: InterviewHistoryCheatLogData): CheatLogDto {
+  return {
+    id: log.cheatLogPublicId,
+    eventType: log.eventType,
+    description: log.description,
+    occurredAt: log.occurredAt.toISOString(),
+    createdAt: log.createdAt.toISOString(),
+  };
+}
+
+// Luôn đủ mọi loại sự kiện (0 nếu chưa có), cùng shape với module cheat-log.
+function toCheatSummary(
+  logs: readonly InterviewHistoryCheatLogData[],
+): CheatSummaryDto {
+  const countsByType: Record<CommonCheatEventType, number> = {
+    [CommonCheatEventType.TAB_SWITCH]: 0,
+    [CommonCheatEventType.WINDOW_BLUR]: 0,
+    [CommonCheatEventType.FACE_MISSING]: 0,
+    [CommonCheatEventType.MULTIPLE_FACES]: 0,
+  };
+  for (const log of logs) countsByType[log.eventType] += 1;
+  return { totalCount: logs.length, countsByType };
 }

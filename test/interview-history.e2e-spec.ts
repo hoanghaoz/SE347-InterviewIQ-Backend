@@ -40,6 +40,8 @@ describe('InterviewHistoryController (e2e)', () => {
     totalQuestions: 5,
     durationSeconds: 842,
     overallScore: 7.5,
+    isFlagged: true,
+    cheatEventCount: 2,
     startedAt: '2026-10-20T08:00:00.000Z',
     completedAt: '2026-10-20T08:14:02.000Z',
     createdAt: '2026-10-20T07:58:11.000Z',
@@ -56,6 +58,24 @@ describe('InterviewHistoryController (e2e)', () => {
     score: null,
     summary: null,
     questions: [],
+    cheatSummary: {
+      totalCount: 1,
+      countsByType: {
+        TAB_SWITCH: 1,
+        WINDOW_BLUR: 0,
+        FACE_MISSING: 0,
+        MULTIPLE_FACES: 0,
+      },
+    },
+    cheatLogs: [
+      {
+        id: '00000000-0000-4000-8000-000000000004',
+        eventType: 'TAB_SWITCH',
+        description: null,
+        occurredAt: '2026-10-20T08:05:00.000Z',
+        createdAt: '2026-10-20T08:05:01.000Z',
+      },
+    ],
   };
 
   const list = (query = '') =>

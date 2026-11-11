@@ -14,7 +14,7 @@ Mã nguồn: `src/modules/interview-history/`. Branch: `feat/history-interview`.
 | `GET /api/interviews/:id` — chi tiết một buổi | Chấm điểm và kết quả chi tiết (`ScoringModule`) |
 | | Câu hỏi và câu trả lời của buổi phỏng vấn (`InterviewModule`) |
 
-Module chỉ **đọc**. Không có endpoint nào ghi dữ liệu, không sở hữu bảng nào trong database; nó đọc `interview_sessions` cùng hai quan hệ `cv` và `score`.
+Module chỉ **đọc**. Không có endpoint nào ghi dữ liệu, không sở hữu bảng nào trong database; nó đọc `interview_sessions` cùng ba quan hệ `cv`, `score` và `cheat_logs` (cờ gian lận, xem `docs/api-contract-cheat-log.md`).
 
 ## 2. Quy ước chung
 
@@ -69,6 +69,8 @@ Thứ tự sắp xếp là cố định: `createdAt DESC, id DESC`. Không nhậ
         "totalQuestions": 5,
         "durationSeconds": 842,
         "overallScore": 7.5,
+        "isFlagged": true,
+        "cheatEventCount": 2,
         "startedAt": "2026-10-20T08:00:00.000Z",
         "completedAt": "2026-10-20T08:14:02.000Z",
         "createdAt": "2026-10-20T07:58:11.000Z"
@@ -92,11 +94,13 @@ Thứ tự sắp xếp là cố định: `createdAt DESC, id DESC`. Không nhậ
 | `totalQuestions` | integer | không | Số câu hỏi của buổi |
 | `durationSeconds` | integer | **có** | `null` khi buổi chưa được nộp |
 | `overallScore` | number | **có** | `null` khi chưa chấm xong |
+| `isFlagged` | boolean | không | `true` khi buổi có ít nhất 1 cheat log |
+| `cheatEventCount` | integer | không | Số cheat log của buổi (`0` khi sạch) |
 | `startedAt` | string (date-time) | **có** | `null` khi chưa bắt đầu |
 | `completedAt` | string (date-time) | **có** | `null` khi chưa chấm xong |
 | `createdAt` | string (date-time) | không | Mốc dùng để sort và lọc |
 
-`overallScore` lấy qua `score: { select: { overallScore: true } }` trong cùng một truy vấn `findMany`, không sinh N+1.
+`overallScore` lấy qua `score: { select: { overallScore: true } }` và `cheatEventCount` lấy qua `_count: { select: { cheatLogs: true } }`, cả hai trong cùng một truy vấn `findMany`, không sinh N+1. Item chỉ mang số đếm, không mang danh sách log.
 
 Item **không** chứa `jobDescription`: cột đó là `@db.Text`, kéo về 20 bản ghi mỗi trang chỉ để màn danh sách không hiển thị là lãng phí. Nó nằm ở API chi tiết.
 
@@ -152,7 +156,26 @@ Không có body, không có query param.
     },
     "score": null,
     "summary": null,
-    "questions": []
+    "questions": [],
+    "isFlagged": true,
+    "cheatSummary": {
+      "totalCount": 1,
+      "countsByType": {
+        "TAB_SWITCH": 1,
+        "WINDOW_BLUR": 0,
+        "FACE_MISSING": 0,
+        "MULTIPLE_FACES": 0
+      }
+    },
+    "cheatLogs": [
+      {
+        "id": "7a0c1d2e-3b4f-4c5d-8e6f-9a0b1c2d3e4f",
+        "eventType": "TAB_SWITCH",
+        "description": null,
+        "occurredAt": "2026-10-20T08:05:00.000Z",
+        "createdAt": "2026-10-20T08:05:01.000Z"
+      }
+    ]
   }
 }
 ```
@@ -172,6 +195,9 @@ Không có body, không có query param.
 | `cv` | object | **có** | `null` khi buổi phỏng vấn không gắn CV, hoặc CV đã bị xóa (quan hệ là `onDelete: SetNull`) |
 | `cv.id` | string (uuid) | không | `publicId` của CV |
 | `cv.fileName` | string | không | Tên file CV |
+| `isFlagged` | boolean | không | `true` khi buổi có ít nhất 1 cheat log |
+| `cheatSummary` | object | không | `{ totalCount, countsByType }`; `countsByType` luôn đủ 4 loại sự kiện, loại chưa xảy ra là `0` |
+| `cheatLogs` | array | không | Nhật ký gian lận sắp theo `occurredAt` tăng dần; mảng rỗng khi sạch, **không bao giờ `null`** |
 
 Response **không** trả `cvSnapshot`: đó là cột `Json` chứa toàn bộ nội dung CV tại thời điểm nộp, không cần cho trang chi tiết và làm payload phình to.
 
@@ -186,6 +212,8 @@ Ba field dưới đây luôn có mặt trong response với giá trị rỗng. M
 | `questions` | `[]` | Interview module | Bảng `questions` và `answers` |
 
 `questions` là mảng rỗng chứ không `null`, để frontend gọi `.map` trực tiếp mà không cần kiểm tra null.
+
+Cờ và nhật ký gian lận là dữ liệu **thật** (khác với `score`, `summary`, `questions` ở trên), do tính năng cheat log ghi vào. `cheatLogs` mang `id`, `eventType`, `description`, `occurredAt`, `createdAt`; xem `docs/api-contract-cheat-log.md`.
 
 ### 4.4. Lỗi
 

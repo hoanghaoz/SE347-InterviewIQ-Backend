@@ -1,6 +1,9 @@
 import type { Result } from 'neverthrow';
 import { PaginationRequest } from '../../../../shared/common/pagination';
-import { CommonSessionStatus } from '../../../interview/domain/enums/interview-enum';
+import {
+  CommonCheatEventType,
+  CommonSessionStatus,
+} from '../../../interview/domain/enums/interview-enum';
 
 // Field vắng mặt nghĩa là không lọc theo field đó.
 export type InterviewHistoryFilter = {
@@ -18,6 +21,8 @@ export type InterviewHistoryItemData = {
   readonly totalQuestions: number;
   readonly durationSeconds: number | null;
   readonly overallScore: number | null;
+  // Số cheat log của buổi; > 0 nghĩa là buổi bị đánh dấu.
+  readonly cheatEventCount: number;
   readonly startedAt: Date | null;
   readonly completedAt: Date | null;
   readonly createdAt: Date;
@@ -26,6 +31,14 @@ export type InterviewHistoryItemData = {
 export type InterviewHistoryCvData = {
   readonly cvPublicId: string;
   readonly fileName: string;
+};
+
+export type InterviewHistoryCheatLogData = {
+  readonly cheatLogPublicId: string;
+  readonly eventType: CommonCheatEventType;
+  readonly description: string | null;
+  readonly occurredAt: Date;
+  readonly createdAt: Date;
 };
 
 export type InterviewHistoryDetailData = {
@@ -40,6 +53,8 @@ export type InterviewHistoryDetailData = {
   readonly completedAt: Date | null;
   readonly createdAt: Date;
   readonly cv: InterviewHistoryCvData | null;
+  // Sắp theo occurredAt tăng dần; mảng rỗng khi buổi không có vi phạm.
+  readonly cheatLogs: readonly InterviewHistoryCheatLogData[];
 };
 
 // Trả items + tổng số bản ghi thật, không trả PageResult: PageResult chứa kiểu

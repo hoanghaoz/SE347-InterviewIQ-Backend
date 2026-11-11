@@ -17,6 +17,11 @@ import { InterviewAnswerService } from './application/services/interview-answer.
 import { IInterviewAnswerRepository } from './domain/repositories/interview-answer.repo.interface';
 import { CloudinaryInterviewVideoStorage } from './infrastructure/cloudinary-interview-video-storage';
 import { InterviewAnswerRepository } from './infrastructure/interview-answer.repo';
+import { InterviewCheatLogController } from './api/interview-cheat-log.controller';
+import { ICheatLogService } from './application/interfaces/cheat-log.service.interface';
+import { CheatLogService } from './application/services/cheat-log.service';
+import { ICheatLogRepository } from './domain/repositories/cheat-log.repo.interface';
+import { CheatLogRepository } from './infrastructure/cheat-log.repo';
 
 @Module({
   imports: [
@@ -31,11 +36,17 @@ import { InterviewAnswerRepository } from './infrastructure/interview-answer.rep
       }),
     }),
   ],
-  controllers: [InterviewController, InterviewAnswerController],
+  controllers: [
+    InterviewController,
+    InterviewAnswerController,
+    InterviewCheatLogController,
+  ],
   providers: [
     JwtAuthGuard,
     RolesGuard,
     { provide: IInterviewAnswerService, useClass: InterviewAnswerService },
+    { provide: ICheatLogService, useClass: CheatLogService },
+    { provide: ICheatLogRepository, useClass: CheatLogRepository },
     {
       provide: IInterviewAnswerRepository,
       useClass: InterviewAnswerRepository,

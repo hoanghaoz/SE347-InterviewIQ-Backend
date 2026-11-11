@@ -1,4 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
+import {
+  CheatLogDto,
+  CheatSummaryDto,
+} from '../../../interview/application/dtos/cheat-log.response.dto';
 import { CommonSessionStatus } from '../../../interview/domain/enums/interview-enum';
 
 // Response DTOs only describe the output for Swagger: no class-validator here.
@@ -37,6 +41,18 @@ export class InterviewHistoryItemDto {
     example: 7.5,
   })
   overallScore!: number | null;
+
+  @ApiProperty({
+    description: 'True when the session has at least one cheat log',
+    example: true,
+  })
+  isFlagged!: boolean;
+
+  @ApiProperty({
+    description: 'Number of cheat events recorded for the session',
+    example: 3,
+  })
+  cheatEventCount!: number;
 
   @ApiProperty({ type: String, format: 'date-time', nullable: true })
   startedAt!: string | null;
@@ -136,4 +152,20 @@ export class InterviewHistoryDetailDto {
     example: [],
   })
   questions!: Record<string, unknown>[];
+
+  @ApiProperty({
+    description: 'True when the session has at least one cheat log',
+    example: true,
+  })
+  isFlagged!: boolean;
+
+  @ApiProperty({ type: CheatSummaryDto })
+  cheatSummary!: CheatSummaryDto;
+
+  @ApiProperty({
+    type: [CheatLogDto],
+    description:
+      'Ordered by occurredAt ascending. Always an array, never null.',
+  })
+  cheatLogs!: CheatLogDto[];
 }

@@ -4,6 +4,7 @@ import { SessionStatus } from '../../../../generated/prisma/enums';
 import { PaginationRequest } from '../../../shared/common/pagination';
 import { PrismaService } from '../../../shared/infrastructure/database/prisma.service';
 import { CommonSessionStatus } from '../../interview/domain/enums/interview-enum';
+import { mapCheatEventTypeToDomain } from '../../interview/infrastructure/cheat-log.mapper';
 import {
   IInterviewHistoryRepository,
   InterviewHistoryDetailData,
@@ -23,6 +24,8 @@ const LIST_SELECT = {
   completedAt: true,
   createdAt: true,
   score: { select: { overallScore: true } },
+  // Đếm trong cùng query, không kéo cả danh sách log ra màn danh sách.
+  _count: { select: { cheatLogs: true } },
 } as const;
 
 const DETAIL_SELECT = {
@@ -37,6 +40,21 @@ const DETAIL_SELECT = {
   completedAt: true,
   createdAt: true,
   cv: { select: { publicId: true, fileName: true } },
+  cheatLogs: {
+    select: {
+      publicId: true,
+      eventType: true,
+      description: true,
+      occurredAt: true,
+      createdAt: true,
+    },
+    // Ép kiểu mảng mutable: `as const` của cả object sẽ biến nó thành tuple readonly
+    // mà Prisma không nhận.
+    orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }] as (
+      | { occurredAt: 'asc' }
+      | { id: 'asc' }
+    )[],
+  },
 } as const;
 
 @Injectable()
@@ -90,6 +108,7 @@ export class InterviewHistoryRepository implements IInterviewHistoryRepository {
         totalQuestions: session.totalQuestions,
         durationSeconds: session.durationSeconds,
         overallScore: session.score?.overallScore ?? null,
+        cheatEventCount: session._count.cheatLogs,
         startedAt: session.startedAt,
         completedAt: session.completedAt,
         createdAt: session.createdAt,
@@ -136,6 +155,13 @@ export class InterviewHistoryRepository implements IInterviewHistoryRepository {
         cv: session.cv
           ? { cvPublicId: session.cv.publicId, fileName: session.cv.fileName }
           : null,
+        cheatLogs: session.cheatLogs.map((log) => ({
+          cheatLogPublicId: log.publicId,
+          eventType: mapCheatEventTypeToDomain(log.eventType),
+          description: log.description,
+          occurredAt: log.occurredAt,
+          createdAt: log.createdAt,
+        })),
       });
     } catch (error) {
       this.logger.error(
