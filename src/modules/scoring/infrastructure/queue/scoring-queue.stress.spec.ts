@@ -131,7 +131,7 @@ describe('ScoringQueue Stress & Resilience Test (20 Concurrent Jobs)', () => {
           },
         ],
         scoringModel: 'gemini-3.8-flash',
-        promptVersion: 'v1.0.0',
+        promptVersion: 'v2.0',
       });
     });
 
@@ -267,7 +267,7 @@ describe('ScoringQueue Stress & Resilience Test (20 Concurrent Jobs)', () => {
             strengths: [],
             improvements: [],
             scoringModel: 'gemini-3.8-flash',
-            promptVersion: 'v1.0.0',
+            promptVersion: 'v2.0',
           }),
         );
       },

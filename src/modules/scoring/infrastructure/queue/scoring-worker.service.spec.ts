@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { ok, err } from 'neverthrow';
 import { SessionStatus } from '../../../../../generated/prisma/enums';
 import type { Job, PgBoss } from 'pg-boss';
+import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
 import { ScoringJobData } from '../../application/dtos/scoring.request.dto';
 import {
   IScoringLlmProvider,
@@ -74,6 +75,45 @@ describe('ScoringWorkerService', () => {
     getSessionOwnerUserId: getSessionOwnerUserIdMock,
   };
 
+  const defaultEvaluation: ScoringLlmEvaluationResult = {
+    contentScore: 8.5,
+    relevanceScore: 8.0,
+    confidenceScore: 7.5,
+    overallScore: 8.1,
+    overallFeedback:
+      'Ứng viên nắm vững kiến thức chuyên môn và trả lời đúng trọng tâm.',
+    strengths: [
+      {
+        category: 'TECHNICAL_KNOWLEDGE',
+        title: 'Nắm vững Clean Architecture',
+        description: 'Hiểu rõ nguyên tắc phân tầng và đảo ngược phụ thuộc.',
+      },
+    ],
+    improvements: [
+      {
+        category: 'COMMUNICATION',
+        title: 'Bổ sung dẫn chứng định lượng',
+        description: 'Nên nêu số liệu cụ thể khi trình bày kết quả.',
+        suggestion: 'Áp dụng mô hình STAR.',
+      },
+    ],
+    scoringModel: 'gemini-3.8-flash',
+    promptVersion: 'v2.0',
+    provider: 'gemini',
+    latencyMs: 1120,
+    inputTokens: 750,
+    outputTokens: 310,
+  };
+
+  const evaluateSessionMock = jest.fn<
+    ReturnType<IScoringLlmProvider['evaluateSession']>,
+    Parameters<IScoringLlmProvider['evaluateSession']>
+  >();
+
+  const mockLlmProvider: IScoringLlmProvider = {
+    evaluateSession: evaluateSessionMock,
+  };
+
   const mockSessionId = '11111111-1111-4111-8111-111111111111';
   const mockUserId = '22222222-2222-4222-8222-222222222222';
   const mockJob: Job<ScoringJobData> = {
@@ -95,8 +135,13 @@ describe('ScoringWorkerService', () => {
     markSessionFailedMock.mockReset();
     findSessionResultMock.mockReset();
     getSessionOwnerUserIdMock.mockReset();
+    evaluateSessionMock.mockReset().mockResolvedValue(ok(defaultEvaluation));
 
-    workerService = new ScoringWorkerService(mockBoss, mockScoringRepo);
+    workerService = new ScoringWorkerService(
+      mockBoss,
+      mockScoringRepo,
+      mockLlmProvider,
+    );
   });
 
   describe('onModuleInit', () => {
@@ -131,6 +176,7 @@ describe('ScoringWorkerService', () => {
       const workerWithConfig = new ScoringWorkerService(
         mockBoss,
         mockScoringRepo,
+        mockLlmProvider,
         mockConfigService as unknown as ConfigService,
       );
 
@@ -165,6 +211,7 @@ describe('ScoringWorkerService', () => {
       const workerWithPacing = new ScoringWorkerService(
         mockBoss,
         mockScoringRepo,
+        mockLlmProvider,
         mockConfigService as unknown as ConfigService,
       );
 
@@ -190,6 +237,8 @@ describe('ScoringWorkerService', () => {
       publicId: mockSessionId,
       userId: 1,
       status: SessionStatus.SUBMITTED,
+      title: 'Backend Engineer Interview',
+      jobDescription: 'Require NestJS, TypeScript, and PostgreSQL.',
       cvParsedData: {
         summary: 'Dev',
         skills: {
@@ -206,17 +255,23 @@ describe('ScoringWorkerService', () => {
         {
           id: 1,
           content: 'What is Clean Architecture?',
-          orderIndex: 0,
+          orderIndex: 1,
+          domain: 'TECHNICAL',
+          difficulty: 'MEDIUM',
           answer: {
             id: 1,
             transcript: 'Separation of concerns...',
-            emotionSummary: null,
+            emotionSummary: {
+              dominant: 'neutral',
+              distribution: { neutral: 0.9 },
+            },
+            durationSeconds: 70,
           },
         },
       ],
     };
 
-    it('should successfully score session and save result via repository', async () => {
+    it('should evaluate session via IScoringLlmProvider with full extended context and save result via repository', async () => {
       findSessionForScoringMock.mockResolvedValue(ok(mockContext));
       updateSessionStatusMock.mockResolvedValue(ok(undefined));
       saveScoringResultMock.mockResolvedValue(ok(undefined));
@@ -228,6 +283,26 @@ describe('ScoringWorkerService', () => {
         10,
         SessionStatus.SCORING,
       );
+      expect(evaluateSessionMock).toHaveBeenCalledWith({
+        sessionPublicId: mockSessionId,
+        title: 'Backend Engineer Interview',
+        jobDescription: 'Require NestJS, TypeScript, and PostgreSQL.',
+        cvParsedData: mockContext.cvParsedData,
+        questions: [
+          {
+            content: 'What is Clean Architecture?',
+            orderIndex: 1,
+            domain: 'TECHNICAL',
+            difficulty: 'MEDIUM',
+            transcript: 'Separation of concerns...',
+            emotionSummary: {
+              dominant: 'neutral',
+              distribution: { neutral: 0.9 },
+            },
+            durationSeconds: 70,
+          },
+        ],
+      });
       expect(saveScoringResultMock).toHaveBeenCalledWith(
         10,
         expect.any(Score),
@@ -235,11 +310,11 @@ describe('ScoringWorkerService', () => {
       );
 
       const savedScore = saveScoringResultMock.mock.calls[0]?.[1];
-      expect(savedScore).toBeDefined();
-      if (savedScore) {
-        expect(savedScore.contentScore).toBe(8.0);
-        expect(savedScore.overallScore).toBe(7.6);
-      }
+      const savedSummary = saveScoringResultMock.mock.calls[0]?.[2];
+      expect(savedScore?.contentScore).toBe(8.5);
+      expect(savedScore?.overallScore).toBe(8.1);
+      expect(savedSummary?.scoringModel).toBe('gemini-3.8-flash');
+      expect(savedSummary?.promptVersion).toBe('v2.0');
     });
 
     it('should return early when session is not found in database', async () => {
@@ -249,8 +324,28 @@ describe('ScoringWorkerService', () => {
 
       expect(findSessionForScoringMock).toHaveBeenCalledWith(mockSessionId);
       expect(updateSessionStatusMock).not.toHaveBeenCalled();
+      expect(evaluateSessionMock).not.toHaveBeenCalled();
       expect(saveScoringResultMock).not.toHaveBeenCalled();
     });
+
+    it.each([SessionStatus.COMPLETED, SessionStatus.CANCELLED])(
+      'should safely skip job (idempotent no-op) when session is already in %s status',
+      async (terminalStatus) => {
+        findSessionForScoringMock.mockResolvedValue(
+          ok({
+            ...mockContext,
+            status: terminalStatus,
+          }),
+        );
+
+        await workerService.handleJob(mockJob);
+
+        expect(updateSessionStatusMock).not.toHaveBeenCalled();
+        expect(evaluateSessionMock).not.toHaveBeenCalled();
+        expect(saveScoringResultMock).not.toHaveBeenCalled();
+        expect(markSessionFailedMock).not.toHaveBeenCalled();
+      },
+    );
 
     it('should throw error when repository findSessionForScoring fails', async () => {
       findSessionForScoringMock.mockResolvedValue(
@@ -273,101 +368,49 @@ describe('ScoringWorkerService', () => {
       );
     });
 
-    it('should delegate scoring to IScoringLlmProvider when provided', async () => {
-      const mockEvaluation: ScoringLlmEvaluationResult = {
-        contentScore: 9.0,
-        relevanceScore: 8.5,
-        confidenceScore: 8.0,
-        overallScore: 8.6,
-        overallFeedback: 'Excellent interview with deep knowledge',
-        strengths: [
-          {
-            category: 'ARCHITECTURE',
-            title: 'Clean Architecture',
-            description: 'Understands layers and decoupling',
-          },
-        ],
-        improvements: [
-          {
-            category: 'TIME_MANAGEMENT',
-            title: 'Time pacing',
-            description: 'Spend less time on intro',
-          },
-        ],
-        scoringModel: 'gemini-2.5-pro',
-        promptVersion: 'v2.0',
-      };
-
-      const evaluateSessionMock = jest
-        .fn()
-        .mockResolvedValue(ok(mockEvaluation));
-      const mockLlmProvider: IScoringLlmProvider = {
-        evaluateSession: evaluateSessionMock,
-      };
-
-      const workerWithLlm = new ScoringWorkerService(
-        mockBoss,
-        mockScoringRepo,
-        mockLlmProvider,
-      );
+    it('should call markSessionFailed immediately on first attempt (retrycount: 0) when evaluateSession returns AppError(BadRequest)', async () => {
+      const firstAttemptJob = {
+        ...mockJob,
+        retrycount: 0,
+        retrylimit: 3,
+      } as unknown as Job<ScoringJobData>;
 
       findSessionForScoringMock.mockResolvedValue(ok(mockContext));
       updateSessionStatusMock.mockResolvedValue(ok(undefined));
-      saveScoringResultMock.mockResolvedValue(ok(undefined));
+      evaluateSessionMock.mockResolvedValue(
+        err(new AppError(ErrorCode.BadRequest, 'Rejected by safety filter')),
+      );
+      markSessionFailedMock.mockResolvedValue(ok(undefined));
 
-      await workerWithLlm.handleJob(mockJob);
-
-      expect(evaluateSessionMock).toHaveBeenCalledWith({
-        sessionPublicId: mockSessionId,
-        cvParsedData: mockContext.cvParsedData,
-        questions: [
-          {
-            content: 'What is Clean Architecture?',
-            orderIndex: 0,
-            transcript: 'Separation of concerns...',
-            emotionSummary: null,
-          },
-        ],
-      });
-
-      expect(saveScoringResultMock).toHaveBeenCalledWith(
-        10,
-        expect.any(Score),
-        expect.any(InterviewSummary),
+      await expect(workerService.handleJob(firstAttemptJob)).rejects.toThrow(
+        'Rejected by safety filter',
       );
 
-      const savedScore = saveScoringResultMock.mock.calls[0]?.[1];
-      const savedSummary = saveScoringResultMock.mock.calls[0]?.[2];
-
-      expect(savedScore?.contentScore).toBe(9.0);
-      expect(savedScore?.overallScore).toBe(8.6);
-      expect(savedSummary?.scoringModel).toBe('gemini-2.5-pro');
-      expect(savedSummary?.promptVersion).toBe('v2.0');
-      expect(savedSummary?.overallFeedback).toBe(
-        'Excellent interview with deep knowledge',
+      expect(markSessionFailedMock).toHaveBeenCalledWith(
+        mockContext.id,
+        'Rejected by safety filter',
       );
+      expect(saveScoringResultMock).not.toHaveBeenCalled();
     });
 
-    it('should throw error when IScoringLlmProvider evaluation fails', async () => {
-      const evaluateSessionMock = jest
-        .fn()
-        .mockResolvedValue(err(new Error('LLM rate limit reached')));
-      const mockLlmProvider: IScoringLlmProvider = {
-        evaluateSession: evaluateSessionMock,
-      };
-
-      const workerWithLlm = new ScoringWorkerService(
-        mockBoss,
-        mockScoringRepo,
-        mockLlmProvider,
-      );
+    it('should NOT call markSessionFailed on first attempt when evaluateSession returns retryable AppError(TooManyRequests)', async () => {
+      const firstAttemptJob = {
+        ...mockJob,
+        retrycount: 0,
+        retrylimit: 3,
+      } as unknown as Job<ScoringJobData>;
 
       findSessionForScoringMock.mockResolvedValue(ok(mockContext));
       updateSessionStatusMock.mockResolvedValue(ok(undefined));
-
-      await expect(workerWithLlm.handleJob(mockJob)).rejects.toThrow(
-        'LLM rate limit reached',
+      evaluateSessionMock.mockResolvedValue(
+        err(new AppError(ErrorCode.TooManyRequests, 'Rate limited')),
       );
+
+      await expect(workerService.handleJob(firstAttemptJob)).rejects.toThrow(
+        'Rate limited',
+      );
+
+      expect(markSessionFailedMock).not.toHaveBeenCalled();
       expect(saveScoringResultMock).not.toHaveBeenCalled();
     });
 
@@ -415,7 +458,7 @@ describe('ScoringWorkerService', () => {
       expect(markSessionFailedMock).not.toHaveBeenCalled();
     });
 
-    it('should call markSessionFailed immediately when encountering non-retryable validation error', async () => {
+    it('should call markSessionFailed immediately when encountering non-retryable domain validation error', async () => {
       const firstAttemptJob = {
         ...mockJob,
         retrycount: 0,
@@ -430,34 +473,50 @@ describe('ScoringWorkerService', () => {
         overallFeedback: 'Great answer',
         strengths: [],
         improvements: [],
-        scoringModel: 'gemini-2.5-flash',
-        promptVersion: 'v1.0',
+        scoringModel: 'gemini-3.8-flash',
+        promptVersion: 'v2.0',
       };
 
-      const evaluateSessionMock = jest
-        .fn()
-        .mockResolvedValue(ok(invalidEvaluation));
-      const mockLlmProvider: IScoringLlmProvider = {
-        evaluateSession: evaluateSessionMock,
-      };
-
-      const workerWithLlm = new ScoringWorkerService(
-        mockBoss,
-        mockScoringRepo,
-        mockLlmProvider,
-      );
-
+      evaluateSessionMock.mockResolvedValue(ok(invalidEvaluation));
       findSessionForScoringMock.mockResolvedValue(ok(mockContext));
       updateSessionStatusMock.mockResolvedValue(ok(undefined));
       markSessionFailedMock.mockResolvedValue(ok(undefined));
 
-      await expect(workerWithLlm.handleJob(firstAttemptJob)).rejects.toThrow(
+      await expect(workerService.handleJob(firstAttemptJob)).rejects.toThrow(
         /must be between 0 and 10/i,
       );
 
       expect(markSessionFailedMock).toHaveBeenCalledWith(
         mockContext.id,
         expect.stringMatching(/must be between 0 and 10/i),
+      );
+    });
+
+    it('should fail immediately instead of saving mock scores when IScoringLlmProvider is not provided', async () => {
+      const workerWithoutLlm = new ScoringWorkerService(
+        mockBoss,
+        mockScoringRepo,
+        undefined as unknown as IScoringLlmProvider,
+      );
+
+      const firstAttemptJob = {
+        ...mockJob,
+        retrycount: 0,
+        retrylimit: 3,
+      } as unknown as Job<ScoringJobData>;
+
+      findSessionForScoringMock.mockResolvedValue(ok(mockContext));
+      updateSessionStatusMock.mockResolvedValue(ok(undefined));
+      markSessionFailedMock.mockResolvedValue(ok(undefined));
+
+      await expect(workerWithoutLlm.handleJob(firstAttemptJob)).rejects.toThrow(
+        /IScoringLlmProvider is not configured/i,
+      );
+
+      expect(saveScoringResultMock).not.toHaveBeenCalled();
+      expect(markSessionFailedMock).toHaveBeenCalledWith(
+        mockContext.id,
+        expect.stringMatching(/IScoringLlmProvider is not configured/i),
       );
     });
 
