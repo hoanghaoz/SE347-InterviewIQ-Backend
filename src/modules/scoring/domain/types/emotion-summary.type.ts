@@ -65,4 +65,3 @@ export function normalizeEmotionSummary(raw: unknown): EmotionSummary | null {
     distribution,
   };
 }
-

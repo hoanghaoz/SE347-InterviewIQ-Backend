@@ -239,4 +239,3 @@ export function validateScoringRubric(
     improvements: normalizeImprovements(raw.improvements),
   });
 }
-

@@ -35,4 +35,3 @@ export function calculateOverallScore(
     ).toFixed(1),
   );
 }
-

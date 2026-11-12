@@ -114,4 +114,3 @@ describe('normalizeEmotionSummary', () => {
     ).toBeNull();
   });
 });
-
