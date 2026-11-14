@@ -16,6 +16,37 @@ import {
 } from '../domain/repositories/scoring.repo.interface';
 import { mapScoreToDomain, mapSummaryToDomain } from './scoring-mapper';
 
+function extractCvParsedData(
+  cvSnapshot: unknown,
+  cv: { parsedData?: unknown } | null | undefined,
+): CvParsedData | null {
+  if (
+    typeof cvSnapshot === 'object' &&
+    cvSnapshot !== null &&
+    !Array.isArray(cvSnapshot)
+  ) {
+    const snapshotRecord = cvSnapshot as Record<string, unknown>;
+    if (
+      typeof snapshotRecord.parsedData === 'object' &&
+      snapshotRecord.parsedData !== null &&
+      !Array.isArray(snapshotRecord.parsedData)
+    ) {
+      return snapshotRecord.parsedData as unknown as CvParsedData;
+    }
+  }
+
+  if (
+    cv &&
+    typeof cv.parsedData === 'object' &&
+    cv.parsedData !== null &&
+    !Array.isArray(cv.parsedData)
+  ) {
+    return cv.parsedData as unknown as CvParsedData;
+  }
+
+  return null;
+}
+
 @Injectable()
 export class ScoringRepository implements IScoringRepository {
   private readonly logger = new Logger(ScoringRepository.name);
@@ -43,26 +74,28 @@ export class ScoringRepository implements IScoringRepository {
         return ok(null);
       }
 
-      let cvParsedData: CvParsedData | null = null;
-      if (session.cv?.parsedData) {
-        cvParsedData = session.cv.parsedData as unknown as CvParsedData;
-      }
+      const cvParsedData = extractCvParsedData(session.cvSnapshot, session.cv);
 
       const context: SessionScoringContext = {
         id: session.id,
         publicId: session.publicId,
         userId: session.userId,
         status: session.status,
+        title: session.title,
+        jobDescription: session.jobDescription ?? null,
         cvParsedData,
         questions: session.questions.map((q) => ({
           id: q.id,
           content: q.content,
           orderIndex: q.orderIndex,
+          domain: q.domain,
+          difficulty: q.difficulty,
           answer: q.answer
             ? {
                 id: q.answer.id,
                 transcript: q.answer.transcript,
                 emotionSummary: q.answer.emotionSummary,
+                durationSeconds: q.answer.durationSeconds ?? null,
               }
             : null,
         })),
@@ -144,13 +177,24 @@ export class ScoringRepository implements IScoringRepository {
           },
         });
 
-        await tx.interviewSession.update({
-          where: { id: sessionId },
+        const updated = await tx.interviewSession.updateMany({
+          where: {
+            id: sessionId,
+            status: {
+              in: [SessionStatus.SUBMITTED, SessionStatus.SCORING],
+            },
+          },
           data: {
             status: SessionStatus.COMPLETED,
             completedAt: new Date(),
           },
         });
+
+        if (updated.count !== 1) {
+          throw new Error(
+            `Session ${sessionId} is not in SUBMITTED or SCORING state.`,
+          );
+        }
       });
 
       return ok(undefined);

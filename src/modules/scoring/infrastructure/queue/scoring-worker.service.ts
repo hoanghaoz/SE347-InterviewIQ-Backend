@@ -8,17 +8,16 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { SessionStatus } from '../../../../../generated/prisma/enums';
 import type { Job, PgBoss } from 'pg-boss';
+import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
 import { ScoringJobData } from '../../application/dtos/scoring.request.dto';
+import { IScoringLlmProvider } from '../../application/interfaces/scoring-llm.interface';
 import {
-  IScoringLlmProvider,
-  ISCORING_LLM_PROVIDER,
-} from '../../application/interfaces/scoring-llm.interface';
-import { ScoringDomainErrorValidation } from '../../domain/errors/scoring-domain.error';
+  ScoringDomainError,
+  ScoringDomainErrorValidation,
+} from '../../domain/errors/scoring-domain.error';
 import {
-  ImprovementItem,
   InterviewSummary,
   Score,
-  StrengthItem,
 } from '../../domain/entities/scoring-job.entity';
 import { IScoringRepository } from '../../domain/repositories/scoring.repo.interface';
 import { PG_BOSS_TOKEN } from './pg-boss.provider';
@@ -30,36 +29,16 @@ export class ScoringWorkerService implements OnModuleInit {
   private readonly concurrency: number;
   private readonly defaultRetryLimit: number;
   private readonly pacingMs: number;
-  private readonly llmProvider?: IScoringLlmProvider;
-  private readonly configService?: ConfigService;
   private lastJobCompletedAt = 0;
 
   constructor(
     @Inject(PG_BOSS_TOKEN) private readonly boss: PgBoss,
     private readonly scoringRepo: IScoringRepository,
-    @Inject(ISCORING_LLM_PROVIDER)
-    arg3?: IScoringLlmProvider | ConfigService,
+    @Inject(IScoringLlmProvider)
+    private readonly llmProvider: IScoringLlmProvider,
     @Optional()
-    arg4?: ConfigService | IScoringLlmProvider,
+    private readonly configService?: ConfigService,
   ) {
-    let resolvedLlmProvider: IScoringLlmProvider | undefined;
-    let resolvedConfigService: ConfigService | undefined;
-
-    if (arg3 && 'evaluateSession' in arg3) {
-      resolvedLlmProvider = arg3;
-    } else if (arg3 && 'get' in arg3) {
-      resolvedConfigService = arg3;
-    }
-
-    if (arg4 && 'evaluateSession' in arg4) {
-      resolvedLlmProvider = arg4;
-    } else if (arg4 && 'get' in arg4) {
-      resolvedConfigService = arg4;
-    }
-
-    this.llmProvider = resolvedLlmProvider;
-    this.configService = resolvedConfigService;
-
     this.concurrency =
       Number(
         this.configService?.get<number | string>(
@@ -129,6 +108,16 @@ export class ScoringWorkerService implements OnModuleInit {
         return;
       }
 
+      if (
+        session.status === SessionStatus.COMPLETED ||
+        session.status === SessionStatus.CANCELLED
+      ) {
+        this.logger.warn(
+          `Session '${sessionId}' is already in terminal status '${session.status}' for job ${job.id}. Skipping scoring safely.`,
+        );
+        return;
+      }
+
       sessionDbId = session.id;
 
       if (session.cvParsedData) {
@@ -148,71 +137,47 @@ export class ScoringWorkerService implements OnModuleInit {
         throw updateStatusResult.error;
       }
 
-      let contentScore = 8.0;
-      let relevanceScore = 7.5;
-      let confidenceScore = 7.0;
-      let overallScore: number | undefined;
-      let overallFeedback =
-        'Ứng viên thể hiện kiến thức nền tảng tốt, tư duy giải quyết vấn đề mạch lạc và tự tin.';
-      let strengths: readonly StrengthItem[] = [
-        {
-          category: 'TECHNICAL_KNOWLEDGE',
-          title: 'Nắm vững kiến thức chuyên môn',
-          description: 'Hiểu rõ các nguyên lý thiết kế và mô hình kiến trúc.',
-        },
-      ];
-      let improvements: readonly ImprovementItem[] = [
-        {
-          category: 'COMMUNICATION',
-          title: 'Trình bày súc tích và có cấu trúc hơn',
-          description:
-            'Nên đi thẳng vào kết quả trước khi mô tả chi tiết quá trình.',
-          suggestion: 'Áp dụng mô hình STAR (Situation, Task, Action, Result).',
-        },
-      ];
-      let scoringModel = 'gemini-2.5-flash';
-      let promptVersion: string | null = 'v1.0';
-
-      if (this.llmProvider) {
-        this.logger.log(
-          `Invoking IScoringLlmProvider for session ${sessionId} evaluation...`,
+      if (!this.llmProvider) {
+        throw new ScoringDomainErrorValidation(
+          ScoringDomainError.InvalidRubricPayload,
+          'IScoringLlmProvider is not configured for ScoringWorkerService.',
         );
-        const evalResult = await this.llmProvider.evaluateSession({
-          sessionPublicId: session.publicId,
-          cvParsedData: session.cvParsedData,
-          questions: session.questions.map((q) => ({
-            content: q.content,
-            orderIndex: q.orderIndex,
-            transcript: q.answer?.transcript ?? null,
-            emotionSummary: q.answer?.emotionSummary ?? null,
-          })),
-        });
-
-        if (evalResult.isErr()) {
-          this.logger.error(
-            `LLM evaluation failed for session ${sessionId}: ${evalResult.error.message}`,
-          );
-          throw evalResult.error;
-        }
-
-        const evaluation = evalResult.value;
-        contentScore = evaluation.contentScore;
-        relevanceScore = evaluation.relevanceScore;
-        confidenceScore = evaluation.confidenceScore;
-        overallScore = evaluation.overallScore;
-        overallFeedback = evaluation.overallFeedback;
-        strengths = evaluation.strengths;
-        improvements = evaluation.improvements;
-        scoringModel = evaluation.scoringModel;
-        promptVersion = evaluation.promptVersion;
       }
+
+      this.logger.log(
+        `Invoking IScoringLlmProvider for session ${sessionId} evaluation...`,
+      );
+      const evalResult = await this.llmProvider.evaluateSession({
+        sessionPublicId: session.publicId,
+        title: session.title,
+        jobDescription: session.jobDescription,
+        cvParsedData: session.cvParsedData,
+        questions: session.questions.map((q) => ({
+          content: q.content,
+          orderIndex: q.orderIndex,
+          domain: q.domain,
+          difficulty: q.difficulty,
+          transcript: q.answer?.transcript ?? null,
+          emotionSummary: q.answer?.emotionSummary ?? null,
+          durationSeconds: q.answer?.durationSeconds ?? null,
+        })),
+      });
+
+      if (evalResult.isErr()) {
+        this.logger.error(
+          `LLM evaluation failed for session ${sessionId}: ${evalResult.error.message}`,
+        );
+        throw evalResult.error;
+      }
+
+      const evaluation = evalResult.value;
 
       const scoreResult = Score.create({
         sessionId: session.id,
-        contentScore,
-        relevanceScore,
-        confidenceScore,
-        overallScore,
+        contentScore: evaluation.contentScore,
+        relevanceScore: evaluation.relevanceScore,
+        confidenceScore: evaluation.confidenceScore,
+        overallScore: evaluation.overallScore,
       });
       if (scoreResult.isErr()) {
         throw scoreResult.error;
@@ -221,11 +186,11 @@ export class ScoringWorkerService implements OnModuleInit {
 
       const summaryResult = InterviewSummary.create({
         sessionId: session.id,
-        overallFeedback,
-        strengths,
-        improvements,
-        scoringModel,
-        promptVersion,
+        overallFeedback: evaluation.overallFeedback,
+        strengths: evaluation.strengths,
+        improvements: evaluation.improvements,
+        scoringModel: evaluation.scoringModel,
+        promptVersion: evaluation.promptVersion,
         generatedAt: new Date(),
       });
       if (summaryResult.isErr()) {
@@ -246,7 +211,10 @@ export class ScoringWorkerService implements OnModuleInit {
       }
 
       this.logger.log(
-        `Scoring job ${job.id} completed for session ${sessionId} with score ${score.overallScore}`,
+        `Scoring job ${job.id} completed for session ${sessionId} ` +
+          `[overallScore=${score.overallScore}, model=${summary.scoringModel}, promptVersion=${summary.promptVersion ?? 'n/a'}, ` +
+          `provider=${evaluation.provider ?? 'n/a'}, latencyMs=${evaluation.latencyMs ?? 0}, ` +
+          `inputTokens=${evaluation.inputTokens ?? 0}, outputTokens=${evaluation.outputTokens ?? 0}]`,
       );
     } catch (error) {
       const err = error as Error;
@@ -282,6 +250,9 @@ export class ScoringWorkerService implements OnModuleInit {
   private isNonRetryableError(error: unknown): boolean {
     if (error instanceof ScoringDomainErrorValidation) {
       return true;
+    }
+    if (error instanceof AppError) {
+      return error.code === ErrorCode.BadRequest;
     }
     if (error instanceof Error) {
       if (
