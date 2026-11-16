@@ -6,6 +6,7 @@ import {
   ICheatLogRepository,
   type CheatEventCounts,
   type CheatLogSessionData,
+  type CreatedCheatLog,
   type CreateCheatLogData,
   type SavedCheatLog,
 } from '../domain/repositories/cheat-log.repo.interface';
@@ -66,10 +67,28 @@ export class CheatLogRepository implements ICheatLogRepository {
     }
   }
 
+  async findCheatLogByClientEventId(
+    sessionId: number,
+    clientEventId: string,
+  ): Promise<Result<SavedCheatLog | null, Error>> {
+    try {
+      const found = await this.prisma.cheatLog.findFirst({
+        where: { sessionId, clientEventId },
+        select: CHEAT_LOG_SELECT,
+      });
+      return ok(found ? toSavedCheatLog(found) : null);
+    } catch (error) {
+      this.logger.error(
+        `findCheatLogByClientEventId failed: ${(error as Error).message}`,
+      );
+      return err(new Error('Failed to get the cheat log.'));
+    }
+  }
+
   async createCheatLog(
     sessionId: number,
     data: CreateCheatLogData,
-  ): Promise<Result<SavedCheatLog, Error>> {
+  ): Promise<Result<CreatedCheatLog, Error>> {
     try {
       const created = await this.prisma.cheatLog.create({
         data: {
@@ -77,11 +96,23 @@ export class CheatLogRepository implements ICheatLogRepository {
           eventType: mapCheatEventTypeToPrisma(data.eventType),
           description: data.description,
           occurredAt: data.occurredAt,
+          clientEventId: data.clientEventId,
         },
         select: CHEAT_LOG_SELECT,
       });
-      return ok(toSavedCheatLog(created));
+      return ok({ log: toSavedCheatLog(created), isDuplicate: false });
     } catch (error) {
+      // Unique (sessionId, clientEventId): một request cùng clientEventId đã
+      // ghi xong giữa lúc kiểm tra và lúc ghi. Trả lại bản ghi đó.
+      if (data.clientEventId !== null && isUniqueViolation(error)) {
+        const existing = await this.findCheatLogByClientEventId(
+          sessionId,
+          data.clientEventId,
+        );
+        if (existing.isOk() && existing.value !== null) {
+          return ok({ log: existing.value, isDuplicate: true });
+        }
+      }
       this.logger.error(`createCheatLog failed: ${(error as Error).message}`);
       return err(new Error('Failed to create the cheat log.'));
     }
@@ -124,6 +155,11 @@ export class CheatLogRepository implements ICheatLogRepository {
       return err(new Error('Failed to count the cheat logs.'));
     }
   }
+}
+
+// Prisma P2002 = unique constraint failed.
+function isUniqueViolation(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === 'P2002';
 }
 
 function emptyCounts(): CheatEventCounts {

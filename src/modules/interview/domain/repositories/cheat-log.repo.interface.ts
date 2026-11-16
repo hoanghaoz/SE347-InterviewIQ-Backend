@@ -16,6 +16,8 @@ export type CreateCheatLogData = {
   readonly eventType: CommonCheatEventType;
   readonly description: string | null;
   readonly occurredAt: Date;
+  // Do client sinh để gửi lại an toàn: cùng id trong một buổi chỉ ghi một lần.
+  readonly clientEventId: string | null;
 };
 
 export type SavedCheatLog = {
@@ -24,6 +26,12 @@ export type SavedCheatLog = {
   readonly description: string | null;
   readonly occurredAt: Date;
   readonly createdAt: Date;
+};
+
+// isDuplicate = true khi clientEventId đã được ghi trước đó: `log` là bản ghi cũ.
+export type CreatedCheatLog = {
+  readonly log: SavedCheatLog;
+  readonly isDuplicate: boolean;
 };
 
 // Luôn có đủ mọi loại sự kiện, loại chưa xảy ra có giá trị 0.
@@ -37,10 +45,18 @@ export abstract class ICheatLogRepository {
     sessionPublicId: string,
   ): Promise<Result<CheatLogSessionData | null, Error>>;
 
+  // ok(null) khi buổi này chưa ghi sự kiện nào với clientEventId đó.
+  abstract findCheatLogByClientEventId(
+    sessionId: number,
+    clientEventId: string,
+  ): Promise<Result<SavedCheatLog | null, Error>>;
+
+  // Chống ghi trùng khi hai request cùng clientEventId chạy song song: bên
+  // thua trả lại bản ghi của bên thắng với isDuplicate = true.
   abstract createCheatLog(
     sessionId: number,
     data: CreateCheatLogData,
-  ): Promise<Result<SavedCheatLog, Error>>;
+  ): Promise<Result<CreatedCheatLog, Error>>;
 
   // Sắp theo occurredAt tăng dần, rồi theo id.
   abstract getCheatLogs(
