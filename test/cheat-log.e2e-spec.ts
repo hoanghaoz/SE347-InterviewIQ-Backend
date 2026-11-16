@@ -127,6 +127,29 @@ describe('InterviewCheatLogController (e2e)', () => {
       expect(recordCheatEventAsync).not.toHaveBeenCalled();
     });
 
+    it('forwards a clientEventId to the service', async () => {
+      const clientEventId = '8d3f6c1e-5b7a-4e2f-9a0c-1b2d3e4f5a6b';
+
+      await post({ ...payload, clientEventId }).expect(201);
+
+      expect(recordCheatEventAsync).toHaveBeenCalledWith(userId, sessionId, {
+        ...payload,
+        clientEventId,
+      });
+    });
+
+    it('rejects a clientEventId that is not a UUID', async () => {
+      const response = await post({
+        ...payload,
+        clientEventId: 'not-a-uuid',
+      }).expect(400);
+
+      expect(response.body).toMatchObject({
+        errors: [expect.objectContaining({ field: 'clientEventId' })],
+      });
+      expect(recordCheatEventAsync).not.toHaveBeenCalled();
+    });
+
     it('rejects an invalid occurredAt', async () => {
       const response = await post({
         ...payload,

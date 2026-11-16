@@ -94,6 +94,46 @@ describe('InterviewCheatLogGateway (e2e)', () => {
     expect(recordCheatEventAsync).toHaveBeenCalledWith(userId, sessionId, body);
   });
 
+  it('forwards a clientEventId so a resend can be deduplicated', async () => {
+    const clientEventId = '8d3f6c1e-5b7a-4e2f-9a0c-1b2d3e4f5a6b';
+    const socket = await connect({ token });
+
+    await record(socket, { ...message, clientEventId });
+    await record(socket, { ...message, clientEventId });
+
+    expect(recordCheatEventAsync).toHaveBeenCalledTimes(2);
+    expect(recordCheatEventAsync).toHaveBeenNthCalledWith(
+      1,
+      userId,
+      sessionId,
+      {
+        ...body,
+        clientEventId,
+      },
+    );
+    expect(recordCheatEventAsync).toHaveBeenNthCalledWith(
+      2,
+      userId,
+      sessionId,
+      {
+        ...body,
+        clientEventId,
+      },
+    );
+  });
+
+  it('rejects a clientEventId that is not a UUID', async () => {
+    const socket = await connect({ token });
+
+    const ack = await record(socket, { ...message, clientEventId: 'nope' });
+
+    expect(ack).toMatchObject({ statusCode: 400, success: false });
+    expect(ack.errors).toEqual([
+      expect.objectContaining({ field: 'clientEventId' }),
+    ]);
+    expect(recordCheatEventAsync).not.toHaveBeenCalled();
+  });
+
   it('accepts the token from the Authorization header', async () => {
     const socket = await connect(undefined, {
       Authorization: `Bearer ${token}`,
