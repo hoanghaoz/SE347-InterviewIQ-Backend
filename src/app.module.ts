@@ -1,18 +1,15 @@
 import {
-  BadRequestException,
   MiddlewareConsumer,
   Module,
   NestModule,
   RequestMethod,
-  ValidationPipe,
 } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_PIPE } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { LoggerMiddleware } from './shared/common/logger.middleware';
-import { ErrorCode } from './shared/common/errorCode';
-import { mapValidationErrors } from './shared/common/validation-error.mapper';
+import { createValidationPipe } from './shared/common/validation-pipe.factory';
 import { PrismaModule } from './shared/infrastructure/database/prisma.module';
 import { InterviewHistoryModule } from './modules/interview-history/interview-history.module';
 import { InterviewModule } from './modules/interview/interview.module';
@@ -46,16 +43,7 @@ import { QuestionGenerationModule } from './modules/question-generation/question
     AppService,
     {
       provide: APP_PIPE,
-      useFactory: () =>
-        new ValidationPipe({
-          whitelist: true,
-          exceptionFactory: (errors) =>
-            new BadRequestException({
-              code: ErrorCode.BadRequest,
-              message: 'Request validation failed',
-              errors: mapValidationErrors(errors),
-            }),
-        }),
+      useFactory: createValidationPipe,
     },
   ],
 })
