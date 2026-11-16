@@ -149,6 +149,7 @@ erDiagram
         int session_id FK
         enum event_type
         varchar description
+        uuid client_event_id
         timestamptz occurred_at
         timestamptz created_at
     }
@@ -266,9 +267,11 @@ Ghi nhận các sự kiện bất thường cảnh báo gian lận trong suốt 
 - **`session_id`** (`INT`, FK → `interview_sessions.id`, ON DELETE CASCADE).
 - **`event_type`** (`CheatEventType`): Loại sự kiện giám sát.
 - **`description`** (`VARCHAR(500)`, Nullable): Mô tả ngữ cảnh chi tiết khi phát hiện sự kiện.
+- **`client_event_id`** (`UUID`, Nullable): Id do client sinh cho từng sự kiện, dùng để gửi lại an toàn (idempotency). Cùng `session_id` thì mỗi `client_event_id` chỉ ghi một lần; `NULL` (client không gửi) thì không chống trùng.
 - **`occurred_at`** (`TIMESTAMPTZ`): Thời điểm phát hiện sự kiện.
 - **`created_at`** (`TIMESTAMPTZ`).
 - **Indexes**: `session_id`, `event_type`, `occurred_at`.
+- **Unique**: `(session_id, client_event_id)`.
 
 ---
 
