@@ -55,9 +55,50 @@ describe('InterviewHistoryController (e2e)', () => {
       id: '00000000-0000-4000-8000-000000000002',
       fileName: 'nguyen-van-a-cv.pdf',
     },
-    score: null,
-    summary: null,
-    questions: [],
+    score: {
+      contentScore: 8,
+      relevanceScore: 7.5,
+      confidenceScore: 7,
+      overallScore: 7.6,
+      maxScore: 10,
+      scoredAt: '2026-10-20T08:14:02.000Z',
+    },
+    summary: {
+      overallFeedback: 'Good fundamentals',
+      strengths: [
+        { category: 'TECHNICAL_KNOWLEDGE', title: 'DI', description: 'Clear' },
+      ],
+      improvements: [
+        {
+          category: 'COMMUNICATION',
+          title: 'Examples',
+          description: 'Too theoretical',
+          suggestion: 'Use STAR',
+        },
+      ],
+    },
+    questions: [
+      {
+        id: '00000000-0000-4000-8000-0000000000b1',
+        orderIndex: 1,
+        content: 'Explain DI in NestJS',
+        domain: 'TECHNICAL',
+        difficulty: 'MEDIUM',
+        answer: {
+          videoUrl: 'https://res.cloudinary.com/demo/video/upload/v1/a.webm',
+          durationSeconds: 95,
+          transcript: 'My answer',
+        },
+      },
+      {
+        id: '00000000-0000-4000-8000-0000000000b2',
+        orderIndex: 2,
+        content: 'Tell me about a hard bug',
+        domain: 'BEHAVIORAL',
+        difficulty: 'HARD',
+        answer: null,
+      },
+    ],
     cheatSummary: {
       totalCount: 1,
       countsByType: {
@@ -282,7 +323,7 @@ describe('InterviewHistoryController (e2e)', () => {
   });
 
   describe('GET /api/interviews/:id', () => {
-    it('returns the detail with the reserved slots present', async () => {
+    it('returns the detail with questions, answers, score and summary', async () => {
       getInterviewAsync.mockResolvedValue(ok(detail));
 
       const response = await detailOf(sessionPublicId).expect(200);
@@ -293,11 +334,50 @@ describe('InterviewHistoryController (e2e)', () => {
         message: 'Interview retrieved successfully',
         data: detail,
       });
-      // Khung cho module khác: phải có mặt với giá trị rỗng, không bị lược bỏ
+      // null phải được serialize ra JSON, không bị lược bỏ khỏi response
+      const data = (
+        response.body as { data: { questions: Record<string, unknown>[] } }
+      ).data;
+      expect(data.questions[1]).toHaveProperty('answer', null);
+    });
+
+    it('serializes score and summary as null while the session is still grading', async () => {
+      getInterviewAsync.mockResolvedValue(
+        ok({
+          ...detail,
+          status: CommonSessionStatus.SCORING,
+          completedAt: null,
+          score: null,
+          summary: null,
+        }),
+      );
+
+      const response = await detailOf(sessionPublicId).expect(200);
+
       const data = (response.body as { data: Record<string, unknown> }).data;
-      expect(data.score).toBeNull();
-      expect(data.summary).toBeNull();
-      expect(data.questions).toEqual([]);
+      expect(data).toHaveProperty('score', null);
+      expect(data).toHaveProperty('summary', null);
+      expect(data.questions).toHaveLength(2);
+    });
+
+    it('hides the repository failure behind a 500', async () => {
+      getInterviewAsync.mockResolvedValue(
+        err(
+          new AppError(
+            ErrorCode.InternalServerError,
+            'Failed to load the interview',
+          ),
+        ),
+      );
+
+      const response = await detailOf(sessionPublicId).expect(500);
+
+      expect(response.body).toMatchObject({
+        statusCode: 500,
+        success: false,
+        code: ErrorCode.InternalServerError,
+        message: 'Failed to load the interview',
+      });
     });
 
     it('returns 401 without a bearer token', async () => {
