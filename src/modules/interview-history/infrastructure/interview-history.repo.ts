@@ -6,6 +6,14 @@ import { PrismaService } from '../../../shared/infrastructure/database/prisma.se
 import { CommonSessionStatus } from '../../interview/domain/enums/interview-enum';
 import { mapCheatEventTypeToDomain } from '../../interview/infrastructure/cheat-log.mapper';
 import {
+  mapDifficultyToDomain,
+  mapDomainToDomain,
+} from '../../question-generation/infrastructure/question-mapper';
+import type {
+  ImprovementItem,
+  StrengthItem,
+} from '../../scoring/domain/entities/scoring-job.entity';
+import {
   IInterviewHistoryRepository,
   InterviewHistoryDetailData,
   InterviewHistoryFilter,
@@ -55,7 +63,78 @@ const DETAIL_SELECT = {
       | { id: 'asc' }
     )[],
   },
+  // Câu hỏi, câu trả lời, điểm và nhận xét được kéo trong cùng lời gọi findFirst:
+  // số câu SQL cố định theo số quan hệ, không tăng theo số câu hỏi (không N+1).
+  questions: {
+    select: {
+      publicId: true,
+      orderIndex: true,
+      content: true,
+      domain: true,
+      difficulty: true,
+      // Không select emotionSummary (Json chỉ worker dùng). Video chỉ là URL,
+      // không có binary nào nằm trong database.
+      answer: {
+        select: { videoUrl: true, durationSeconds: true, transcript: true },
+      },
+    },
+    // (sessionId, orderIndex) là unique nên orderIndex đủ để thứ tự ổn định.
+    orderBy: { orderIndex: 'asc' },
+  },
+  score: {
+    select: {
+      contentScore: true,
+      relevanceScore: true,
+      confidenceScore: true,
+      overallScore: true,
+      scoredAt: true,
+    },
+  },
+  // Không select scoringModel / promptVersion: đó là chi tiết vận hành nội bộ.
+  interviewSummary: {
+    select: { overallFeedback: true, strengths: true, improvements: true },
+  },
 } as const;
+
+// strengths/improvements là cột Json nên Prisma trả về kiểu không xác định.
+// Chỉ giữ phần tử đúng shape và copy tường minh từng field, để một bản ghi hỏng
+// không làm vỡ response và key lạ trong Json không lọt ra ngoài.
+type FeedbackRecord = Record<string, unknown> & {
+  category: string;
+  title: string;
+  description: string;
+};
+
+function isFeedbackRecord(value: unknown): value is FeedbackRecord {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.category === 'string' &&
+    typeof record.title === 'string' &&
+    typeof record.description === 'string'
+  );
+}
+
+function toStrengths(value: unknown): StrengthItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isFeedbackRecord).map((item) => ({
+    category: item.category,
+    title: item.title,
+    description: item.description,
+  }));
+}
+
+function toImprovements(value: unknown): ImprovementItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isFeedbackRecord).map((item) => ({
+    category: item.category,
+    title: item.title,
+    description: item.description,
+    ...(typeof item.suggestion === 'string'
+      ? { suggestion: item.suggestion }
+      : {}),
+  }));
+}
 
 @Injectable()
 export class InterviewHistoryRepository implements IInterviewHistoryRepository {
@@ -162,6 +241,38 @@ export class InterviewHistoryRepository implements IInterviewHistoryRepository {
           occurredAt: log.occurredAt,
           createdAt: log.createdAt,
         })),
+        questions: session.questions.map((question) => ({
+          questionPublicId: question.publicId,
+          orderIndex: question.orderIndex,
+          content: question.content,
+          domain: mapDomainToDomain(question.domain),
+          difficulty: mapDifficultyToDomain(question.difficulty),
+          answer: question.answer
+            ? {
+                videoUrl: question.answer.videoUrl,
+                durationSeconds: question.answer.durationSeconds,
+                transcript: question.answer.transcript,
+              }
+            : null,
+        })),
+        score: session.score
+          ? {
+              contentScore: session.score.contentScore,
+              relevanceScore: session.score.relevanceScore,
+              confidenceScore: session.score.confidenceScore,
+              overallScore: session.score.overallScore,
+              scoredAt: session.score.scoredAt,
+            }
+          : null,
+        summary: session.interviewSummary
+          ? {
+              overallFeedback: session.interviewSummary.overallFeedback,
+              strengths: toStrengths(session.interviewSummary.strengths),
+              improvements: toImprovements(
+                session.interviewSummary.improvements,
+              ),
+            }
+          : null,
       });
     } catch (error) {
       this.logger.error(
