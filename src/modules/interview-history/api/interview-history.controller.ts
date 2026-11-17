@@ -30,7 +30,7 @@ import { IInterviewHistoryService } from '../application/interfaces/interview-hi
 // Thin controller: read input, call the service, turn Result into HTTP.
 // Chỉ đọc lịch sử của chính chủ token: không route nào nhận user id từ client.
 @ApiTags('interviews')
-@ApiExtraModels(InterviewHistoryItemDto)
+@ApiExtraModels(InterviewHistoryItemDto, InterviewHistoryDetailDto)
 @Controller('api/interviews')
 export class InterviewHistoryController {
   constructor(
@@ -113,7 +113,26 @@ export class InterviewHistoryController {
   @ApiOperation({
     summary: 'Get one interview of the current user',
     description:
-      'Skeleton for the detail page: score, summary and questions are reserved slots other modules fill in later.',
+      'Questions with their recorded answers (video URL, transcript) in every status. ' +
+      'Session-level score and AI summary only once status is COMPLETED; there is no per-question score. ' +
+      'Missing and foreign interviews both return 404.',
+  })
+  @ApiOkResponse({
+    description: 'Interview detail',
+    schema: {
+      type: 'object',
+      required: ['statusCode', 'success', 'data', 'message', 'timestamp'],
+      properties: {
+        statusCode: { type: 'integer', example: 200 },
+        success: { type: 'boolean', example: true },
+        message: {
+          type: 'string',
+          example: 'Interview retrieved successfully',
+        },
+        timestamp: { type: 'string', format: 'date-time' },
+        data: { $ref: getSchemaPath(InterviewHistoryDetailDto) },
+      },
+    },
   })
   async getInterviewAsync(
     @User() user: JwtPayload,
