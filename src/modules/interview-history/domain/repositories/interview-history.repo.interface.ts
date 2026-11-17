@@ -4,6 +4,14 @@ import {
   CommonCheatEventType,
   CommonSessionStatus,
 } from '../../../interview/domain/enums/interview-enum';
+import {
+  QuestionDifficulty,
+  QuestionDomain,
+} from '../../../question-generation/domain/enums/question.enum';
+import type {
+  ImprovementItem,
+  StrengthItem,
+} from '../../../scoring/domain/entities/scoring-job.entity';
 
 // Field vắng mặt nghĩa là không lọc theo field đó.
 export type InterviewHistoryFilter = {
@@ -41,6 +49,39 @@ export type InterviewHistoryCheatLogData = {
   readonly createdAt: Date;
 };
 
+// Không có emotionSummary (cột Json chỉ worker chấm điểm dùng) và không có
+// cloudinaryPublicId: response chỉ cần URL để phát video.
+export type InterviewHistoryAnswerData = {
+  readonly videoUrl: string | null;
+  readonly durationSeconds: number | null;
+  readonly transcript: string | null;
+};
+
+export type InterviewHistoryQuestionData = {
+  readonly questionPublicId: string;
+  readonly orderIndex: number;
+  readonly content: string;
+  readonly domain: QuestionDomain;
+  readonly difficulty: QuestionDifficulty;
+  // null khi câu này chưa có bản ghi answer.
+  readonly answer: InterviewHistoryAnswerData | null;
+};
+
+// Điểm cấp buổi. Schema không có điểm từng câu: LLM chấm cả buổi trong một lần.
+export type InterviewHistoryScoreData = {
+  readonly contentScore: number;
+  readonly relevanceScore: number;
+  readonly confidenceScore: number;
+  readonly overallScore: number;
+  readonly scoredAt: Date;
+};
+
+export type InterviewHistorySummaryData = {
+  readonly overallFeedback: string;
+  readonly strengths: readonly StrengthItem[];
+  readonly improvements: readonly ImprovementItem[];
+};
+
 export type InterviewHistoryDetailData = {
   readonly sessionPublicId: string;
   readonly title: string;
@@ -55,6 +96,12 @@ export type InterviewHistoryDetailData = {
   readonly cv: InterviewHistoryCvData | null;
   // Sắp theo occurredAt tăng dần; mảng rỗng khi buổi không có vi phạm.
   readonly cheatLogs: readonly InterviewHistoryCheatLogData[];
+  // Sắp theo orderIndex tăng dần; mảng rỗng khi buổi chưa sinh câu hỏi.
+  readonly questions: readonly InterviewHistoryQuestionData[];
+  // Repo trả đúng những gì có trong database. Việc chỉ lộ điểm khi buổi đã
+  // COMPLETED là luật nghiệp vụ, nằm ở service.
+  readonly score: InterviewHistoryScoreData | null;
+  readonly summary: InterviewHistorySummaryData | null;
 };
 
 // Trả items + tổng số bản ghi thật, không trả PageResult: PageResult chứa kiểu
