@@ -4,6 +4,10 @@ import {
   CommonCheatEventType,
   CommonSessionStatus,
 } from '../../interview/domain/enums/interview-enum';
+import {
+  QuestionDifficulty,
+  QuestionDomain,
+} from '../../question-generation/domain/enums/question.enum';
 import { InterviewHistoryRepository } from './interview-history.repo';
 
 jest.mock('../../../shared/infrastructure/database/prisma.service', () => ({
@@ -61,6 +65,33 @@ describe('InterviewHistoryRepository', () => {
         createdAt: true,
       },
       orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+    },
+    // Pin cả các quan hệ của trang chi tiết: không emotionSummary, không
+    // scoringModel/promptVersion, câu hỏi luôn theo orderIndex tăng dần.
+    questions: {
+      select: {
+        publicId: true,
+        orderIndex: true,
+        content: true,
+        domain: true,
+        difficulty: true,
+        answer: {
+          select: { videoUrl: true, durationSeconds: true, transcript: true },
+        },
+      },
+      orderBy: { orderIndex: 'asc' },
+    },
+    score: {
+      select: {
+        contentScore: true,
+        relevanceScore: true,
+        confidenceScore: true,
+        overallScore: true,
+        scoredAt: true,
+      },
+    },
+    interviewSummary: {
+      select: { overallFeedback: true, strengths: true, improvements: true },
     },
   };
 
@@ -280,6 +311,34 @@ describe('InterviewHistoryRepository', () => {
           createdAt: new Date('2026-10-20T08:05:01.000Z'),
         },
       ],
+      questions: [] as unknown[],
+      score: null as unknown,
+      interviewSummary: null as unknown,
+    };
+
+    const questionId1 = '00000000-0000-4000-8000-0000000000b1';
+    const questionId2 = '00000000-0000-4000-8000-0000000000b2';
+    const scoredAt = new Date('2026-10-20T08:14:02.000Z');
+
+    const questionRow = (
+      publicId: string,
+      orderIndex: number,
+      answer: unknown,
+    ) => ({
+      publicId,
+      orderIndex,
+      content: `Question ${orderIndex}`,
+      domain: 'TECHNICAL',
+      difficulty: 'MEDIUM',
+      answer,
+    });
+
+    const scoreRow = {
+      contentScore: 8,
+      relevanceScore: 7.5,
+      confidenceScore: 7,
+      overallScore: 7.6,
+      scoredAt,
     };
 
     it('requires both the session id and the owner in the same query', async () => {
@@ -294,8 +353,9 @@ describe('InterviewHistoryRepository', () => {
       );
     });
 
-    // select khớp chính xác DETAIL_SELECT nghĩa là không kéo cvSnapshot về
-    it('never selects the cv snapshot', async () => {
+    // select khớp chính xác DETAIL_SELECT nghĩa là không kéo cvSnapshot,
+    // emotionSummary hay scoringModel về
+    it('selects only the columns the detail page needs', async () => {
       findFirst.mockResolvedValue(detailRow);
 
       await repository.getInterviewDetail(userPublicId, sessionPublicId);
@@ -303,6 +363,24 @@ describe('InterviewHistoryRepository', () => {
       expect(findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ select: DETAIL_SELECT }),
       );
+    });
+
+    // Prisma mock chỉ có interviewSession: một lần findFirst và không có
+    // truy vấn nào khác cho từng câu hỏi nghĩa là không có N+1.
+    it('loads questions, answers, score and summary in a single findFirst', async () => {
+      findFirst.mockResolvedValue({
+        ...detailRow,
+        questions: [
+          questionRow(questionId1, 1, null),
+          questionRow(questionId2, 2, null),
+        ],
+      });
+
+      await repository.getInterviewDetail(userPublicId, sessionPublicId);
+
+      expect(findFirst).toHaveBeenCalledTimes(1);
+      expect(findMany).not.toHaveBeenCalled();
+      expect(count).not.toHaveBeenCalled();
     });
 
     it('maps the row and flattens the cv relation', async () => {
@@ -335,7 +413,186 @@ describe('InterviewHistoryRepository', () => {
             createdAt: new Date('2026-10-20T08:05:01.000Z'),
           },
         ],
+        questions: [],
+        score: null,
+        summary: null,
       });
+    });
+
+    it('keeps the database order of questions and flattens each answer', async () => {
+      findFirst.mockResolvedValue({
+        ...detailRow,
+        questions: [
+          questionRow(questionId1, 1, {
+            videoUrl: 'https://res.cloudinary.com/demo/video/upload/v1/a.webm',
+            durationSeconds: 95,
+            transcript: 'My answer',
+          }),
+          questionRow(questionId2, 2, null),
+        ],
+      });
+
+      const result = await repository.getInterviewDetail(
+        userPublicId,
+        sessionPublicId,
+      );
+
+      if (result.isErr()) throw result.error;
+      expect(result.value?.questions).toEqual([
+        {
+          questionPublicId: questionId1,
+          orderIndex: 1,
+          content: 'Question 1',
+          domain: QuestionDomain.TECHNICAL,
+          difficulty: QuestionDifficulty.MEDIUM,
+          answer: {
+            videoUrl: 'https://res.cloudinary.com/demo/video/upload/v1/a.webm',
+            durationSeconds: 95,
+            transcript: 'My answer',
+          },
+        },
+        {
+          questionPublicId: questionId2,
+          orderIndex: 2,
+          content: 'Question 2',
+          domain: QuestionDomain.TECHNICAL,
+          difficulty: QuestionDifficulty.MEDIUM,
+          answer: null,
+        },
+      ]);
+    });
+
+    it('keeps an answer that has no video with videoUrl null', async () => {
+      findFirst.mockResolvedValue({
+        ...detailRow,
+        questions: [
+          questionRow(questionId1, 1, {
+            videoUrl: null,
+            durationSeconds: null,
+            transcript: '',
+          }),
+        ],
+      });
+
+      const result = await repository.getInterviewDetail(
+        userPublicId,
+        sessionPublicId,
+      );
+
+      if (result.isErr()) throw result.error;
+      expect(result.value?.questions[0].answer).toEqual({
+        videoUrl: null,
+        durationSeconds: null,
+        transcript: '',
+      });
+    });
+
+    it('maps the score and the summary rows as stored', async () => {
+      findFirst.mockResolvedValue({
+        ...detailRow,
+        score: scoreRow,
+        interviewSummary: {
+          overallFeedback: 'Good fundamentals',
+          strengths: [
+            {
+              category: 'TECHNICAL_KNOWLEDGE',
+              title: 'DI',
+              description: 'Clear',
+            },
+          ],
+          improvements: [
+            {
+              category: 'COMMUNICATION',
+              title: 'Examples',
+              description: 'Too theoretical',
+              suggestion: 'Use STAR',
+            },
+          ],
+        },
+      });
+
+      const result = await repository.getInterviewDetail(
+        userPublicId,
+        sessionPublicId,
+      );
+
+      if (result.isErr()) throw result.error;
+      expect(result.value?.score).toEqual(scoreRow);
+      expect(result.value?.summary).toEqual({
+        overallFeedback: 'Good fundamentals',
+        strengths: [
+          {
+            category: 'TECHNICAL_KNOWLEDGE',
+            title: 'DI',
+            description: 'Clear',
+          },
+        ],
+        improvements: [
+          {
+            category: 'COMMUNICATION',
+            title: 'Examples',
+            description: 'Too theoretical',
+            suggestion: 'Use STAR',
+          },
+        ],
+      });
+    });
+
+    // Cột Json không có kiểu: bản ghi hỏng không được làm vỡ response, và key lạ
+    // trong Json không được lọt ra ngoài.
+    it('drops malformed feedback items and unknown keys from the Json columns', async () => {
+      findFirst.mockResolvedValue({
+        ...detailRow,
+        interviewSummary: {
+          overallFeedback: 'Feedback',
+          strengths: [
+            { category: 'A', title: 'T', description: 'D', internal: 'x' },
+            { category: 'B', title: 42, description: 'D' },
+            'not-an-object',
+            null,
+          ],
+          improvements: [
+            { category: 'C', title: 'T', description: 'D', suggestion: 7 },
+          ],
+        },
+      });
+
+      const result = await repository.getInterviewDetail(
+        userPublicId,
+        sessionPublicId,
+      );
+
+      if (result.isErr()) throw result.error;
+      expect(result.value?.summary?.strengths).toEqual([
+        { category: 'A', title: 'T', description: 'D' },
+      ]);
+      // suggestion không phải chuỗi thì bị bỏ, key vắng mặt chứ không undefined
+      expect(result.value?.summary?.improvements).toEqual([
+        { category: 'C', title: 'T', description: 'D' },
+      ]);
+      expect(result.value?.summary?.improvements[0]).not.toHaveProperty(
+        'suggestion',
+      );
+    });
+
+    it('returns empty feedback lists when the Json columns are not arrays', async () => {
+      findFirst.mockResolvedValue({
+        ...detailRow,
+        interviewSummary: {
+          overallFeedback: 'Feedback',
+          strengths: { category: 'A' },
+          improvements: null,
+        },
+      });
+
+      const result = await repository.getInterviewDetail(
+        userPublicId,
+        sessionPublicId,
+      );
+
+      if (result.isErr()) throw result.error;
+      expect(result.value?.summary?.strengths).toEqual([]);
+      expect(result.value?.summary?.improvements).toEqual([]);
     });
 
     it('returns an empty cheatLogs array when the session has no violation', async () => {
