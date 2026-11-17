@@ -1,7 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { err, ok, type Result } from 'neverthrow';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
-import { CommonCheatEventType } from '../../../interview/domain/enums/interview-enum';
+import {
+  CommonCheatEventType,
+  CommonSessionStatus,
+} from '../../../interview/domain/enums/interview-enum';
+import { SCORING_LIMITS } from '../../../scoring/domain/constants/scoring.constants';
 import { PageResult } from '../../../../shared/common/pagination';
 import {
   IInterviewHistoryRepository,
@@ -9,6 +13,9 @@ import {
   InterviewHistoryDetailData,
   InterviewHistoryFilter,
   InterviewHistoryItemData,
+  InterviewHistoryQuestionData,
+  InterviewHistoryScoreData,
+  InterviewHistorySummaryData,
 } from '../../domain/repositories/interview-history.repo.interface';
 import { InterviewHistoryQueryDto } from '../dtos/interview-history.request.dto';
 import type {
@@ -18,6 +25,9 @@ import type {
 import {
   InterviewHistoryDetailDto,
   InterviewHistoryItemDto,
+  InterviewHistoryQuestionDto,
+  InterviewHistoryScoreDto,
+  InterviewHistorySummaryDto,
 } from '../dtos/interview-history.response.dto';
 import { IInterviewHistoryService } from '../interfaces/interview-history.service.interface';
 
@@ -125,6 +135,13 @@ function toInterviewHistoryItem(
 function toInterviewHistoryDetail(
   data: InterviewHistoryDetailData,
 ): InterviewHistoryDetailDto {
+  // Worker ghi score, summary và status COMPLETED trong cùng một transaction.
+  // Chỉ lộ kết quả khi status đã là COMPLETED:
+  // - SCORING/FAILED mà vẫn có bản ghi (ví dụ đọc lệch snapshot giữa các câu
+  //   SQL của nested select, hoặc dữ liệu cũ) thì đó chưa phải kết quả cuối;
+  // - status được đọc trước các quan hệ, nên thấy COMPLETED nghĩa là transaction
+  //   đã commit và score/summary chắc chắn đọc được.
+  const isScored = data.status === CommonSessionStatus.COMPLETED;
   return {
     id: data.sessionPublicId,
     title: data.title,
@@ -137,13 +154,55 @@ function toInterviewHistoryDetail(
     completedAt: data.completedAt?.toISOString() ?? null,
     createdAt: data.createdAt.toISOString(),
     cv: data.cv ? { id: data.cv.cvPublicId, fileName: data.cv.fileName } : null,
-    // Khung cho module khác: xem docs/api-contract-interview-history.md mục 4.3
-    score: null,
-    summary: null,
-    questions: [],
+    score: isScored && data.score ? toScoreDto(data.score) : null,
+    summary: isScored && data.summary ? toSummaryDto(data.summary) : null,
+    // Câu hỏi và câu trả lời luôn trả về, kể cả khi chấm điểm FAILED.
+    questions: data.questions.map(toQuestionDto),
     isFlagged: data.cheatLogs.length > 0,
     cheatSummary: toCheatSummary(data.cheatLogs),
     cheatLogs: data.cheatLogs.map(toCheatLogDto),
+  };
+}
+
+function toQuestionDto(
+  question: InterviewHistoryQuestionData,
+): InterviewHistoryQuestionDto {
+  return {
+    id: question.questionPublicId,
+    orderIndex: question.orderIndex,
+    content: question.content,
+    domain: question.domain,
+    difficulty: question.difficulty,
+    answer: question.answer
+      ? {
+          videoUrl: question.answer.videoUrl,
+          durationSeconds: question.answer.durationSeconds,
+          transcript: question.answer.transcript,
+        }
+      : null,
+  };
+}
+
+function toScoreDto(
+  score: InterviewHistoryScoreData,
+): InterviewHistoryScoreDto {
+  return {
+    contentScore: score.contentScore,
+    relevanceScore: score.relevanceScore,
+    confidenceScore: score.confidenceScore,
+    overallScore: score.overallScore,
+    maxScore: SCORING_LIMITS.maxScore,
+    scoredAt: score.scoredAt.toISOString(),
+  };
+}
+
+function toSummaryDto(
+  summary: InterviewHistorySummaryData,
+): InterviewHistorySummaryDto {
+  return {
+    overallFeedback: summary.overallFeedback,
+    strengths: summary.strengths.map((item) => ({ ...item })),
+    improvements: summary.improvements.map((item) => ({ ...item })),
   };
 }
 
