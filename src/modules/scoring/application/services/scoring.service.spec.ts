@@ -1,7 +1,12 @@
 import { ok, err } from 'neverthrow';
+import { Subject } from 'rxjs';
 import { SessionStatus } from '../../../../../generated/prisma/enums';
 import { CommonUserRole } from '../../../../shared/common/commonEnum';
 import { ErrorCode } from '../../../../shared/common/errorCode';
+import {
+  IScoringEventBus,
+  ScoringJobEvent,
+} from '../interfaces/scoring-event.interface';
 import {
   IScoringQueue,
   ScoringJobInfo,
@@ -447,6 +452,106 @@ describe('ScoringService', () => {
       if (result.isErr()) {
         expect(result.error.code).toBe(ErrorCode.InternalServerError);
       }
+    });
+
+    it('should include mapped emotionTimeline from ScoringResult', async () => {
+      getSessionOwnerUserIdMock.mockResolvedValue(
+        ok({
+          userId: 10,
+          ownerPublicId: mockUserId,
+          sessionStatus: SessionStatus.COMPLETED,
+        }),
+      );
+      findSessionResultMock.mockResolvedValue(
+        ok(
+          new ScoringResult(mockScore, mockSummary, mockSessionId, [
+            {
+              questionPublicId: 'q-uuid-1',
+              orderIndex: 1,
+              domain: 'TECHNICAL',
+              difficulty: 'MEDIUM',
+              durationSeconds: 72,
+              emotionSummary: {
+                dominant: 'happy',
+                distribution: { happy: 0.65, neutral: 0.35 },
+              },
+            },
+          ]),
+        ),
+      );
+
+      const result = await service.getSessionResultAsync(
+        mockSessionId,
+        mockUserId,
+        CommonUserRole.USER,
+      );
+
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value.emotionTimeline).toEqual([
+          {
+            questionPublicId: 'q-uuid-1',
+            orderIndex: 1,
+            domain: 'TECHNICAL',
+            difficulty: 'MEDIUM',
+            durationSeconds: 72,
+            emotionSummary: {
+              dominant: 'happy',
+              distribution: { happy: 0.65, neutral: 0.35 },
+            },
+          },
+        ]);
+      }
+    });
+  });
+
+  describe('streamUserEvents', () => {
+    it('delegates to IScoringEventBus.subscribeForUser when configured', () => {
+      const subject = new Subject<ScoringJobEvent>();
+      const subscribeForUserMock = jest
+        .fn()
+        .mockReturnValue(subject.asObservable());
+      const eventBus: IScoringEventBus = {
+        publish: jest.fn(),
+        subscribeForUser: subscribeForUserMock,
+      };
+      const serviceWithBus = new ScoringService(
+        scoringQueue,
+        scoringRepo,
+        eventBus,
+      );
+
+      const received: ScoringJobEvent[] = [];
+      const sub = serviceWithBus
+        .streamUserEvents(mockUserId)
+        .subscribe((event) => received.push(event));
+
+      const event: ScoringJobEvent = {
+        userId: mockUserId,
+        jobId: mockJobId,
+        type: 'answer-scored',
+        payload: { sessionId: mockSessionId, overallScore: 8.5 },
+      };
+      subject.next(event);
+
+      expect(subscribeForUserMock).toHaveBeenCalledWith(mockUserId);
+      expect(received).toEqual([event]);
+      sub.unsubscribe();
+    });
+
+    it('returns an immediately completing stream when IScoringEventBus is omitted', () => {
+      let completed = false;
+      const received: ScoringJobEvent[] = [];
+
+      service.streamUserEvents(mockUserId).subscribe({
+        next: (event) => received.push(event),
+        complete: () => {
+          completed = true;
+        },
+      });
+
+      expect(completed).toBe(true);
+      expect(received).toEqual([]);
     });
   });
 });

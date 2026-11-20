@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { err, ok, Result } from 'neverthrow';
+import { EMPTY, Observable } from 'rxjs';
 import { SessionStatus } from '../../../../../generated/prisma/enums';
 import { CommonUserRole } from '../../../../shared/common/commonEnum';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
@@ -8,6 +9,10 @@ import {
   ScoringJobStatusResponseDto,
   SessionResultResponseDto,
 } from '../dtos/scoring.response.dto';
+import {
+  IScoringEventBus,
+  ScoringJobEvent,
+} from '../interfaces/scoring-event.interface';
 import { IScoringQueue } from '../interfaces/scoring.queue.interface';
 import {
   EnqueueResult,
@@ -23,6 +28,7 @@ export class ScoringService implements IScoringService {
   constructor(
     private readonly scoringQueue: IScoringQueue,
     private readonly scoringRepo: IScoringRepository,
+    @Optional() private readonly eventBus?: IScoringEventBus,
   ) {}
 
   async enqueueAsync(
@@ -168,8 +174,13 @@ export class ScoringService implements IScoringService {
       sessionId,
       scoringResult.score,
       scoringResult.summary,
+      scoringResult.emotionTimeline,
     );
 
     return ok(dto);
+  }
+
+  streamUserEvents(userId: string): Observable<ScoringJobEvent> {
+    return this.eventBus?.subscribeForUser(userId) ?? EMPTY;
   }
 }

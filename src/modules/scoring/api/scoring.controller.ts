@@ -3,8 +3,10 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  type MessageEvent,
   Param,
   ParseUUIDPipe,
+  Sse,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -13,6 +15,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { interval, map, merge, Observable } from 'rxjs';
 import { toHttpException } from '../../../shared/common/app-error.mapper';
 import { CommonUserRole } from '../../../shared/common/commonEnum';
 import type { JwtPayload } from '../../../shared/common/jwt.payload.interface';
@@ -30,6 +33,43 @@ import { IScoringService } from '../application/interfaces/scoring.service.inter
 @Controller('api/scoring')
 export class ScoringController {
   constructor(private readonly scoringService: IScoringService) {}
+
+  @Sse('stream')
+  @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
+  @ApiOperation({
+    summary: 'Stream real-time scoring job events via SSE',
+    description:
+      'Open a Server-Sent Events stream emitting answer-scored / answer-failed updates for the authenticated user, with 30s heartbeat pings.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'SSE stream opened successfully (text/event-stream)',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'Missing or invalid authentication token',
+  })
+  streamScoringEvents(@User() user: JwtPayload): Observable<MessageEvent> {
+    const events$ = this.scoringService.streamUserEvents(user.sub).pipe(
+      map(
+        (event): MessageEvent => ({
+          type: 'job-update',
+          data: event,
+        }),
+      ),
+    );
+
+    const heartbeat$ = interval(30_000).pipe(
+      map(
+        (): MessageEvent => ({
+          type: 'ping',
+          data: { timestamp: new Date().toISOString() },
+        }),
+      ),
+    );
+
+    return merge(events$, heartbeat$);
+  }
 
   @Get('jobs/:jobId/status')
   @HttpCode(HttpStatus.OK)

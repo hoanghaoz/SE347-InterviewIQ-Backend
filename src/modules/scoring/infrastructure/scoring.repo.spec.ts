@@ -489,6 +489,87 @@ describe('ScoringRepository', () => {
         expect(result.value?.sessionPublicId).toBe(mockSessionPublicId);
         expect(result.value?.score.overallScore).toBe(7.6);
         expect(result.value?.summary.overallFeedback).toBe('Good');
+        expect(result.value?.emotionTimeline).toEqual([]);
+      }
+    });
+
+    it('should return normalized emotionTimeline ordered by orderIndex when questions have answers', async () => {
+      findUniqueSessionMock.mockResolvedValue({
+        id: 1,
+        publicId: mockSessionPublicId,
+        score: {
+          id: 1,
+          publicId: 'score-uuid-1',
+          sessionId: 1,
+          contentScore: 8.0,
+          relevanceScore: 7.5,
+          confidenceScore: 7.0,
+          overallScore: 7.6,
+          scoredAt: fixedDate,
+          createdAt: fixedDate,
+        },
+        interviewSummary: {
+          id: 2,
+          publicId: 'summary-uuid-2',
+          sessionId: 1,
+          overallFeedback: 'Good',
+          strengths: [],
+          improvements: [],
+          scoringModel: 'gemini-2.5-flash',
+          promptVersion: 'v1.0',
+          generatedAt: fixedDate,
+          createdAt: fixedDate,
+        },
+        questions: [
+          {
+            publicId: 'q-uuid-1',
+            orderIndex: 1,
+            domain: 'TECHNICAL',
+            difficulty: 'EASY',
+            answer: {
+              durationSeconds: 65,
+              emotionSummary: {
+                dominant: 'neutral',
+                distribution: { neutral: 0.78, happy: 0.22 },
+                wordsPerMinute: 145,
+              },
+            },
+          },
+          {
+            publicId: 'q-uuid-2',
+            orderIndex: 2,
+            domain: 'BEHAVIORAL',
+            difficulty: 'MEDIUM',
+            answer: null,
+          },
+        ],
+      });
+
+      const result = await repository.findSessionResult(mockSessionPublicId);
+
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value?.emotionTimeline).toEqual([
+          {
+            questionPublicId: 'q-uuid-1',
+            orderIndex: 1,
+            domain: 'TECHNICAL',
+            difficulty: 'EASY',
+            durationSeconds: 65,
+            emotionSummary: {
+              dominant: 'neutral',
+              distribution: { neutral: 0.78, happy: 0.22 },
+            },
+          },
+          {
+            questionPublicId: 'q-uuid-2',
+            orderIndex: 2,
+            domain: 'BEHAVIORAL',
+            difficulty: 'MEDIUM',
+            durationSeconds: null,
+            emotionSummary: null,
+          },
+        ]);
       }
     });
 

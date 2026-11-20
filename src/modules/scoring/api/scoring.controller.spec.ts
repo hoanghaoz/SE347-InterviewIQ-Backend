@@ -1,9 +1,11 @@
-import { HttpException, HttpStatus } from '@nestjs/common';
+import { HttpException, HttpStatus, type MessageEvent } from '@nestjs/common';
 import { err, ok } from 'neverthrow';
+import { Subject } from 'rxjs';
 import { CommonUserRole } from '../../../shared/common/commonEnum';
 import { AppError, ErrorCode } from '../../../shared/common/errorCode';
 import type { JwtPayload } from '../../../shared/common/jwt.payload.interface';
 import { ScoringJobStatus } from '../domain/enums/scoring-enum';
+import { ScoringJobEvent } from '../application/interfaces/scoring-event.interface';
 import { IScoringService } from '../application/interfaces/scoring.service.interface';
 import {
   ScoringJobStatusResponseDto,
@@ -26,11 +28,16 @@ describe('ScoringController', () => {
     ReturnType<IScoringService['getSessionResultAsync']>,
     Parameters<IScoringService['getSessionResultAsync']>
   >();
+  const streamUserEventsMock = jest.fn<
+    ReturnType<IScoringService['streamUserEvents']>,
+    Parameters<IScoringService['streamUserEvents']>
+  >();
 
   const scoringService: IScoringService = {
     enqueueAsync: enqueueAsyncMock,
     getJobStatusAsync: getJobStatusAsyncMock,
     getSessionResultAsync: getSessionResultAsyncMock,
+    streamUserEvents: streamUserEventsMock,
   };
 
   const mockUser: JwtPayload = {
@@ -45,6 +52,7 @@ describe('ScoringController', () => {
     enqueueAsyncMock.mockReset();
     getJobStatusAsyncMock.mockReset();
     getSessionResultAsyncMock.mockReset();
+    streamUserEventsMock.mockReset();
     controller = new ScoringController(scoringService);
   });
 
@@ -151,6 +159,7 @@ describe('ScoringController', () => {
         promptVersion: 'v1.0',
         generatedAt: '2026-09-23T10:02:30.000Z',
       },
+      emotionTimeline: [],
     };
 
     it('should return ApiSuccessResponse when session result is retrieved successfully', async () => {
@@ -235,6 +244,55 @@ describe('ScoringController', () => {
           HttpStatus.BAD_REQUEST,
         );
       }
+    });
+  });
+
+  describe('streamScoringEvents', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('streams job-update events for user and emits 30s heartbeat pings', () => {
+      const eventSubject = new Subject<ScoringJobEvent>();
+      streamUserEventsMock.mockReturnValue(eventSubject.asObservable());
+
+      const received: MessageEvent[] = [];
+      const subscription = controller
+        .streamScoringEvents(mockUser)
+        .subscribe((msg) => received.push(msg));
+
+      expect(streamUserEventsMock).toHaveBeenCalledWith(mockUser.sub);
+
+      const jobEvent: ScoringJobEvent = {
+        userId: mockUser.sub,
+        jobId: mockJobId,
+        type: 'answer-scored',
+        payload: {
+          sessionId: mockSessionId,
+          overallScore: 8.2,
+        },
+      };
+
+      eventSubject.next(jobEvent);
+      expect(received).toHaveLength(1);
+      expect(received[0]).toEqual({
+        type: 'job-update',
+        data: jobEvent,
+      });
+
+      jest.advanceTimersByTime(30_000);
+      expect(received).toHaveLength(2);
+      expect(received[1]).toEqual({
+        type: 'ping',
+        data: { timestamp: expect.any(String) as string },
+      });
+
+      subscription.unsubscribe();
+      eventSubject.complete();
     });
   });
 });

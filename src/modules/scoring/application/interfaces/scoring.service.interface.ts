@@ -1,9 +1,11 @@
 import { Result } from 'neverthrow';
+import { Observable } from 'rxjs';
 import { AppError } from '../../../../shared/common/errorCode';
 import {
   ScoringJobStatusResponseDto,
   SessionResultResponseDto,
 } from '../dtos/scoring.response.dto';
+import { ScoringJobEvent } from './scoring-event.interface';
 
 export interface EnqueueResult {
   jobId: string;
@@ -27,4 +29,6 @@ export abstract class IScoringService {
     userId: string,
     userRole?: string,
   ): Promise<Result<SessionResultResponseDto, AppError>>;
+
+  abstract streamUserEvents(userId: string): Observable<ScoringJobEvent>;
 }

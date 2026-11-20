@@ -10,6 +10,7 @@ import { SessionStatus } from '../../../../../generated/prisma/enums';
 import type { Job, PgBoss } from 'pg-boss';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
 import { ScoringJobData } from '../../application/dtos/scoring.request.dto';
+import { IScoringEventBus } from '../../application/interfaces/scoring-event.interface';
 import { IScoringLlmProvider } from '../../application/interfaces/scoring-llm.interface';
 import {
   ScoringDomainError,
@@ -38,6 +39,8 @@ export class ScoringWorkerService implements OnModuleInit {
     private readonly llmProvider: IScoringLlmProvider,
     @Optional()
     private readonly configService?: ConfigService,
+    @Optional()
+    private readonly eventBus?: IScoringEventBus,
   ) {
     this.concurrency =
       Number(
@@ -210,6 +213,16 @@ export class ScoringWorkerService implements OnModuleInit {
         throw saveResult.error;
       }
 
+      this.eventBus?.publish({
+        userId,
+        jobId: job.id,
+        type: 'answer-scored',
+        payload: {
+          sessionId,
+          overallScore: score.overallScore,
+        },
+      });
+
       this.logger.log(
         `Scoring job ${job.id} completed for session ${sessionId} ` +
           `[overallScore=${score.overallScore}, model=${summary.scoringModel}, promptVersion=${summary.promptVersion ?? 'n/a'}, ` +
@@ -238,6 +251,16 @@ export class ScoringWorkerService implements OnModuleInit {
               `Failed to mark session ${sessionDbId} as FAILED: ${markResult.error.message}`,
             );
           }
+
+          this.eventBus?.publish({
+            userId,
+            jobId: job.id,
+            type: 'answer-failed',
+            payload: {
+              sessionId,
+              error: failureReason,
+            },
+          });
         }
       }
 

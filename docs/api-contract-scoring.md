@@ -241,7 +241,23 @@ Authorization: Bearer <access_token>
       "scoringModel": "gemini-3.8-flash",
       "promptVersion": "v2.0",
       "generatedAt": "2026-11-12T10:00:18.450Z"
-    }
+    },
+    "emotionTimeline": [
+      {
+        "questionPublicId": "99999999-9999-4999-8999-999999999999",
+        "orderIndex": 1,
+        "domain": "TECHNICAL",
+        "difficulty": "EASY",
+        "durationSeconds": 65,
+        "emotionSummary": {
+          "dominant": "neutral",
+          "distribution": {
+            "neutral": 0.78,
+            "happy": 0.22
+          }
+        }
+      }
+    ]
   },
   "message": "Scoring result retrieved successfully",
   "timestamp": "2026-11-12T10:00:19.000Z"
@@ -271,6 +287,41 @@ Mọi phần tử trong `summary.strengths` và `summary.improvements` (tối đ
 | **403** | `FORBIDDEN` | `You are not authorized to view the result of this session` | Phiên phỏng vấn thuộc về người dùng khác. |
 | **404** | `NOT_FOUND` | `Interview session with id '...' not found` | Không tìm thấy session trong CSDL. |
 | **404** | `NOT_FOUND` | `Scoring result for session '...' not found` | Session tồn tại nhưng chưa có bản ghi điểm / summary. |
+
+---
+
+### 4.3. Luồng Thông Báo Kết Quả Thời Gian Thực qua SSE (`@Sse('stream')`)
+
+Mở kết nối Server-Sent Events (`text/event-stream`) để nhận thông báo ngay khi `ScoringWorkerService` hoàn tất hoặc thất bại hẳn một job chấm điểm thuộc về người dùng đang đăng nhập (`event.userId === user.sub`).
+
+```http
+GET /api/scoring/stream
+Authorization: Bearer <access_token>
+Accept: text/event-stream
+```
+
+#### Sự kiện phát ra:
+1. **`event: job-update`** — Khi worker hoàn tất (`answer-scored`) hoặc thất bại hẳn (`answer-failed`):
+   ```text
+   event: job-update
+   data: {"userId":"00000000-0000-4000-8000-000000000001","jobId":"33333333-3333-4333-8333-333333333333","type":"answer-scored","payload":{"sessionId":"11111111-1111-4111-8111-111111111111","overallScore":8.1}}
+   ```
+   Hoặc khi thất bại hẳn:
+   ```text
+   event: job-update
+   data: {"userId":"00000000-0000-4000-8000-000000000001","jobId":"33333333-3333-4333-8333-333333333333","type":"answer-failed","payload":{"sessionId":"11111111-1111-4111-8111-111111111111","error":"AI provider returned an invalid scoring rubric"}}
+   ```
+2. **`event: ping`** — Heartbeat mỗi `30` giây (`30_000 ms`) để giữ kết nối qua Reverse Proxy:
+   ```text
+   event: ping
+   data: {"timestamp":"2026-11-17T10:00:30.000Z"}
+   ```
+
+#### Các Mã Lỗi Thường gặp:
+| HTTP Status | Error Code | Message trong Code | Nguyên nhân & Hướng xử lý |
+| :---: | :--- | :--- | :--- |
+| **401** | `UNAUTHORIZED` | `Unauthorized` | Thiếu access token hoặc token đã hết hạn / không hợp lệ. |
+| **403** | `FORBIDDEN` | `Forbidden resource` | Vai trò token không nằm trong `[USER, ADMIN]`. |
 
 ---
 

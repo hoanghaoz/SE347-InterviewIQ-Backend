@@ -6,9 +6,11 @@ import { PrismaService } from '../../../shared/infrastructure/database/prisma.se
 import type { CvParsedData } from '../../cv/domain/types/cv-parsed-data.type';
 import {
   InterviewSummary,
+  QuestionEmotionItem,
   Score,
   ScoringResult,
 } from '../domain/entities/scoring-job.entity';
+import { normalizeEmotionSummary } from '../domain/types/emotion-summary.type';
 import {
   IScoringRepository,
   type SessionOwnerInfo,
@@ -241,6 +243,21 @@ export class ScoringRepository implements IScoringRepository {
         include: {
           score: true,
           interviewSummary: true,
+          questions: {
+            orderBy: { orderIndex: 'asc' },
+            select: {
+              publicId: true,
+              orderIndex: true,
+              domain: true,
+              difficulty: true,
+              answer: {
+                select: {
+                  durationSeconds: true,
+                  emotionSummary: true,
+                },
+              },
+            },
+          },
         },
       });
 
@@ -250,8 +267,22 @@ export class ScoringRepository implements IScoringRepository {
 
       const score = mapScoreToDomain(session.score);
       const summary = mapSummaryToDomain(session.interviewSummary);
+      const emotionTimeline: QuestionEmotionItem[] = (
+        session.questions ?? []
+      ).map((question) => ({
+        questionPublicId: question.publicId,
+        orderIndex: question.orderIndex,
+        domain: String(question.domain),
+        difficulty: String(question.difficulty),
+        durationSeconds: question.answer?.durationSeconds ?? null,
+        emotionSummary: normalizeEmotionSummary(
+          question.answer?.emotionSummary,
+        ),
+      }));
 
-      return ok(new ScoringResult(score, summary, session.publicId));
+      return ok(
+        new ScoringResult(score, summary, session.publicId, emotionTimeline),
+      );
     } catch (error) {
       this.logger.error(
         `Failed to find session result for '${sessionPublicId}': ${(error as Error).message}`,

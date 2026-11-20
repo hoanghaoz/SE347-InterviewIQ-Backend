@@ -4,6 +4,7 @@ jest.mock('pg-boss', () => ({
   default: jest.fn(),
 }));
 
+import * as http from 'node:http';
 import {
   BadRequestException,
   INestApplication,
@@ -12,6 +13,7 @@ import {
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import { err, ok } from 'neverthrow';
+import { Subject } from 'rxjs';
 import type { Job } from 'pg-boss';
 import request from 'supertest';
 import type { App } from 'supertest/types';
@@ -22,6 +24,10 @@ import {
   ScoringJobStatusResponseDto,
   SessionResultResponseDto,
 } from '../src/modules/scoring/application/dtos/scoring.response.dto';
+import {
+  IScoringEventBus,
+  ScoringJobEvent,
+} from '../src/modules/scoring/application/interfaces/scoring-event.interface';
 import { IScoringLlmProvider } from '../src/modules/scoring/application/interfaces/scoring-llm.interface';
 import { IScoringQueue } from '../src/modules/scoring/application/interfaces/scoring.queue.interface';
 import { IScoringService } from '../src/modules/scoring/application/interfaces/scoring.service.interface';
@@ -39,7 +45,9 @@ import {
   IScoringRepository,
   SessionScoringContext,
 } from '../src/modules/scoring/domain/repositories/scoring.repo.interface';
+import { normalizeEmotionSummary } from '../src/modules/scoring/domain/types/emotion-summary.type';
 import { ScoringLlmAdapter } from '../src/modules/scoring/infrastructure/adapters/scoring-llm.adapter';
+import { ScoringEventBusService } from '../src/modules/scoring/infrastructure/events/scoring-event-bus.service';
 import { PG_BOSS_TOKEN } from '../src/modules/scoring/infrastructure/queue/pg-boss.provider';
 import { ScoringWorkerService } from '../src/modules/scoring/infrastructure/queue/scoring-worker.service';
 import { AllExceptionsFilter } from '../src/shared/common/exceptions.filter';
@@ -59,6 +67,7 @@ describe('ScoringController (e2e)', () => {
   const getJobStatusAsync = jest.fn();
   const getSessionResultAsync = jest.fn();
   const enqueueAsync = jest.fn();
+  const streamUserEvents = jest.fn();
 
   const userPublicId = '00000000-0000-4000-8000-000000000001';
   const sessionPublicId = '11111111-1111-4111-8111-111111111111';
@@ -107,12 +116,14 @@ describe('ScoringController (e2e)', () => {
       promptVersion: 'v1.0.0',
       generatedAt: '2026-10-13T16:02:30.000Z',
     },
+    emotionTimeline: [],
   };
 
   beforeEach(async () => {
     getJobStatusAsync.mockReset();
     getSessionResultAsync.mockReset();
     enqueueAsync.mockReset();
+    streamUserEvents.mockReset();
 
     const module = await Test.createTestingModule({
       imports: [JwtModule.register({ secret: 'test-secret' })],
@@ -126,6 +137,7 @@ describe('ScoringController (e2e)', () => {
             getJobStatusAsync,
             getSessionResultAsync,
             enqueueAsync,
+            streamUserEvents,
           },
         },
       ],
@@ -486,6 +498,105 @@ describe('ScoringController (e2e)', () => {
       });
     });
   });
+
+  describe('GET /api/scoring/stream', () => {
+    const streamRoute = '/api/scoring/stream';
+
+    it('requires a bearer token (HTTP 401)', async () => {
+      const response = await request(app.getHttpServer())
+        .get(streamRoute)
+        .expect(401);
+
+      expect(response.body).toMatchObject({
+        statusCode: 401,
+        success: false,
+        code: ErrorCode.Unauthorized,
+        path: streamRoute,
+      });
+      expect(streamUserEvents).not.toHaveBeenCalled();
+    });
+
+    it('rejects roles other than USER or ADMIN (HTTP 403)', async () => {
+      const viewerToken = jwtService.sign({
+        sub: userPublicId,
+        role: 'VIEWER',
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(streamRoute)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .expect(403);
+
+      expect(response.body).toMatchObject({
+        statusCode: 403,
+        success: false,
+        code: ErrorCode.Forbidden,
+        path: streamRoute,
+      });
+      expect(streamUserEvents).not.toHaveBeenCalled();
+    });
+
+    it('streams job-update SSE events for authenticated user', async () => {
+      const subject = new Subject<ScoringJobEvent>();
+      streamUserEvents.mockReturnValue(subject.asObservable());
+
+      await app.listen(0);
+      const server = app.getHttpServer() as unknown as http.Server;
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        throw new Error('Unexpected HTTP server address');
+      }
+
+      const payloadEvent: ScoringJobEvent = {
+        userId: userPublicId,
+        jobId,
+        type: 'answer-scored',
+        payload: {
+          sessionId: sessionPublicId,
+          overallScore: 8.1,
+        },
+      };
+
+      const rawSse = await new Promise<string>((resolve, reject) => {
+        const req = http.get(
+          {
+            hostname: '127.0.0.1',
+            port: address.port,
+            path: streamRoute,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: 'text/event-stream',
+            },
+          },
+          (res) => {
+            expect(res.statusCode).toBe(200);
+            expect(res.headers['content-type']).toContain('text/event-stream');
+
+            let buffer = '';
+            res.on('data', (chunk: Buffer) => {
+              buffer += chunk.toString('utf8');
+              if (buffer.includes('answer-scored')) {
+                req.destroy();
+                resolve(buffer);
+              }
+            });
+            res.on('error', reject);
+
+            setImmediate(() => {
+              subject.next(payloadEvent);
+            });
+          },
+        );
+        req.on('error', reject);
+      });
+
+      expect(streamUserEvents).toHaveBeenCalledWith(userPublicId);
+      expect(rawSse).toContain('event: job-update');
+      expect(rawSse).toContain(`"sessionId":"${sessionPublicId}"`);
+      expect(rawSse).toContain('"overallScore":8.1');
+      subject.complete();
+    });
+  });
 });
 
 describe('ScoringWorkerService -> ScoringLlmAdapter -> ScoringService -> ScoringController Golden Pipeline (e2e)', () => {
@@ -571,8 +682,16 @@ describe('ScoringWorkerService -> ScoringLlmAdapter -> ScoringService -> Scoring
       if (!savedScore || !savedSummary) {
         return Promise.resolve(ok(null));
       }
+      const timeline = (currentSessionContext?.questions ?? []).map((q) => ({
+        questionPublicId: `q-uuid-${q.orderIndex}`,
+        orderIndex: q.orderIndex,
+        domain: q.domain ?? 'TECHNICAL',
+        difficulty: q.difficulty ?? 'MEDIUM',
+        durationSeconds: q.answer?.durationSeconds ?? null,
+        emotionSummary: normalizeEmotionSummary(q.answer?.emotionSummary),
+      }));
       return Promise.resolve(
-        ok(new ScoringResult(savedScore, savedSummary, publicId)),
+        ok(new ScoringResult(savedScore, savedSummary, publicId, timeline)),
       );
     }),
     getSessionOwnerUserId: jest.fn(() => {
@@ -752,6 +871,10 @@ describe('ScoringWorkerService -> ScoringLlmAdapter -> ScoringService -> Scoring
           useClass: ScoringLlmAdapter,
         },
         {
+          provide: IScoringEventBus,
+          useClass: ScoringEventBusService,
+        },
+        {
           provide: IScoringService,
           useClass: ScoringService,
         },
@@ -891,6 +1014,21 @@ describe('ScoringWorkerService -> ScoringLlmAdapter -> ScoringService -> Scoring
         },
       },
     });
+
+    const body = response.body as { data: SessionResultResponseDto };
+    expect(body.data.emotionTimeline).toHaveLength(5);
+    expect(body.data.emotionTimeline[0]).toEqual({
+      questionPublicId: 'q-uuid-1',
+      orderIndex: 1,
+      domain: 'TECHNICAL',
+      difficulty: 'EASY',
+      durationSeconds: 65,
+      emotionSummary: {
+        dominant: 'neutral',
+        distribution: { neutral: 0.78, happy: 0.22 },
+      },
+    });
+    expect(body.data.emotionTimeline[1]?.emotionSummary).toBeNull();
   });
 
   it('Golden Case 2: retries once when attempt 1 returns NaN score and persists Groq fallback model on attempt 2', async () => {
