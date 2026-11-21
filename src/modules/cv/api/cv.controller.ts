@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -8,6 +9,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
 } from '@nestjs/common';
 import { toHttpException } from '../../../shared/common/app-error.mapper';
 import { CommonUserRole } from '../../../shared/common/commonEnum';
@@ -20,6 +22,7 @@ import {
   UpdateParsedDataRequestDto,
 } from '../application/dtos/cv.request.dto';
 import {
+  CvParseResponseDto,
   CvResponseDto,
   CvSignedParamsResponseDto,
   CvSummaryResponseDto,
@@ -120,12 +123,53 @@ export class CvController {
   async parseCvAsync(
     @User() user: JwtPayload,
     @Param('id', ParseUUIDPipe) cvPublicId: string,
-  ): Promise<ApiSuccessResponse<CvResponseDto>> {
+  ): Promise<ApiSuccessResponse<CvParseResponseDto>> {
     const result = await this.cvService.parseCvAsync(user.sub, cvPublicId);
 
     return result.match(
       (dto) =>
         new ApiSuccessResponse(HttpStatus.OK, dto, 'CV parsed successfully'),
+      (error) => {
+        throw toHttpException(error);
+      },
+    );
+  }
+
+  // Points the CV at a newly uploaded file (same 3 steps as a new CV) and resets the parse.
+  @Put(':id/file')
+  @HttpCode(HttpStatus.OK)
+  @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
+  async replaceCvFileAsync(
+    @User() user: JwtPayload,
+    @Param('id', ParseUUIDPipe) cvPublicId: string,
+    @Body() request: CreateCvRequestDto,
+  ): Promise<ApiSuccessResponse<CvResponseDto>> {
+    const result = await this.cvService.replaceCvFileAsync(
+      user.sub,
+      cvPublicId,
+      request,
+    );
+
+    return result.match(
+      (dto) => new ApiSuccessResponse(HttpStatus.OK, dto, 'CV file replaced'),
+      (error) => {
+        throw toHttpException(error);
+      },
+    );
+  }
+
+  // Removes the CV and its file in the storage.
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
+  async deleteCvAsync(
+    @User() user: JwtPayload,
+    @Param('id', ParseUUIDPipe) cvPublicId: string,
+  ): Promise<ApiSuccessResponse<null>> {
+    const result = await this.cvService.deleteCvAsync(user.sub, cvPublicId);
+
+    return result.match(
+      () => new ApiSuccessResponse(HttpStatus.OK, null, 'CV deleted'),
       (error) => {
         throw toHttpException(error);
       },
