@@ -6,6 +6,7 @@ import {
 } from '../domain/repositories/cv.repo.interface';
 import {
   CvFileAlreadySavedError,
+  CvLimitReachedError,
   ICvManagementRepository,
   StartParseOutcome,
 } from '../domain/repositories/cv-management.repo.interface';
@@ -89,24 +90,49 @@ export class CvRepository implements ICvRepository, ICvManagementRepository {
     }
   }
 
-  async createCv(cv: Cv): Promise<Result<Cv, Error>> {
+  async createCv(cv: Cv, maxCvsPerUser: number): Promise<Result<Cv, Error>> {
     try {
-      const row = await this.prismaService.cv.create({
-        data: {
-          userId: cv.userId,
-          fileName: cv.fileName,
-          fileUrl: cv.fileUrl,
-          cloudinaryPublicId: cv.cloudinaryPublicId,
-          fileSize: cv.fileSize,
-          rawText: cv.rawText,
-          parseStatus: mapParseStatusToPrisma(cv.parseStatus),
-          parserVersion: cv.parserVersion,
-          isActive: cv.isActive,
-          // parsedData omitted: a new CV has none, and the column defaults to NULL.
-        },
+      const row = await this.prismaService.$transaction(async (tx) => {
+        // Lock the owner row: this user's uploads are then counted one after the other,
+        // so two parallel requests cannot both see "one slot left".
+        await tx.$queryRaw`SELECT id FROM users WHERE id = ${cv.userId} FOR UPDATE`;
+        // A file that already has a CV is a duplicate, not a new upload: report that first,
+        // so the service never mistakes it for a rejected file and deletes it.
+        const duplicate = await tx.cv.findUnique({
+          where: { cloudinaryPublicId: cv.cloudinaryPublicId },
+          select: { id: true },
+        });
+        if (duplicate) {
+          throw new CvFileAlreadySavedError();
+        }
+        const count = await tx.cv.count({ where: { userId: cv.userId } });
+        if (count >= maxCvsPerUser) {
+          throw new CvLimitReachedError();
+        }
+
+        return tx.cv.create({
+          data: {
+            userId: cv.userId,
+            fileName: cv.fileName,
+            fileUrl: cv.fileUrl,
+            cloudinaryPublicId: cv.cloudinaryPublicId,
+            fileSize: cv.fileSize,
+            rawText: cv.rawText,
+            parseStatus: mapParseStatusToPrisma(cv.parseStatus),
+            parserVersion: cv.parserVersion,
+            isActive: cv.isActive,
+            // parsedData omitted: a new CV has none, and the column defaults to NULL.
+          },
+        });
       });
       return ok(mapCvToDomain(row));
     } catch (error) {
+      if (
+        error instanceof CvLimitReachedError ||
+        error instanceof CvFileAlreadySavedError
+      ) {
+        return err(error);
+      }
       // P2002 = Prisma's unique constraint violation (here: cloudinary_public_id).
       if ((error as { code?: string }).code === 'P2002') {
         return err(new CvFileAlreadySavedError());
@@ -216,6 +242,68 @@ export class CvRepository implements ICvRepository, ICvManagementRepository {
     } catch (error) {
       this.logger.error(`saveParsedData failed: ${error}`);
       return err(new Error('Failed to save the parsed data.'));
+    }
+  }
+
+  async replaceFile(
+    cv: Cv,
+    previousCloudinaryPublicId: string,
+    staleBefore: Date,
+  ): Promise<Result<Cv | null, Error>> {
+    try {
+      // Matching the old file id makes this a compare-and-swap: if a parse started or
+      // another replace finished first, no row matches and count is 0.
+      const replaced = await this.prismaService.cv.updateMany({
+        where: {
+          publicId: cv.publicId,
+          userId: cv.userId,
+          cloudinaryPublicId: previousCloudinaryPublicId,
+          NOT: {
+            parseStatus: ParseStatus.PROCESSING,
+            updatedAt: { gte: staleBefore },
+          },
+        },
+        data: {
+          fileName: cv.fileName,
+          fileUrl: cv.fileUrl,
+          cloudinaryPublicId: cv.cloudinaryPublicId,
+          fileSize: cv.fileSize,
+          parseStatus: mapParseStatusToPrisma(cv.parseStatus),
+          rawText: cv.rawText,
+          parsedData: toJsonInput(cv.parsedData),
+          parserVersion: cv.parserVersion,
+        },
+      });
+      if (replaced.count === 0) {
+        return ok(null);
+      }
+
+      const row = await this.prismaService.cv.findUnique({
+        where: { publicId: cv.publicId },
+      });
+      return ok(row ? mapCvToDomain(row) : null);
+    } catch (error) {
+      if ((error as { code?: string }).code === 'P2002') {
+        return err(new CvFileAlreadySavedError());
+      }
+      this.logger.error(`replaceFile failed: ${error}`);
+      return err(new Error('Failed to replace the CV file.'));
+    }
+  }
+
+  async deleteCv(
+    userPublicId: string,
+    cvPublicId: string,
+  ): Promise<Result<void, Error>> {
+    try {
+      // deleteMany (not delete) so a CV that is already gone is not an error.
+      await this.prismaService.cv.deleteMany({
+        where: { publicId: cvPublicId, user: { publicId: userPublicId } },
+      });
+      return ok(undefined);
+    } catch (error) {
+      this.logger.error(`deleteCv failed: ${error}`);
+      return err(new Error('Failed to delete CV.'));
     }
   }
 }

@@ -5,6 +5,7 @@ import {
   UpdateParsedDataRequestDto,
 } from '../dtos/cv.request.dto';
 import {
+  CvParseResponseDto,
   CvResponseDto,
   CvSignedParamsResponseDto,
   CvSummaryResponseDto,
@@ -32,7 +33,18 @@ export abstract class ICvService {
   abstract parseCvAsync(
     userPublicId: string,
     cvPublicId: string,
+  ): Promise<Result<CvParseResponseDto, AppError>>;
+
+  abstract replaceCvFileAsync(
+    userPublicId: string,
+    cvPublicId: string,
+    request: CreateCvRequestDto,
   ): Promise<Result<CvResponseDto, AppError>>;
+
+  abstract deleteCvAsync(
+    userPublicId: string,
+    cvPublicId: string,
+  ): Promise<Result<void, AppError>>;
 
   abstract updateParsedDataAsync(
     userPublicId: string,

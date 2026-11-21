@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { ParseStatus } from '../../domain/enums/cv.enum';
+import { ParseFailureReason, ParseStatus } from '../../domain/enums/cv.enum';
 import type { CvParsedData } from '../../domain/types/cv-parsed-data.type';
 
 // Response DTOs only describe the output for Swagger: no class-validator here.
@@ -67,6 +67,19 @@ export class CvResponseDto {
 
   @ApiProperty({ format: 'date-time', example: '2026-09-28T10:00:00.000Z' })
   updatedAt!: string;
+}
+
+// Answer of POST /api/cvs/:id/parse: the CV plus why a failed parse failed.
+export class CvParseResponseDto extends CvResponseDto {
+  @ApiProperty({
+    enum: ParseFailureReason,
+    enumName: 'ParseFailureReason',
+    nullable: true,
+    description:
+      'Set only when parseStatus is FAILED. Not stored: a later GET returns null.',
+    example: null,
+  })
+  failureReason!: ParseFailureReason | null;
 }
 
 // One item of GET /api/cvs: no fileUrl / parsedData, to keep the list light.
