@@ -2,7 +2,8 @@ import { randomUUID } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { err, ok, type Result } from 'neverthrow';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
-import { Cv } from '../../domain/entities/cv.entity';
+import { Cv, MAX_CVS_PER_USER } from '../../domain/entities/cv.entity';
+import { ParseFailureReason } from '../../domain/enums/cv.enum';
 import {
   MIN_CV_TEXT_LENGTH,
   normalizeCvText,
@@ -10,6 +11,7 @@ import {
 import { normalizeParsedData } from '../../domain/parsing/parsed-data.normalizer';
 import {
   CvFileAlreadySavedError,
+  CvLimitReachedError,
   ICvManagementRepository,
 } from '../../domain/repositories/cv-management.repo.interface';
 import {
@@ -17,11 +19,15 @@ import {
   UpdateParsedDataRequestDto,
 } from '../dtos/cv.request.dto';
 import {
+  CvParseResponseDto,
   CvResponseDto,
   CvSignedParamsResponseDto,
   CvSummaryResponseDto,
 } from '../dtos/cv.response.dto';
-import { ICvFileStorage } from '../interfaces/cv-file-storage.interface';
+import {
+  CvStoredFile,
+  ICvFileStorage,
+} from '../interfaces/cv-file-storage.interface';
 import { ICvParser } from '../interfaces/cv-parser.interface';
 import { ICvTextExtractor } from '../interfaces/cv-text-extractor.interface';
 import { ICvService } from '../interfaces/cv.service.interface';
@@ -37,6 +43,13 @@ const PARSE_STALE_AFTER_MS = 3 * 60 * 1000;
 type ParseStep = 'download' | 'extract' | 'text' | 'parse';
 type ParseFailure = { step: ParseStep; message: string };
 type ParseSuccess = Parameters<Cv['completeParsing']>[0];
+
+const FAILURE_REASON_BY_STEP: Record<ParseStep, ParseFailureReason> = {
+  download: ParseFailureReason.FILE_UNAVAILABLE,
+  extract: ParseFailureReason.FILE_UNREADABLE,
+  text: ParseFailureReason.NO_TEXT,
+  parse: ParseFailureReason.AI_FAILED,
+};
 
 @Injectable()
 export class CvService implements ICvService {
@@ -73,36 +86,14 @@ export class CvService implements ICvService {
     userPublicId: string,
     request: CreateCvRequestDto,
   ): Promise<Result<CvResponseDto, AppError>> {
-    // 1. The file must sit under this user's prefix: blocks claiming someone else's upload.
-    if (!request.cloudinaryPublicId.startsWith(userFilePrefix(userPublicId))) {
-      return err(new AppError(ErrorCode.BadRequest, 'Invalid uploaded file'));
+    // 1. The file must be ours, exist in the storage and be a PDF.
+    const uploaded = await this.readUploadedFileAsync(userPublicId, request);
+    if (uploaded.isErr()) {
+      return err(uploaded.error);
     }
+    const file = uploaded.value;
 
-    // 2. Ask the storage what was really uploaded; never trust client size/URL.
-    const fileResult = await this.fileStorage.getFile(
-      request.cloudinaryPublicId,
-    );
-    if (fileResult.isErr()) {
-      return err(
-        new AppError(
-          ErrorCode.InternalServerError,
-          'Failed to read the uploaded file',
-        ),
-      );
-    }
-    const file = fileResult.value;
-    if (!file) {
-      return err(
-        new AppError(ErrorCode.BadRequest, 'Uploaded file was not found'),
-      );
-    }
-    if (file.format !== 'pdf') {
-      return err(
-        new AppError(ErrorCode.BadRequest, 'Only PDF files are allowed'),
-      );
-    }
-
-    // 3. JWT `sub` (UUID) -> internal user id.
+    // 2. JWT `sub` (UUID) -> internal user id.
     const userIdResult = await this.cvRepo.getUserIdByPublicId(userPublicId);
     if (userIdResult.isErr()) {
       return err(
@@ -113,8 +104,7 @@ export class CvService implements ICvService {
       return err(new AppError(ErrorCode.Unauthorized, 'User no longer exists'));
     }
 
-    // 4. Business rules live in the entity (name, size limit, PENDING...).
-    // TODO (Sprint 5): per-user upload limit (open point #3).
+    // 3. Business rules live in the entity (name, size limit, PENDING...).
     const cvResult = Cv.create({
       userId: userIdResult.value,
       fileName: request.fileName,
@@ -123,15 +113,25 @@ export class CvService implements ICvService {
       fileSize: file.bytes,
     });
     if (cvResult.isErr()) {
+      await this.discardUploadedFileAsync(request.cloudinaryPublicId);
       return err(new AppError(ErrorCode.BadRequest, cvResult.error.message));
     }
 
-    // 5. Save and return the stored CV (now with publicId and timestamps).
-    const saved = await this.cvRepo.createCv(cvResult.value);
+    // 4. Save and return the stored CV (now with publicId and timestamps).
+    const saved = await this.cvRepo.createCv(cvResult.value, MAX_CVS_PER_USER);
     if (saved.isErr() && saved.error instanceof CvFileAlreadySavedError) {
-      // Same upload submitted twice (e.g. double click).
+      // Same upload submitted twice (e.g. double click): the file belongs to a CV, keep it.
       return err(
         new AppError(ErrorCode.Conflict, 'This file has already been saved'),
+      );
+    }
+    if (saved.isErr() && saved.error instanceof CvLimitReachedError) {
+      await this.discardUploadedFileAsync(request.cloudinaryPublicId);
+      return err(
+        new AppError(
+          ErrorCode.TooManyRequests,
+          `You can keep at most ${MAX_CVS_PER_USER} CVs. Delete one before uploading another`,
+        ),
       );
     }
     if (saved.isErr()) {
@@ -177,7 +177,7 @@ export class CvService implements ICvService {
   async parseCvAsync(
     userPublicId: string,
     cvPublicId: string,
-  ): Promise<Result<CvResponseDto, AppError>> {
+  ): Promise<Result<CvParseResponseDto, AppError>> {
     const started = await this.cvRepo.tryStartParse(
       userPublicId,
       cvPublicId,
@@ -208,6 +208,10 @@ export class CvService implements ICvService {
       );
     }
 
+    const failureReason = outcome.isErr()
+      ? FAILURE_REASON_BY_STEP[outcome.error.step]
+      : null;
+
     const finished = outcome.isOk()
       ? cv.completeParsing(outcome.value)
       : cv.failParsing();
@@ -221,7 +225,122 @@ export class CvService implements ICvService {
       );
     }
 
+    return ok({ ...toCvResponse(saved.value), failureReason });
+  }
+
+  async replaceCvFileAsync(
+    userPublicId: string,
+    cvPublicId: string,
+    request: CreateCvRequestDto,
+  ): Promise<Result<CvResponseDto, AppError>> {
+    const found = await this.cvRepo.getCvByPublicId(userPublicId, cvPublicId);
+    if (found.isErr()) {
+      return err(
+        new AppError(ErrorCode.InternalServerError, 'Failed to load CV'),
+      );
+    }
+    if (!found.value) {
+      return err(new AppError(ErrorCode.NotFound, 'CV not found'));
+    }
+    const current = found.value;
+    const staleBefore = new Date(Date.now() - PARSE_STALE_AFTER_MS);
+    if (current.isBeingParsed(staleBefore)) {
+      return err(
+        new AppError(ErrorCode.Conflict, 'This CV is being parsed, try again'),
+      );
+    }
+
+    const uploaded = await this.readUploadedFileAsync(userPublicId, request);
+    if (uploaded.isErr()) {
+      return err(uploaded.error);
+    }
+
+    const replaced = current.replaceFile({
+      fileName: request.fileName,
+      fileUrl: uploaded.value.url,
+      cloudinaryPublicId: request.cloudinaryPublicId,
+      fileSize: uploaded.value.bytes,
+    });
+    if (replaced.isErr()) {
+      await this.discardUploadedFileAsync(request.cloudinaryPublicId);
+      return err(new AppError(ErrorCode.BadRequest, replaced.error.message));
+    }
+
+    const saved = await this.cvRepo.replaceFile(
+      replaced.value,
+      current.cloudinaryPublicId,
+      staleBefore,
+    );
+    if (saved.isErr() && saved.error instanceof CvFileAlreadySavedError) {
+      return err(
+        new AppError(ErrorCode.Conflict, 'This file has already been saved'),
+      );
+    }
+    if (saved.isErr()) {
+      return err(
+        new AppError(ErrorCode.InternalServerError, 'Failed to replace the CV'),
+      );
+    }
+    if (saved.value === null) {
+      return err(
+        new AppError(
+          ErrorCode.Conflict,
+          'This CV is being parsed or was just changed, try again',
+        ),
+      );
+    }
+
+    // The old file is not referenced any more. Failing to remove it only leaves garbage.
+    if (current.cloudinaryPublicId !== request.cloudinaryPublicId) {
+      await this.discardUploadedFileAsync(current.cloudinaryPublicId);
+    }
+
     return ok(toCvResponse(saved.value));
+  }
+
+  async deleteCvAsync(
+    userPublicId: string,
+    cvPublicId: string,
+  ): Promise<Result<void, AppError>> {
+    const found = await this.cvRepo.getCvByPublicId(userPublicId, cvPublicId);
+    if (found.isErr()) {
+      return err(
+        new AppError(ErrorCode.InternalServerError, 'Failed to load CV'),
+      );
+    }
+    if (!found.value) {
+      return err(new AppError(ErrorCode.NotFound, 'CV not found'));
+    }
+    if (
+      found.value.isBeingParsed(new Date(Date.now() - PARSE_STALE_AFTER_MS))
+    ) {
+      return err(
+        new AppError(ErrorCode.Conflict, 'This CV is being parsed, try again'),
+      );
+    }
+
+    // File first: if the storage fails the CV row stays, so the user can retry.
+    // The other order could lose the row and leave a file nobody can find again.
+    const removedFile = await this.fileStorage.deleteFile(
+      found.value.cloudinaryPublicId,
+    );
+    if (removedFile.isErr()) {
+      return err(
+        new AppError(
+          ErrorCode.InternalServerError,
+          'Failed to delete the CV file',
+        ),
+      );
+    }
+
+    const deleted = await this.cvRepo.deleteCv(userPublicId, cvPublicId);
+    if (deleted.isErr()) {
+      return err(
+        new AppError(ErrorCode.InternalServerError, 'Failed to delete the CV'),
+      );
+    }
+
+    return ok(undefined);
   }
 
   async updateParsedDataAsync(
@@ -259,6 +378,59 @@ export class CvService implements ICvService {
     }
 
     return ok(toCvResponse(saved.value));
+  }
+
+  // Shared by create and replace: the file must sit under this user's prefix, exist in
+  // the storage and be a PDF. Size and name are checked by the entity afterwards.
+  private async readUploadedFileAsync(
+    userPublicId: string,
+    request: CreateCvRequestDto,
+  ): Promise<Result<CvStoredFile, AppError>> {
+    // Blocks claiming someone else's upload.
+    if (!request.cloudinaryPublicId.startsWith(userFilePrefix(userPublicId))) {
+      return err(new AppError(ErrorCode.BadRequest, 'Invalid uploaded file'));
+    }
+
+    // Ask the storage what was really uploaded; never trust client size/URL.
+    const fileResult = await this.fileStorage.getFile(
+      request.cloudinaryPublicId,
+    );
+    if (fileResult.isErr()) {
+      return err(
+        new AppError(
+          ErrorCode.InternalServerError,
+          'Failed to read the uploaded file',
+        ),
+      );
+    }
+    const file = fileResult.value;
+    if (!file) {
+      return err(
+        new AppError(ErrorCode.BadRequest, 'Uploaded file was not found'),
+      );
+    }
+    if (file.format !== 'pdf') {
+      await this.discardUploadedFileAsync(request.cloudinaryPublicId);
+      return err(
+        new AppError(ErrorCode.BadRequest, 'Only PDF files are allowed'),
+      );
+    }
+
+    return ok(file);
+  }
+
+  // A rejected upload is already in the storage but no CV will ever point to it, so it
+  // would stay there for ever. Call this only when the file itself is invalid, never
+  // for a duplicate: a duplicate file already belongs to another CV.
+  private async discardUploadedFileAsync(
+    cloudinaryPublicId: string,
+  ): Promise<void> {
+    const removed = await this.fileStorage.deleteFile(cloudinaryPublicId);
+    if (removed.isErr()) {
+      this.logger.warn(
+        `Could not remove file ${cloudinaryPublicId}: ${removed.error.message}`,
+      );
+    }
   }
 
   private async runParsePipelineAsync(
