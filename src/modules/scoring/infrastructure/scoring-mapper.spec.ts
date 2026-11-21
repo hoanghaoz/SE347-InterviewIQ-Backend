@@ -6,6 +6,7 @@ import { SessionStatus } from '../../../../generated/prisma/enums';
 import { InterviewSummary, Score } from '../domain/entities/scoring-job.entity';
 import { ScoringJobStatus } from '../domain/enums/scoring-enum';
 import {
+  mapEmotionTimelineToDto,
   mapScoreToDomain,
   mapScoreToDto,
   mapSessionStatusToJobStatus,
@@ -182,13 +183,35 @@ describe('Scoring Mapper', () => {
 
     it('should map domain entities to SessionResultResponseDto', () => {
       const sessionId = 'session-uuid-100';
-      const dto = mapToSessionResultDto(sessionId, score, summary);
+      const timeline = [
+        {
+          questionPublicId: 'question-uuid-1',
+          orderIndex: 1,
+          domain: 'TECHNICAL',
+          difficulty: 'MEDIUM',
+          durationSeconds: 60,
+          emotionSummary: {
+            dominant: 'neutral',
+            distribution: { neutral: 0.8, happy: 0.2 },
+          },
+        },
+        {
+          questionPublicId: 'question-uuid-2',
+          orderIndex: 2,
+          domain: 'BEHAVIORAL',
+          difficulty: 'EASY',
+          durationSeconds: null,
+          emotionSummary: null,
+        },
+      ];
+      const dto = mapToSessionResultDto(sessionId, score, summary, timeline);
 
       expect(dto.sessionId).toBe(sessionId);
       expect(dto.scores.publicId).toBe('score-uuid-1');
       expect(dto.scores.overallScore).toBe(7.5);
       expect(dto.summary.publicId).toBe('summary-uuid-2');
       expect(dto.summary.overallFeedback).toBe('Strong candidate overall.');
+      expect(dto.emotionTimeline).toEqual(mapEmotionTimelineToDto(timeline));
     });
   });
 });

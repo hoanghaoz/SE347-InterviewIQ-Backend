@@ -7,6 +7,7 @@ import {
   ScoringDomainError,
   ScoringDomainErrorValidation,
 } from '../errors/scoring-domain.error';
+import type { EmotionSummary } from '../types/emotion-summary.type';
 
 export interface StrengthItem {
   category: string;
@@ -396,10 +397,20 @@ export class InterviewSummary {
   }
 }
 
+export interface QuestionEmotionItem {
+  readonly questionPublicId: string;
+  readonly orderIndex: number;
+  readonly domain: string;
+  readonly difficulty: string;
+  readonly durationSeconds: number | null;
+  readonly emotionSummary: EmotionSummary | null;
+}
+
 export class ScoringResult {
   constructor(
     public readonly score: Score,
     public readonly summary: InterviewSummary,
     public readonly sessionPublicId?: string,
+    public readonly emotionTimeline: readonly QuestionEmotionItem[] = [],
   ) {}
 }

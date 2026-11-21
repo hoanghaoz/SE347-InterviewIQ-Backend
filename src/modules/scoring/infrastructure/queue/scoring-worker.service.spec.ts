@@ -11,6 +11,10 @@ import type { Job, PgBoss } from 'pg-boss';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
 import { ScoringJobData } from '../../application/dtos/scoring.request.dto';
 import {
+  IScoringEventBus,
+  ScoringJobEvent,
+} from '../../application/interfaces/scoring-event.interface';
+import {
   IScoringLlmProvider,
   ScoringLlmEvaluationResult,
 } from '../../application/interfaces/scoring-llm.interface';
@@ -544,6 +548,128 @@ describe('ScoringWorkerService', () => {
         mockContext.id,
         'Permanent failure',
       );
+    });
+
+    describe('IScoringEventBus notifications', () => {
+      let publishMock: jest.Mock<void, [ScoringJobEvent]>;
+      let subscribeForUserMock: jest.Mock;
+      let mockEventBus: IScoringEventBus;
+      let workerWithEventBus: ScoringWorkerService;
+
+      beforeEach(() => {
+        publishMock = jest.fn<void, [ScoringJobEvent]>();
+        subscribeForUserMock = jest.fn();
+        mockEventBus = {
+          publish: publishMock,
+          subscribeForUser: subscribeForUserMock,
+        };
+        workerWithEventBus = new ScoringWorkerService(
+          mockBoss,
+          mockScoringRepo,
+          mockLlmProvider,
+          undefined,
+          mockEventBus,
+        );
+      });
+
+      it('publishes answer-scored event after saving scoring result', async () => {
+        findSessionForScoringMock.mockResolvedValue(ok(mockContext));
+        updateSessionStatusMock.mockResolvedValue(ok(undefined));
+        saveScoringResultMock.mockResolvedValue(ok(undefined));
+
+        await workerWithEventBus.handleJob(mockJob);
+
+        expect(publishMock).toHaveBeenCalledTimes(1);
+        expect(publishMock).toHaveBeenCalledWith({
+          userId: mockUserId,
+          jobId: mockJob.id,
+          type: 'answer-scored',
+          payload: {
+            sessionId: mockSessionId,
+            overallScore: 8.1,
+          },
+        });
+      });
+
+      it('publishes answer-failed event on non-retryable error', async () => {
+        const firstAttemptJob = {
+          ...mockJob,
+          retrycount: 0,
+          retrylimit: 3,
+        } as unknown as Job<ScoringJobData>;
+
+        findSessionForScoringMock.mockResolvedValue(ok(mockContext));
+        updateSessionStatusMock.mockResolvedValue(ok(undefined));
+        evaluateSessionMock.mockResolvedValue(
+          err(new AppError(ErrorCode.BadRequest, 'Rejected by safety filter')),
+        );
+        markSessionFailedMock.mockResolvedValue(ok(undefined));
+
+        await expect(
+          workerWithEventBus.handleJob(firstAttemptJob),
+        ).rejects.toThrow('Rejected by safety filter');
+
+        expect(publishMock).toHaveBeenCalledTimes(1);
+        expect(publishMock).toHaveBeenCalledWith({
+          userId: mockUserId,
+          jobId: firstAttemptJob.id,
+          type: 'answer-failed',
+          payload: {
+            sessionId: mockSessionId,
+            error: 'Rejected by safety filter',
+          },
+        });
+      });
+
+      it('publishes answer-failed event on final retry attempt', async () => {
+        const finalAttemptJob = {
+          ...mockJob,
+          retrycount: 2,
+          retrylimit: 3,
+        } as unknown as Job<ScoringJobData>;
+
+        findSessionForScoringMock.mockResolvedValue(ok(mockContext));
+        updateSessionStatusMock.mockResolvedValue(ok(undefined));
+        saveScoringResultMock.mockResolvedValue(
+          err(new Error('Fatal DB write error')),
+        );
+        markSessionFailedMock.mockResolvedValue(ok(undefined));
+
+        await expect(
+          workerWithEventBus.handleJob(finalAttemptJob),
+        ).rejects.toThrow('Fatal DB write error');
+
+        expect(publishMock).toHaveBeenCalledTimes(1);
+        expect(publishMock).toHaveBeenCalledWith({
+          userId: mockUserId,
+          jobId: finalAttemptJob.id,
+          type: 'answer-failed',
+          payload: {
+            sessionId: mockSessionId,
+            error: 'Fatal DB write error',
+          },
+        });
+      });
+
+      it('does not publish answer-failed event on transient retryable failure before final attempt', async () => {
+        const firstAttemptJob = {
+          ...mockJob,
+          retrycount: 0,
+          retrylimit: 3,
+        } as unknown as Job<ScoringJobData>;
+
+        findSessionForScoringMock.mockResolvedValue(ok(mockContext));
+        updateSessionStatusMock.mockResolvedValue(ok(undefined));
+        saveScoringResultMock.mockResolvedValue(
+          err(new Error('Transient DB timeout')),
+        );
+
+        await expect(
+          workerWithEventBus.handleJob(firstAttemptJob),
+        ).rejects.toThrow('Transient DB timeout');
+
+        expect(publishMock).not.toHaveBeenCalled();
+      });
     });
   });
 });
