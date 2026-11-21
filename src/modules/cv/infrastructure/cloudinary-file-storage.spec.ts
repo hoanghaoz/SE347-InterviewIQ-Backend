@@ -7,6 +7,7 @@ jest.mock('cloudinary', () => ({
   v2: {
     config: jest.fn(),
     api: { resource: jest.fn() },
+    uploader: { destroy: jest.fn() },
     utils: {
       api_sign_request: jest.fn(() => 'signature'),
       private_download_url: jest.fn(
@@ -99,6 +100,66 @@ describe('CloudinaryFileStorage', () => {
 
     expect(result.isErr()).toBe(true);
     expect(resource).not.toHaveBeenCalled();
+  });
+
+  describe('deleteFile', () => {
+    const destroy = cloudinary.uploader.destroy as jest.Mock;
+
+    beforeEach(() => {
+      destroy.mockReset();
+    });
+
+    it('destroys the pdf stored as an image and drops the CDN copy', async () => {
+      const { storage } = createStorage();
+      destroy.mockResolvedValue({ result: 'ok' });
+
+      const result = await storage.deleteFile('cvs/u/f');
+
+      expect(result.isOk()).toBe(true);
+      expect(destroy).toHaveBeenCalledWith('cvs/u/f', {
+        resource_type: 'image',
+        type: 'upload',
+        invalidate: true,
+      });
+    });
+
+    it('treats a file that is already gone as deleted', async () => {
+      const { storage } = createStorage();
+      destroy.mockResolvedValue({ result: 'not found' });
+
+      expect((await storage.deleteFile('cvs/u/f')).isOk()).toBe(true);
+    });
+
+    it('fails when Cloudinary answers anything else', async () => {
+      const { storage } = createStorage();
+      destroy.mockResolvedValue({ result: 'error' });
+
+      expect((await storage.deleteFile('cvs/u/f')).isErr()).toBe(true);
+    });
+
+    it('never writes the API secret to the log when Cloudinary fails', async () => {
+      const { storage, errorLog } = createStorage();
+      destroy.mockRejectedValue({
+        request_options: { auth: `123456789012345:${API_SECRET}` },
+        error: { http_code: 401, message: 'cloud_name mismatch' },
+      });
+
+      const result = await storage.deleteFile('cvs/u/f');
+
+      expect(result.isErr()).toBe(true);
+      const logged = (errorLog.mock.calls as unknown[][])
+        .map((call) => String(call[0]))
+        .join('\n');
+      expect(logged).toContain('401');
+      expect(logged).not.toContain(API_SECRET);
+    });
+
+    it('fails without calling Cloudinary when the keys are missing', async () => {
+      const { storage } = createStorage({ CLOUDINARY_API_SECRET: '' });
+
+      expect((await storage.deleteFile('cvs/u/f')).isErr()).toBe(true);
+      expect(destroy).not.toHaveBeenCalled();
+    });
   });
 
   describe('downloadFile', () => {
