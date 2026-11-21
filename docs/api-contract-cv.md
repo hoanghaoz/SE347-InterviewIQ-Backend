@@ -10,7 +10,7 @@ The file never passes through the backend. The browser uploads it straight to Cl
 2. Browser `POST`s the file to `uploadUrl` (Cloudinary) with the signed fields.
 3. `POST /api/cvs`: the backend reads the real size and format from Cloudinary and saves the CV as `PENDING`.
 
-Then `POST /api/cvs/:id/parse` fills `parsedData`.
+Then `POST /api/cvs/:id/parse` fills `parsedData`. To change the file of an existing CV, repeat steps 1 and 2 and finish with `PUT /api/cvs/:id/file` instead of step 3.
 
 ## Endpoints
 
@@ -22,6 +22,8 @@ Then `POST /api/cvs/:id/parse` fills `parsedData`.
 | GET | `/api/cvs/:id` | One CV with `fileUrl` and `parsedData` | 200 |
 | POST | `/api/cvs/:id/parse` | Read the PDF and fill `parsedData` | 200 |
 | PATCH | `/api/cvs/:id/parsed-data` | Replace `parsedData` by hand | 200 |
+| PUT | `/api/cvs/:id/file` | Point the CV at a newly uploaded file | 200 |
+| DELETE | `/api/cvs/:id` | Delete the CV and its file | 200 |
 
 `:id` is the CV `publicId` (UUID). A malformed id is rejected with `400`.
 
@@ -50,6 +52,9 @@ Body: `{ "fileName": string (max 255), "cloudinaryPublicId": string }`.
 | 201 | Saved, `parseStatus: "PENDING"` |
 | 400 | `cloudinaryPublicId` is not under the caller's prefix, the file does not exist, or it is not a PDF or is over 5 MB |
 | 409 | The same Cloudinary file was already saved |
+| 429 | The user already has 10 CVs (`MAX_CVS_PER_USER`, a placeholder until the team confirms the quota) |
+
+A file the backend rejects (not a PDF, over 5 MB, or over the CV limit) is deleted from Cloudinary, so a rejected upload leaves nothing behind. A duplicate (409) is never deleted: it already belongs to a CV.
 
 ### POST /api/cvs/:id/parse
 
@@ -57,13 +62,43 @@ Runs synchronously and can take tens of seconds (set the client timeout to about
 
 | Status | When |
 |---|---|
-| 200 | The CV is now `COMPLETED` with `parsedData`, **or `FAILED`** with `parsedData: null` |
+| 200 | The CV is now `COMPLETED` with `parsedData` and `failureReason: null`, **or `FAILED`** with `parsedData: null` and a `failureReason` |
 | 404 | The CV does not exist or is not the caller's |
 | 409 | The CV is `COMPLETED`, or another request is already parsing it |
 
-Reasons that end in `FAILED` (the response does not say which; it is in the server log): the file is missing from Cloudinary, the PDF is unreadable or has more than 20 pages, the PDF has under 50 characters of text (a scanned image), or the LLM failed or answered with nothing usable.
+`failureReason` (only in this response, never stored: a later `GET` has no such field) tells the user what to do next:
+
+| `failureReason` | Meaning | Suggested next step |
+|---|---|---|
+| `FILE_UNAVAILABLE` | The file is missing from Cloudinary or could not be downloaded | Replace the file (or delete the CV) |
+| `FILE_UNREADABLE` | The PDF is damaged, password-protected or has more than 20 pages | Replace the file |
+| `NO_TEXT` | Under 50 characters of text: a scanned image | Replace with a PDF whose text can be selected |
+| `AI_FAILED` | The LLM failed or answered with nothing usable | Parse again |
+
+The exact technical cause is in the server log.
 
 Only `PENDING` and `FAILED` CVs can be parsed, so a retry after `FAILED` is allowed and a manual edit is never overwritten. A CV stuck in `PROCESSING` for more than 3 minutes (the server died) can be parsed again.
+
+### PUT /api/cvs/:id/file
+
+Body: the same `{ "fileName", "cloudinaryPublicId" }` as `POST /api/cvs`, with the id of a file just uploaded in steps 1 and 2. The CV keeps its `publicId`, `isActive` and `createdAt`; everything read from the old file (`rawText`, `parsedData`, `parserVersion`) is cleared and `parseStatus` goes back to `PENDING`. It does not count against the CV limit. The old file is deleted from Cloudinary afterwards (best effort).
+
+| Status | When |
+|---|---|
+| 200 | Replaced; returns the CV with `parseStatus: "PENDING"` |
+| 400 | Same rules as `POST /api/cvs` (prefix, missing file, not a PDF, over 5 MB); the rejected new file is deleted and the CV keeps its current file |
+| 404 | The CV does not exist or is not the caller's |
+| 409 | The CV is being parsed, another replace won the race, or the new file already belongs to a CV |
+
+### DELETE /api/cvs/:id
+
+Deletes the file from Cloudinary first, then the row. If Cloudinary fails the row stays (`500`), so the user can try again; a file that is already gone counts as deleted. Interview sessions that used the CV keep their own `cv_snapshot`; only their `cv_id` becomes `null`.
+
+| Status | When |
+|---|---|
+| 200 | Deleted (`data` is `null`) |
+| 404 | The CV does not exist (also when it was already deleted) or is not the caller's |
+| 409 | The CV is being parsed (a parse stuck for over 3 minutes does not block it) |
 
 ### PATCH /api/cvs/:id/parsed-data
 
