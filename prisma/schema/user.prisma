@@ -12,6 +12,7 @@ model User {
   refreshTokens     RefreshToken[]
   cvs               Cv[]
   interviewSessions InterviewSession[]
+  questionBankItems QuestionBankItem[]
 
   @@map("users")
 }

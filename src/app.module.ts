@@ -22,6 +22,7 @@ import { AuthModule } from './modules/authentication/auth.module';
 import { ScoringModule } from './modules/scoring/scoring.module';
 import { UserModule } from './modules/user/user.module';
 import { LlmPlaygroundModule } from './modules/llm-playground/llm-playground.module';
+import { QuestionBankModule } from './modules/question-bank/question-bank.module';
 import { QuestionGenerationModule } from './modules/question-generation/question-generation.module';
 
 @Module({
@@ -40,6 +41,7 @@ import { QuestionGenerationModule } from './modules/question-generation/question
     UserModule,
     LlmPlaygroundModule,
     QuestionGenerationModule,
+    QuestionBankModule,
   ],
   controllers: [AppController],
   providers: [

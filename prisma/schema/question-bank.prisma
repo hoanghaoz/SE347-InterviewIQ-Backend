@@ -1,0 +1,21 @@
+/// Ngân hàng câu hỏi của người dùng (CR-006). Độc lập với phiên phỏng vấn: xóa phiên không
+/// làm mất câu trong ngân hàng, khác với bảng `questions` bị xóa theo phiên.
+model QuestionBankItem {
+  id          Int                @id @default(autoincrement())
+  publicId    String             @unique @default(uuid()) @map("public_id") @db.Uuid
+  userId      Int                @map("user_id")
+  content     String             @db.Text
+  /// SHA-256 của nội dung đã chuẩn hóa (bỏ hoa thường, khoảng trắng thừa) để chống trùng.
+  contentHash String             @map("content_hash") @db.VarChar(64)
+  domain      QuestionDomain
+  difficulty  QuestionDifficulty
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime           @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, contentHash])
+  @@index([userId, domain, difficulty])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("question_bank_items")
+}
