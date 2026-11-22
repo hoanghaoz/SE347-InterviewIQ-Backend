@@ -1,9 +1,12 @@
 import { err, ok } from 'neverthrow';
 import { ErrorCode } from '../../../../shared/common/errorCode';
+import { CommonSessionStatus } from '../../../interview/domain/enums/interview-enum';
 import {
   QuestionDifficulty,
   QuestionDomain,
 } from '../../../question-generation/domain/enums/question.enum';
+import { QuestionSetLockedError } from '../../../question-generation/domain/errors/question-generation.error';
+import type { IQuestionGenerationRepository } from '../../../question-generation/domain/repositories/question-generation.repo.interface';
 import { MAX_BANK_ITEMS_PER_USER } from '../../domain/constants/question-bank.constants';
 import {
   QuestionBankFullError,
@@ -14,6 +17,7 @@ import { IQuestionBankRepository } from '../../domain/repositories/question-bank
 import {
   QuestionBankQueryDto,
   SaveQuestionBankRequestDto,
+  UseBankQuestionsRequestDto,
 } from '../dtos/question-bank.request.dto';
 import { QuestionBankService } from './question-bank.service';
 
@@ -21,6 +25,18 @@ describe('QuestionBankService', () => {
   const listItems = jest.fn<
     ReturnType<IQuestionBankRepository['listItems']>,
     Parameters<IQuestionBankRepository['listItems']>
+  >();
+  const getItemsByPublicIds = jest.fn<
+    ReturnType<IQuestionBankRepository['getItemsByPublicIds']>,
+    Parameters<IQuestionBankRepository['getItemsByPublicIds']>
+  >();
+  const getGenerationContext = jest.fn<
+    ReturnType<IQuestionGenerationRepository['getGenerationContext']>,
+    Parameters<IQuestionGenerationRepository['getGenerationContext']>
+  >();
+  const replaceQuestions = jest.fn<
+    ReturnType<IQuestionGenerationRepository['replaceQuestions']>,
+    Parameters<IQuestionGenerationRepository['replaceQuestions']>
   >();
   const getSessionQuestions = jest.fn<
     ReturnType<IQuestionBankRepository['getSessionQuestions']>,
@@ -34,12 +50,21 @@ describe('QuestionBankService', () => {
     ReturnType<IQuestionBankRepository['deleteItem']>,
     Parameters<IQuestionBankRepository['deleteItem']>
   >();
-  const service = new QuestionBankService({
-    listItems,
-    getSessionQuestions,
-    addItems,
-    deleteItem,
-  });
+  const service = new QuestionBankService(
+    {
+      listItems,
+      getItemsByPublicIds,
+      getSessionQuestions,
+      addItems,
+      deleteItem,
+    },
+    {
+      getGenerationContext,
+      replaceQuestions,
+      replaceQuestion: jest.fn(),
+      getSessionQuestions: jest.fn(),
+    },
+  );
   const userId = '00000000-0000-4000-8000-000000000001';
   const sessionId = '00000000-0000-4000-8000-000000000002';
   const row = {
@@ -294,5 +319,165 @@ describe('QuestionBankService', () => {
       expect(result.error.code).toBe(ErrorCode.InternalServerError);
       expect(result.error.message).not.toContain('database secret');
     });
+  });
+  describe('useInSessionAsync', () => {
+    const itemIds = [
+      '00000000-0000-4000-8000-0000000000a1',
+      '00000000-0000-4000-8000-0000000000a2',
+      '00000000-0000-4000-8000-0000000000a3',
+    ];
+    const bankItem = (
+      id: string,
+      content: string,
+      domain = QuestionDomain.TECHNICAL,
+    ) => ({
+      publicId: id,
+      content,
+      domain,
+      difficulty: QuestionDifficulty.EASY,
+      createdAt: new Date('2026-11-22T07:58:11.000Z'),
+    });
+    const stored = [
+      {
+        publicId: 'q-1',
+        orderIndex: 1,
+        content: 'C',
+        domain: QuestionDomain.TECHNICAL,
+        difficulty: QuestionDifficulty.EASY,
+      },
+    ];
+    const useItems = (ids = itemIds) =>
+      service.useInSessionAsync(
+        userId,
+        sessionId,
+        Object.assign(new UseBankQuestionsRequestDto(), { itemPublicIds: ids }),
+      );
+
+    beforeEach(() => {
+      getGenerationContext.mockResolvedValue(
+        ok({
+          sessionId: 7,
+          status: CommonSessionStatus.CREATED,
+          jobDescription: null,
+          parsedData: null,
+        }),
+      );
+      // Cố ý trả lộn thứ tự: service phải sắp theo thứ tự người dùng chọn.
+      getItemsByPublicIds.mockResolvedValue(
+        ok([
+          bankItem(itemIds[2], 'C', QuestionDomain.SITUATIONAL),
+          bankItem(itemIds[0], 'A'),
+          bankItem(itemIds[1], 'B', QuestionDomain.BEHAVIORAL),
+        ]),
+      );
+      replaceQuestions.mockResolvedValue(ok(stored));
+    });
+
+    it('replaces the session set with the chosen items in the chosen order', async () => {
+      const result = await useItems();
+
+      expect(result._unsafeUnwrap()).toEqual({
+        sessionPublicId: sessionId,
+        questions: stored,
+      });
+      expect(getGenerationContext).toHaveBeenCalledWith(sessionId, userId);
+      expect(getItemsByPublicIds).toHaveBeenCalledWith(userId, itemIds);
+      expect(replaceQuestions).toHaveBeenCalledWith(7, [
+        {
+          orderIndex: 1,
+          content: 'A',
+          domain: 'TECHNICAL',
+          difficulty: 'EASY',
+        },
+        {
+          orderIndex: 2,
+          content: 'B',
+          domain: 'BEHAVIORAL',
+          difficulty: 'EASY',
+        },
+        {
+          orderIndex: 3,
+          content: 'C',
+          domain: 'SITUATIONAL',
+          difficulty: 'EASY',
+        },
+      ]);
+    });
+
+    it('follows the order of the request, not the order the database returns', async () => {
+      await useItems([itemIds[2], itemIds[1], itemIds[0]]);
+
+      expect(replaceQuestions).toHaveBeenCalledWith(7, [
+        expect.objectContaining({ orderIndex: 1, content: 'C' }),
+        expect.objectContaining({ orderIndex: 2, content: 'B' }),
+        expect.objectContaining({ orderIndex: 3, content: 'A' }),
+      ]);
+    });
+
+    it('returns 404 for a missing or foreign session and reads nothing from the bank', async () => {
+      getGenerationContext.mockResolvedValue(ok(null));
+
+      const error = (await useItems())._unsafeUnwrapErr();
+
+      expect(error.code).toBe(ErrorCode.NotFound);
+      expect(getItemsByPublicIds).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      CommonSessionStatus.IN_PROGRESS,
+      CommonSessionStatus.SUBMITTED,
+      CommonSessionStatus.COMPLETED,
+    ])('returns 409 when the session is %s', async (status) => {
+      getGenerationContext.mockResolvedValue(
+        ok({ sessionId: 7, status, jobDescription: null, parsedData: null }),
+      );
+
+      const error = (await useItems())._unsafeUnwrapErr();
+
+      expect(error.code).toBe(ErrorCode.Conflict);
+      expect(replaceQuestions).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 and changes nothing when an item is not in the callers bank', async () => {
+      getItemsByPublicIds.mockResolvedValue(
+        ok([bankItem(itemIds[0], 'A'), bankItem(itemIds[1], 'B')]),
+      );
+
+      const error = (await useItems())._unsafeUnwrapErr();
+
+      expect(error.code).toBe(ErrorCode.NotFound);
+      expect(error.message).toBe('Question bank item not found');
+      expect(replaceQuestions).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 when the session leaves CREATED while saving', async () => {
+      replaceQuestions.mockResolvedValue(err(new QuestionSetLockedError()));
+
+      const error = (await useItems())._unsafeUnwrapErr();
+
+      expect(error.code).toBe(ErrorCode.Conflict);
+    });
+
+    it.each(['context', 'items', 'save'])(
+      'sanitizes a repository failure while loading the %s',
+      async (step) => {
+        if (step === 'context') {
+          getGenerationContext.mockResolvedValue(
+            err(new Error('database secret')),
+          );
+        } else if (step === 'items') {
+          getItemsByPublicIds.mockResolvedValue(
+            err(new Error('database secret')),
+          );
+        } else {
+          replaceQuestions.mockResolvedValue(err(new Error('database secret')));
+        }
+
+        const error = (await useItems())._unsafeUnwrapErr();
+
+        expect(error.code).toBe(ErrorCode.InternalServerError);
+        expect(error.message).not.toContain('database secret');
+      },
+    );
   });
 });

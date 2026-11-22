@@ -6,7 +6,10 @@ import {
   QuestionDifficulty,
   QuestionDomain,
 } from '../../domain/enums/question.enum';
-import { QuestionSetLockedError } from '../../domain/errors/question-generation.error';
+import {
+  QuestionNotInSessionError,
+  QuestionSetLockedError,
+} from '../../domain/errors/question-generation.error';
 import type {
   GenerationContext,
   IQuestionGenerationRepository,
@@ -49,6 +52,10 @@ describe('QuestionGenerationService', () => {
     ReturnType<IQuestionGenerationRepository['replaceQuestions']>,
     Parameters<IQuestionGenerationRepository['replaceQuestions']>
   >();
+  const replaceQuestion = jest.fn<
+    ReturnType<IQuestionGenerationRepository['replaceQuestion']>,
+    Parameters<IQuestionGenerationRepository['replaceQuestion']>
+  >();
   const getSessionQuestions = jest.fn<
     ReturnType<IQuestionGenerationRepository['getSessionQuestions']>,
     Parameters<IQuestionGenerationRepository['getSessionQuestions']>
@@ -58,7 +65,12 @@ describe('QuestionGenerationService', () => {
     Parameters<IQuestionGenerator['generateAsync']>
   >();
   const service = new QuestionGenerationService(
-    { getGenerationContext, replaceQuestions, getSessionQuestions },
+    {
+      getGenerationContext,
+      replaceQuestions,
+      replaceQuestion,
+      getSessionQuestions,
+    },
     { generateAsync },
   );
 
@@ -216,5 +228,193 @@ describe('QuestionGenerationService', () => {
       expect(error.code).toBe(ErrorCode.InternalServerError);
       expect(error.message).toBe('Failed to retrieve interview questions');
     });
+  });
+  describe('generateQuestionsAsync constraints', () => {
+    it('passes the requested domain and difficulty to the generator', async () => {
+      await service.generateQuestionsAsync('u-1', 's-1', {
+        count: 3,
+        domain: QuestionDomain.BEHAVIORAL,
+        difficulty: QuestionDifficulty.HARD,
+      });
+
+      expect(generateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          count: 3,
+          domain: QuestionDomain.BEHAVIORAL,
+          difficulty: QuestionDifficulty.HARD,
+        }),
+      );
+    });
+  });
+
+  describe('regenerateQuestionAsync', () => {
+    const current: StoredQuestion[] = [
+      {
+        publicId: 'q-1',
+        orderIndex: 1,
+        content: 'First?',
+        domain: QuestionDomain.TECHNICAL,
+        difficulty: QuestionDifficulty.EASY,
+      },
+      {
+        publicId: 'q-2',
+        orderIndex: 2,
+        content: 'Second?',
+        domain: QuestionDomain.BEHAVIORAL,
+        difficulty: QuestionDifficulty.HARD,
+      },
+    ];
+    const fresh = [
+      {
+        orderIndex: 1,
+        content: 'Fresh?',
+        domain: QuestionDomain.BEHAVIORAL,
+        difficulty: QuestionDifficulty.HARD,
+      },
+    ];
+    const updated: StoredQuestion[] = [
+      current[0],
+      { ...current[1], content: 'Fresh?' },
+    ];
+    const regenerate = (request = {}) =>
+      service.regenerateQuestionAsync('u-1', 's-1', 'q-2', request);
+
+    beforeEach(() => {
+      getSessionQuestions.mockResolvedValue(
+        ok({ sessionPublicId: 's-1', questions: current }),
+      );
+      generateAsync.mockResolvedValue(ok(fresh));
+      replaceQuestion.mockResolvedValue(ok(updated));
+    });
+
+    it('rewrites one question, keeping its domain and difficulty, and avoids every current text', async () => {
+      const result = await regenerate();
+
+      expect(result._unsafeUnwrap()).toEqual({
+        sessionPublicId: 's-1',
+        questions: updated,
+      });
+      expect(generateAsync).toHaveBeenCalledWith({
+        parsedData,
+        jobDescription: 'NestJS dev',
+        count: 1,
+        domain: QuestionDomain.BEHAVIORAL,
+        difficulty: QuestionDifficulty.HARD,
+        exclude: ['First?', 'Second?'],
+      });
+      expect(replaceQuestion).toHaveBeenCalledWith(7, 'q-2', {
+        content: 'Fresh?',
+        domain: QuestionDomain.BEHAVIORAL,
+        difficulty: QuestionDifficulty.HARD,
+      });
+      expect(replaceQuestions).not.toHaveBeenCalled();
+    });
+
+    it('lets the request change the domain and difficulty', async () => {
+      await regenerate({
+        domain: QuestionDomain.SITUATIONAL,
+        difficulty: QuestionDifficulty.MEDIUM,
+      });
+
+      expect(generateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          domain: QuestionDomain.SITUATIONAL,
+          difficulty: QuestionDifficulty.MEDIUM,
+        }),
+      );
+    });
+
+    it('returns 404 when the session is missing or not owned', async () => {
+      getGenerationContext.mockResolvedValue(ok(null));
+
+      const error = (await regenerate())._unsafeUnwrapErr();
+
+      expect(error.code).toBe(ErrorCode.NotFound);
+      expect(generateAsync).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 when the session has left CREATED', async () => {
+      getGenerationContext.mockResolvedValue(
+        ok({ ...context, status: CommonSessionStatus.IN_PROGRESS }),
+      );
+
+      const error = (await regenerate())._unsafeUnwrapErr();
+
+      expect(error.code).toBe(ErrorCode.Conflict);
+      expect(generateAsync).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 when the CV has not been parsed', async () => {
+      getGenerationContext.mockResolvedValue(
+        ok({ ...context, parsedData: null }),
+      );
+
+      const error = (await regenerate())._unsafeUnwrapErr();
+
+      expect(error.code).toBe(ErrorCode.Conflict);
+      expect(error.message).toBe('CV has not been parsed yet');
+    });
+
+    it('returns 404 when the question is not part of the session', async () => {
+      const error = (
+        await service.regenerateQuestionAsync('u-1', 's-1', 'q-unknown', {})
+      )._unsafeUnwrapErr();
+
+      expect(error.code).toBe(ErrorCode.NotFound);
+      expect(generateAsync).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 when the session has no stored set', async () => {
+      getSessionQuestions.mockResolvedValue(ok(null));
+
+      const error = (await regenerate())._unsafeUnwrapErr();
+
+      expect(error.code).toBe(ErrorCode.NotFound);
+    });
+
+    it.each(['context', 'questions'])(
+      'returns 500 without detail when loading the %s fails',
+      async (step) => {
+        if (step === 'context') {
+          getGenerationContext.mockResolvedValue(err(new Error('db down')));
+        } else {
+          getSessionQuestions.mockResolvedValue(err(new Error('db down')));
+        }
+
+        const error = (await regenerate())._unsafeUnwrapErr();
+
+        expect(error.code).toBe(ErrorCode.InternalServerError);
+        expect(error.message).not.toContain('db down');
+      },
+    );
+
+    it('returns the generator failure and stores nothing', async () => {
+      const failure = new AppError(
+        ErrorCode.InternalServerError,
+        'Failed to generate',
+      );
+      generateAsync.mockResolvedValue(err(failure));
+
+      const error = (await regenerate())._unsafeUnwrapErr();
+
+      expect(error).toBe(failure);
+      expect(replaceQuestion).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [new QuestionSetLockedError(), ErrorCode.Conflict],
+      [new QuestionNotInSessionError(), ErrorCode.NotFound],
+      [new Error('db down'), ErrorCode.InternalServerError],
+    ])(
+      'maps a storage failure to a safe application error',
+      async (failure, code) => {
+        replaceQuestion.mockResolvedValue(err(failure));
+
+        const error = (await regenerate())._unsafeUnwrapErr();
+
+        expect(error.code).toBe(code);
+        expect(error.message).not.toContain('db down');
+      },
+    );
   });
 });

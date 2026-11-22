@@ -55,6 +55,13 @@ export abstract class IQuestionBankRepository {
     filter: QuestionBankFilter,
   ): Promise<Result<QuestionBankPage, Error>>;
 
+  // Chỉ trả các câu của người dùng này; id không tồn tại hoặc của người khác bị bỏ qua
+  // (không có trong kết quả), thứ tự không được đảm bảo.
+  abstract getItemsByPublicIds(
+    userPublicId: string,
+    itemPublicIds: string[],
+  ): Promise<Result<QuestionBankItemData[], Error>>;
+
   // Resolves to null when the session does not exist or is not owned by the user.
   abstract getSessionQuestions(
     userPublicId: string,

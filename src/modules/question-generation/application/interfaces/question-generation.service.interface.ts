@@ -1,6 +1,7 @@
 import type { Result } from 'neverthrow';
 import type { AppError } from '../../../../shared/common/errorCode';
 import type { GenerateQuestionsRequestDto } from '../dtos/generate-questions.request.dto';
+import type { RegenerateQuestionRequestDto } from '../dtos/regenerate-question.request.dto';
 import type { SessionQuestionsResponseDto } from '../dtos/question.response.dto';
 
 export abstract class IQuestionGenerationService {
@@ -8,6 +9,13 @@ export abstract class IQuestionGenerationService {
     userPublicId: string,
     sessionPublicId: string,
     request: GenerateQuestionsRequestDto,
+  ): Promise<Result<SessionQuestionsResponseDto, AppError>>;
+
+  abstract regenerateQuestionAsync(
+    userPublicId: string,
+    sessionPublicId: string,
+    questionPublicId: string,
+    request: RegenerateQuestionRequestDto,
   ): Promise<Result<SessionQuestionsResponseDto, AppError>>;
 
   abstract getQuestionsAsync(

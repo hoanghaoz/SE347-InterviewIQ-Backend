@@ -394,4 +394,47 @@ describe('QuestionBankRepository', () => {
       expect(result.error.message).toBe('Failed to delete the question');
     });
   });
+  describe('getItemsByPublicIds', () => {
+    it('reads only the given items that belong to the caller', async () => {
+      findMany.mockResolvedValue([row]);
+
+      const result = await repository.getItemsByPublicIds('user-1', [
+        'item-1',
+        'item-2',
+      ]);
+
+      expect(findMany).toHaveBeenCalledWith({
+        where: {
+          publicId: { in: ['item-1', 'item-2'] },
+          user: { publicId: 'user-1' },
+        },
+        select: {
+          publicId: true,
+          content: true,
+          domain: true,
+          difficulty: true,
+          createdAt: true,
+        },
+      });
+      expect(result._unsafeUnwrap()).toEqual([
+        {
+          publicId: 'item-1',
+          content: row.content,
+          domain: QuestionDomain.TECHNICAL,
+          difficulty: QuestionDifficulty.MEDIUM,
+          createdAt: row.createdAt,
+        },
+      ]);
+    });
+
+    it('sanitizes database errors', async () => {
+      findMany.mockRejectedValue(new Error('database secret'));
+
+      const result = await repository.getItemsByPublicIds('user-1', ['item-1']);
+
+      expect(result._unsafeUnwrapErr().message).toBe(
+        'Failed to load the question bank items',
+      );
+    });
+  });
 });

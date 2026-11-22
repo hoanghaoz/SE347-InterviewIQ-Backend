@@ -8,6 +8,7 @@ import { Test } from '@nestjs/testing';
 import { err, ok } from 'neverthrow';
 import request from 'supertest';
 import type { App } from 'supertest/types';
+import { QuestionBankSessionController } from '../src/modules/question-bank/api/question-bank-session.controller';
 import { QuestionBankController } from '../src/modules/question-bank/api/question-bank.controller';
 import { IQuestionBankService } from '../src/modules/question-bank/application/interfaces/question-bank.service.interface';
 import { PageResult } from '../src/shared/common/pagination';
@@ -24,6 +25,7 @@ describe('QuestionBankController (e2e)', () => {
   const listAsync = jest.fn();
   const saveFromSessionAsync = jest.fn();
   const deleteAsync = jest.fn();
+  const useInSessionAsync = jest.fn();
   const sessionId = '00000000-0000-4000-8000-000000000002';
   const questionId = '00000000-0000-4000-8000-000000000003';
   const userId = '00000000-0000-4000-8000-000000000001';
@@ -43,15 +45,23 @@ describe('QuestionBankController (e2e)', () => {
       ok({ savedCount: 3, skippedCount: 1 }),
     );
     deleteAsync.mockResolvedValue(ok(undefined));
+    useInSessionAsync.mockResolvedValue(
+      ok({ sessionPublicId: sessionId, questions: [] }),
+    );
     const module = await Test.createTestingModule({
       imports: [JwtModule.register({ secret: 'test-secret' })],
-      controllers: [QuestionBankController],
+      controllers: [QuestionBankController, QuestionBankSessionController],
       providers: [
         JwtAuthGuard,
         RolesGuard,
         {
           provide: IQuestionBankService,
-          useValue: { listAsync, saveFromSessionAsync, deleteAsync },
+          useValue: {
+            listAsync,
+            saveFromSessionAsync,
+            deleteAsync,
+            useInSessionAsync,
+          },
         },
       ],
     }).compile();
@@ -323,6 +333,104 @@ describe('QuestionBankController (e2e)', () => {
         .set('Authorization', `Bearer ${viewer}`)
         .expect(403);
       expect(deleteAsync).not.toHaveBeenCalled();
+    });
+  });
+  describe('POST /api/interview-session/:sessionPublicId/questions/from-bank', () => {
+    const route = `/api/interview-session/${sessionId}/questions/from-bank`;
+    const ids = [
+      '00000000-0000-4000-8000-0000000000a1',
+      '00000000-0000-4000-8000-0000000000a2',
+      '00000000-0000-4000-8000-0000000000a3',
+    ];
+    const post = (body: unknown, url = route) =>
+      request(app.getHttpServer())
+        .post(url)
+        .set('Authorization', `Bearer ${token}`)
+        .send(body as object);
+
+    it('sets the session questions and returns 200 with the set', async () => {
+      const response = await post({ itemPublicIds: ids }).expect(200);
+
+      expect(response.body).toMatchObject({
+        statusCode: 200,
+        success: true,
+        message: 'Interview questions set from the question bank',
+        data: { sessionPublicId: sessionId, questions: [] },
+      });
+      expect(useInSessionAsync).toHaveBeenCalledWith(userId, sessionId, {
+        itemPublicIds: ids,
+      });
+    });
+
+    it('drops unknown fields so a client cannot pick another user', async () => {
+      await post({ itemPublicIds: ids, userId: 'someone-else' }).expect(200);
+
+      expect(useInSessionAsync).toHaveBeenCalledWith(userId, sessionId, {
+        itemPublicIds: ids,
+      });
+    });
+
+    it.each([
+      ['missing', {}],
+      ['not an array', { itemPublicIds: 'abc' }],
+      ['too few (2)', { itemPublicIds: ids.slice(0, 2) }],
+      [
+        'too many (11)',
+        {
+          itemPublicIds: Array.from(
+            { length: 11 },
+            (_, index) =>
+              `00000000-0000-4000-8000-0000000001${String(index).padStart(2, '0')}`,
+          ),
+        },
+      ],
+      ['repeated', { itemPublicIds: [ids[0], ids[0], ids[1]] }],
+      ['not UUIDs', { itemPublicIds: [ids[0], ids[1], 'not-a-uuid'] }],
+    ])('rejects itemPublicIds that are %s', async (_name, body) => {
+      const response = await post(body).expect(400);
+
+      expect((response.body as Record<string, unknown>).errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: 'itemPublicIds' }),
+        ]),
+      );
+      expect(useInSessionAsync).not.toHaveBeenCalled();
+    });
+
+    it('rejects a malformed session id', async () => {
+      await post(
+        { itemPublicIds: ids },
+        '/api/interview-session/not-a-uuid/questions/from-bank',
+      ).expect(400);
+      expect(useInSessionAsync).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [ErrorCode.NotFound, 404],
+      [ErrorCode.Conflict, 409],
+      [ErrorCode.InternalServerError, 500],
+    ])('maps %s results to HTTP %s', async (code, status) => {
+      useInSessionAsync.mockResolvedValue(
+        err(new AppError(code, 'Operation unavailable')),
+      );
+
+      const response = await post({ itemPublicIds: ids }).expect(status);
+
+      expect(response.body).toMatchObject({ success: false, code });
+    });
+
+    it('requires authentication and rejects a VIEWER', async () => {
+      await request(app.getHttpServer())
+        .post(route)
+        .send({ itemPublicIds: ids })
+        .expect(401);
+      const viewer = jwtService.sign({ sub: userId, role: 'VIEWER' });
+      await request(app.getHttpServer())
+        .post(route)
+        .set('Authorization', `Bearer ${viewer}`)
+        .send({ itemPublicIds: ids })
+        .expect(403);
+      expect(useInSessionAsync).not.toHaveBeenCalled();
     });
   });
 });

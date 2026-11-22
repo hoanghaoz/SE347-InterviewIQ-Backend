@@ -16,6 +16,7 @@ import { Auth } from '../../../shared/decorators/auth.decorator';
 import { User } from '../../../shared/decorators/user.decorator';
 import { ApiSuccessResponse } from '../../../shared/response/apiResponse';
 import { GenerateQuestionsRequestDto } from '../application/dtos/generate-questions.request.dto';
+import { RegenerateQuestionRequestDto } from '../application/dtos/regenerate-question.request.dto';
 import { SessionQuestionsResponseDto } from '../application/dtos/question.response.dto';
 import { IQuestionGenerationService } from '../application/interfaces/question-generation.service.interface';
 
@@ -46,6 +47,40 @@ export class QuestionGenerationController {
           HttpStatus.OK,
           data,
           'Interview questions generated successfully',
+        ),
+      (error) => {
+        throw toHttpException(error);
+      },
+    );
+  }
+
+  @Post(':questionPublicId/regenerate')
+  @HttpCode(HttpStatus.OK)
+  @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
+  @ApiOperation({
+    summary: 'Regenerate a single question of a session',
+    description:
+      'Rewrites one question in place, keeping its id and position. Returns the whole set.',
+  })
+  @ApiOkResponse({ type: SessionQuestionsResponseDto })
+  async regenerateQuestionAsync(
+    @User() user: JwtPayload,
+    @Param('sessionPublicId', ParseUUIDPipe) sessionPublicId: string,
+    @Param('questionPublicId', ParseUUIDPipe) questionPublicId: string,
+    @Body() body: RegenerateQuestionRequestDto = {},
+  ): Promise<ApiSuccessResponse<SessionQuestionsResponseDto>> {
+    const result = await this.questionService.regenerateQuestionAsync(
+      user.sub,
+      sessionPublicId,
+      questionPublicId,
+      body,
+    );
+    return result.match(
+      (data) =>
+        new ApiSuccessResponse(
+          HttpStatus.OK,
+          data,
+          'Interview question regenerated successfully',
         ),
       (error) => {
         throw toHttpException(error);

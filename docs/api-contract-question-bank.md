@@ -4,7 +4,7 @@ A per-user bank of interview questions that can be reused across sessions (CR-00
 
 Every endpoint requires a bearer token with USER or ADMIN role and only ever touches the authenticated user's items. No route accepts a user id from the client.
 
-This document covers listing, saving and deleting bank items. Reusing bank items in a session and regenerating a single question are planned in follow-up changes.
+This document covers listing, saving and deleting bank items, and using them as the questions of a session. Choosing a domain and difficulty when generating, and regenerating a single question, are in `api-contract-question-generation.md`.
 
 ## Bank item object
 
@@ -169,4 +169,39 @@ export type SaveToQuestionBankRequest = {
 export type SaveToQuestionBankResult = { savedCount: number; skippedCount: number }
 // POST   /api/question-bank       -> ApiSuccessResponse<SaveToQuestionBankResult, 201>
 // DELETE /api/question-bank/:id   -> ApiSuccessResponse<null, 200>
+```
+
+## 4. Use bank questions as the questions of a session
+
+```http
+POST /api/interview-session/:sessionPublicId/questions/from-bank
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+```json
+{ "itemPublicIds": ["<itemUUID>", "<itemUUID>", "<itemUUID>"] }
+```
+
+Replaces the **whole** question set of the session with the chosen bank items, in the given order: the first id becomes question 1. `content`, `domain` and `difficulty` are copied; the items stay in the bank. The session's `totalQuestions` follows the new set.
+
+| Field | Type | Notes |
+|---|---|---|
+| `itemPublicIds` | UUID[], required | 3 to 10 ids, no repeats. Every id must be an item of the authenticated user. |
+
+The order is the caller's choice and is **not** re-sorted by difficulty (generation orders from easy to hard; this call does not).
+
+Success is HTTP 200 with the same `data` shape as generate in `api-contract-question-generation.md` (`sessionPublicId` and `questions`, each with a new `publicId`), message `Interview questions set from the question bank`. No CV is needed.
+
+| Status | When |
+|---|---|
+| 400 | `itemPublicIds` is missing, has fewer than 3 or more than 10 entries, repeats an id or contains a non-UUID; or the session id is not a UUID. |
+| 401 / 403 | Missing or invalid token / role is not USER or ADMIN. |
+| 404 | The session is missing or belongs to another user (same response for both), or an item is not in the caller's bank (`Question bank item not found`). Nothing is changed. |
+| 409 | The session has left CREATED (started, submitted or finished). |
+| 500 | Infrastructure failure, with a sanitized message. |
+
+```ts
+export type UseBankQuestionsRequest = { itemPublicIds: string[] } // 3..10 distinct UUIDs
+// POST /api/interview-session/:id/questions/from-bank -> ApiSuccessResponse<SessionQuestions, 200>
 ```

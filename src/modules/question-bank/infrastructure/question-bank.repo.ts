@@ -18,6 +18,7 @@ import {
   IQuestionBankRepository,
   type AddItemsResult,
   type NewQuestionBankItem,
+  type QuestionBankItemData,
   type QuestionBankFilter,
   type QuestionBankPage,
   type SessionQuestionData,
@@ -91,6 +92,41 @@ export class QuestionBankRepository implements IQuestionBankRepository {
     } catch (error) {
       this.logger.error(`listItems failed: ${(error as Error).message}`);
       return err(new Error('Failed to list the question bank'));
+    }
+  }
+
+  async getItemsByPublicIds(
+    userPublicId: string,
+    itemPublicIds: string[],
+  ): Promise<Result<QuestionBankItemData[], Error>> {
+    try {
+      const rows = await this.prisma.questionBankItem.findMany({
+        where: {
+          publicId: { in: itemPublicIds },
+          user: { publicId: userPublicId },
+        },
+        select: {
+          publicId: true,
+          content: true,
+          domain: true,
+          difficulty: true,
+          createdAt: true,
+        },
+      });
+      return ok(
+        rows.map((row) => ({
+          publicId: row.publicId,
+          content: row.content,
+          domain: QuestionDomain[row.domain],
+          difficulty: QuestionDifficulty[row.difficulty],
+          createdAt: row.createdAt,
+        })),
+      );
+    } catch (error) {
+      this.logger.error(
+        `getItemsByPublicIds failed: ${(error as Error).message}`,
+      );
+      return err(new Error('Failed to load the question bank items'));
     }
   }
 

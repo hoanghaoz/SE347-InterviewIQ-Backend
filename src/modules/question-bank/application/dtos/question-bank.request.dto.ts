@@ -2,7 +2,9 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
+  ArrayMinSize,
   ArrayNotEmpty,
+  ArrayUnique,
   IsArray,
   IsEnum,
   IsInt,
@@ -13,7 +15,10 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import { MAX_QUESTION_COUNT } from '../../../question-generation/domain/constants/question-generation.constants';
+import {
+  MAX_QUESTION_COUNT,
+  MIN_QUESTION_COUNT,
+} from '../../../question-generation/domain/constants/question-generation.constants';
 import {
   QuestionDifficulty,
   QuestionDomain,
@@ -107,4 +112,21 @@ export class SaveQuestionBankRequestDto {
   @ArrayMaxSize(MAX_QUESTION_COUNT)
   @IsUUID('all', { each: true })
   questionPublicIds?: string[];
+}
+
+export class UseBankQuestionsRequestDto {
+  @ApiProperty({
+    type: [String],
+    format: 'uuid',
+    minItems: MIN_QUESTION_COUNT,
+    maxItems: MAX_QUESTION_COUNT,
+    description:
+      'Bank items that become the question set of the session, in this order',
+  })
+  @IsArray()
+  @ArrayMinSize(MIN_QUESTION_COUNT)
+  @ArrayMaxSize(MAX_QUESTION_COUNT)
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
+  itemPublicIds!: string[];
 }

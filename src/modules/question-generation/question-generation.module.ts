@@ -38,5 +38,7 @@ import { QuestionGenerationRepository } from './infrastructure/question-generati
     },
     { provide: IQuestionGenerator, useClass: LlmQuestionGenerator },
   ],
+  // The question bank reads and replaces the question set of a session through this contract.
+  exports: [IQuestionGenerationRepository],
 })
 export class QuestionGenerationModule {}
