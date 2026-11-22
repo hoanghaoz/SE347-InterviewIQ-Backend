@@ -25,6 +25,12 @@ export type GenerationContext = {
   parsedData: CvParsedData | null;
 };
 
+export type QuestionReplacement = {
+  content: string;
+  domain: QuestionDomain;
+  difficulty: QuestionDifficulty;
+};
+
 export type SessionQuestions = {
   sessionPublicId: string;
   questions: StoredQuestion[];
@@ -42,6 +48,15 @@ export abstract class IQuestionGenerationRepository {
   abstract replaceQuestions(
     sessionId: number,
     questions: GeneratedQuestion[],
+  ): Promise<Result<StoredQuestion[], Error>>;
+
+  // Rewrites one question in place (its publicId and position stay) and returns the whole
+  // set. Fails with QuestionSetLockedError when the session has left the CREATED state and
+  // with QuestionNotInSessionError when the question is not part of the session.
+  abstract replaceQuestion(
+    sessionId: number,
+    questionPublicId: string,
+    replacement: QuestionReplacement,
   ): Promise<Result<StoredQuestion[], Error>>;
 
   // Resolves to null when the session does not exist or is not owned by the user.

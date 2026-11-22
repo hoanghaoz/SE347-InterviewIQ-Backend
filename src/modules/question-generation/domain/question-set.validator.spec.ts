@@ -1,3 +1,4 @@
+import { QuestionDifficulty, QuestionDomain } from './enums/question.enum';
 import { validateQuestionSet } from './question-set.validator';
 
 const question = (overrides: Record<string, unknown> = {}) => ({
@@ -82,5 +83,75 @@ describe('validateQuestionSet', () => {
     );
 
     expect(result.isErr()).toBe(true);
+  });
+});
+
+describe('validateQuestionSet constraints', () => {
+  const setOf = (...overrides: Record<string, unknown>[]) => ({
+    questions: overrides.map((override) => question(override)),
+  });
+
+  it('accepts questions that match the requested domain and difficulty', () => {
+    const result = validateQuestionSet(
+      setOf({ content: 'One?', domain: 'BEHAVIORAL', difficulty: 'HARD' }),
+      1,
+      {
+        domain: QuestionDomain.BEHAVIORAL,
+        difficulty: QuestionDifficulty.HARD,
+      },
+    );
+
+    expect(result.isOk()).toBe(true);
+  });
+
+  it('rejects a question of another domain', () => {
+    const result = validateQuestionSet(setOf({ domain: 'TECHNICAL' }), 1, {
+      domain: QuestionDomain.BEHAVIORAL,
+    });
+
+    expect(result.isErr()).toBe(true);
+  });
+
+  it('rejects a question of another difficulty', () => {
+    const result = validateQuestionSet(setOf({ difficulty: 'EASY' }), 1, {
+      difficulty: QuestionDifficulty.HARD,
+    });
+
+    expect(result.isErr()).toBe(true);
+  });
+
+  it('does not constrain what is left unset', () => {
+    const result = validateQuestionSet(
+      setOf(
+        { content: 'A?', domain: 'TECHNICAL' },
+        { content: 'B?', domain: 'BEHAVIORAL' },
+      ),
+      2,
+      { difficulty: QuestionDifficulty.EASY },
+    );
+
+    expect(result.isOk()).toBe(true);
+  });
+
+  it('rejects a question that repeats an excluded text, ignoring case and spacing', () => {
+    const result = validateQuestionSet(
+      setOf({ content: '  what is   a THREAD? ' }),
+      1,
+      { exclude: ['What is a thread?'] },
+    );
+
+    expect(result.isErr()).toBe(true);
+  });
+
+  it('accepts a question that is not among the excluded texts', () => {
+    const result = validateQuestionSet(
+      setOf({ content: 'What is a process?' }),
+      1,
+      {
+        exclude: ['What is a thread?'],
+      },
+    );
+
+    expect(result.isOk()).toBe(true);
   });
 });

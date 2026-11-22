@@ -1,6 +1,9 @@
 import { CommonSessionStatus } from '../../interview/domain/enums/interview-enum';
 import { PrismaService } from '../../../shared/infrastructure/database/prisma.service';
-import { QuestionSetLockedError } from '../domain/errors/question-generation.error';
+import {
+  QuestionNotInSessionError,
+  QuestionSetLockedError,
+} from '../domain/errors/question-generation.error';
 import {
   QuestionDifficulty,
   QuestionDomain,
@@ -49,9 +52,10 @@ describe('QuestionGenerationRepository', () => {
   const deleteMany = jest.fn();
   const createMany = jest.fn();
   const findMany = jest.fn();
+  const updateQuestion = jest.fn();
   const tx = {
     interviewSession: { updateMany },
-    question: { deleteMany, createMany, findMany },
+    question: { deleteMany, createMany, findMany, updateMany: updateQuestion },
   };
   const transaction = jest.fn(
     (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
@@ -220,6 +224,77 @@ describe('QuestionGenerationRepository', () => {
 
       expect(result._unsafeUnwrapErr().message).toBe(
         'Failed to load the session questions',
+      );
+    });
+  });
+  describe('replaceQuestion', () => {
+    const replacement = {
+      content: 'Fresh?',
+      domain: QuestionDomain.SITUATIONAL,
+      difficulty: QuestionDifficulty.MEDIUM,
+    };
+
+    it('rewrites only that question inside a guarded transaction and returns the whole set', async () => {
+      updateMany.mockResolvedValue({ count: 1 });
+      updateQuestion.mockResolvedValue({ count: 1 });
+      findMany.mockResolvedValue(rows);
+
+      const result = await repository.replaceQuestion(7, 'q-2', replacement);
+
+      expect(updateMany).toHaveBeenCalledWith({
+        where: { id: 7, status: 'CREATED' },
+        data: { status: 'CREATED' },
+      });
+      expect(updateQuestion).toHaveBeenCalledWith({
+        where: { publicId: 'q-2', sessionId: 7 },
+        data: {
+          content: 'Fresh?',
+          domain: 'SITUATIONAL',
+          difficulty: 'MEDIUM',
+        },
+      });
+      expect(updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+        updateQuestion.mock.invocationCallOrder[0],
+      );
+      expect(findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { sessionId: 7 },
+          orderBy: { orderIndex: 'asc' },
+        }),
+      );
+      expect(
+        result._unsafeUnwrap().map((question) => question.publicId),
+      ).toEqual(['q-1', 'q-2']);
+    });
+
+    it('fails with QuestionSetLockedError once the session has left CREATED and writes nothing', async () => {
+      updateMany.mockResolvedValue({ count: 0 });
+
+      const result = await repository.replaceQuestion(7, 'q-2', replacement);
+
+      expect(result._unsafeUnwrapErr()).toBeInstanceOf(QuestionSetLockedError);
+      expect(updateQuestion).not.toHaveBeenCalled();
+    });
+
+    it('fails with QuestionNotInSessionError when the question is not in the session', async () => {
+      updateMany.mockResolvedValue({ count: 1 });
+      updateQuestion.mockResolvedValue({ count: 0 });
+
+      const result = await repository.replaceQuestion(7, 'q-x', replacement);
+
+      expect(result._unsafeUnwrapErr()).toBeInstanceOf(
+        QuestionNotInSessionError,
+      );
+      expect(findMany).not.toHaveBeenCalled();
+    });
+
+    it('returns a generic error when the write fails', async () => {
+      updateMany.mockRejectedValue(new Error('boom'));
+
+      const result = await repository.replaceQuestion(7, 'q-2', replacement);
+
+      expect(result._unsafeUnwrapErr().message).toBe(
+        'Failed to save the regenerated question',
       );
     });
   });

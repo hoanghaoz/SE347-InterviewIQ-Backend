@@ -32,6 +32,7 @@ erDiagram
     users ||--o{ refresh_tokens : "has"
     users ||--o{ cvs : "owns"
     users ||--o{ interview_sessions : "conducts"
+    users ||--o{ question_bank_items : "saves"
     cvs ||--o{ interview_sessions : "used_in"
     interview_sessions ||--o{ questions : "contains"
     interview_sessions ||--o| scores : "graded_by"
@@ -152,11 +153,23 @@ erDiagram
         timestamptz occurred_at
         timestamptz created_at
     }
+
+    question_bank_items {
+        int id PK
+        uuid public_id UK
+        int user_id FK
+        text content
+        varchar content_hash
+        enum domain
+        enum difficulty
+        timestamptz created_at
+        timestamptz updated_at
+    }
 ```
 
 ---
 
-## 3. Danh Sách 9 Bảng & Cấu Trúc Chi Tiết
+## 3. Danh Sách 10 Bảng & Cấu Trúc Chi Tiết
 
 ### 3.1 `users` (Tài khoản người dùng)
 Lưu trữ thông tin nhận diện tài khoản, authentication và phân quyền.
@@ -270,6 +283,17 @@ Ghi nhận các sự kiện bất thường cảnh báo gian lận trong suốt 
 - **`created_at`** (`TIMESTAMPTZ`).
 - **Indexes**: `session_id`, `event_type`, `occurred_at`.
 
+### 3.10 `question_bank_items` (Ngân hàng câu hỏi của người dùng)
+Câu hỏi người dùng chủ động lưu lại để dùng cho các phiên sau (CR-006). Khác với `questions` (gắn với một phiên và bị xóa theo phiên), bảng này **độc lập với phiên phỏng vấn**: xóa phiên không làm mất câu trong ngân hàng.
+- **`id`** (`INT`, PK): Auto-increment.
+- **`public_id`** (`UUID`, UNIQUE).
+- **`user_id`** (`INT`, FK → `users.id`, ON DELETE CASCADE): Chủ sở hữu.
+- **`content`** (`TEXT`): Nội dung câu hỏi (CHECK 1 đến 500 ký tự, cùng giới hạn với câu hỏi sinh ra).
+- **`content_hash`** (`VARCHAR(64)`): SHA-256 của nội dung đã chuẩn hóa (bỏ khác biệt hoa thường và khoảng trắng thừa), dùng để chống lưu trùng.
+- **`domain`** (`QuestionDomain`), **`difficulty`** (`QuestionDifficulty`): Dùng lại hai enum của `questions`.
+- **`created_at`**, **`updated_at`** (`TIMESTAMPTZ`).
+- **Constraints / Indexes**: unique `(user_id, content_hash)`, composite `(user_id, domain, difficulty)` (lọc theo lĩnh vực và độ khó), composite `(user_id, created_at DESC)` (danh sách mới nhất trước).
+
 ---
 
 ## 4. Danh Sách Enums & Giá Trị Hợp Lệ
@@ -307,6 +331,9 @@ ALTER TABLE scores ADD CONSTRAINT scores_range_check CHECK (
   AND confidence_score BETWEEN 0 AND 10
   AND overall_score BETWEEN 0 AND 10
 );
+
+-- Nội dung câu hỏi trong ngân hàng dài 1 đến 500 ký tự
+ALTER TABLE question_bank_items ADD CONSTRAINT question_bank_items_content_length CHECK (char_length(content) BETWEEN 1 AND 500);
 ```
 
 ---

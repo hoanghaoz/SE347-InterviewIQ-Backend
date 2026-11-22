@@ -67,7 +67,12 @@ export class LlmQuestionGenerator implements IQuestionGenerator {
     input: QuestionGenerationInput,
   ): Promise<Result<GeneratedQuestion[], AppError>> {
     const { systemPrompt, prompt } = buildQuestionPrompt(input);
-    const schema = buildQuestionSchema(input.count);
+    const constraints = {
+      domain: input.domain,
+      difficulty: input.difficulty,
+      exclude: input.exclude,
+    };
+    const schema = buildQuestionSchema(input.count, constraints);
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       const response = await this.llm.generateJson<unknown>({
@@ -82,7 +87,11 @@ export class LlmQuestionGenerator implements IQuestionGenerator {
         return err(this.failure());
       }
 
-      const validated = validateQuestionSet(response.value.data, input.count);
+      const validated = validateQuestionSet(
+        response.value.data,
+        input.count,
+        constraints,
+      );
       if (validated.isOk()) {
         return ok(validated.value);
       }

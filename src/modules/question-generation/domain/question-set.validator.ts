@@ -6,8 +6,21 @@ import type { GeneratedQuestion } from './repositories/question-generation.repo.
 const DOMAINS = new Set<string>(Object.values(QuestionDomain));
 const DIFFICULTIES = new Set<string>(Object.values(QuestionDifficulty));
 
+export type QuestionSetConstraints = {
+  // Every question must have this domain / difficulty.
+  domain?: QuestionDomain;
+  difficulty?: QuestionDifficulty;
+  // Texts the set must not repeat.
+  exclude?: readonly string[];
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+// Same text up to case and spacing counts as a repeat.
+function repeatKey(content: string): string {
+  return content.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 /**
@@ -17,6 +30,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function validateQuestionSet(
   raw: unknown,
   expectedCount: number,
+  constraints: QuestionSetConstraints = {},
 ): Result<GeneratedQuestion[], Error> {
   if (!isRecord(raw) || !Array.isArray(raw.questions)) {
     return err(new Error('Output has no questions array'));
@@ -29,7 +43,7 @@ export function validateQuestionSet(
     );
   }
 
-  const seen = new Set<string>();
+  const seen = new Set<string>((constraints.exclude ?? []).map(repeatKey));
   const questions: GeneratedQuestion[] = [];
 
   for (const [index, item] of raw.questions.entries()) {
@@ -49,7 +63,24 @@ export function validateQuestionSet(
     ) {
       return err(new Error(`Question ${index + 1} has invalid difficulty`));
     }
-    const key = content.toLowerCase();
+    // Both were checked against the enum values above.
+    const domain = item.domain as QuestionDomain;
+    const difficulty = item.difficulty as QuestionDifficulty;
+    if (constraints.domain && domain !== constraints.domain) {
+      return err(
+        new Error(
+          `Question ${index + 1} is not of domain ${constraints.domain}`,
+        ),
+      );
+    }
+    if (constraints.difficulty && difficulty !== constraints.difficulty) {
+      return err(
+        new Error(
+          `Question ${index + 1} is not of difficulty ${constraints.difficulty}`,
+        ),
+      );
+    }
+    const key = repeatKey(content);
     if (seen.has(key)) {
       return err(new Error(`Question ${index + 1} is a duplicate`));
     }
@@ -57,8 +88,8 @@ export function validateQuestionSet(
     questions.push({
       orderIndex: index + 1,
       content,
-      domain: item.domain as QuestionDomain,
-      difficulty: item.difficulty as QuestionDifficulty,
+      domain,
+      difficulty,
     });
   }
 
