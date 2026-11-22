@@ -1,14 +1,19 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
+  IsArray,
   IsEnum,
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   MaxLength,
   Min,
 } from 'class-validator';
+import { MAX_QUESTION_COUNT } from '../../../question-generation/domain/constants/question-generation.constants';
 import {
   QuestionDifficulty,
   QuestionDomain,
@@ -79,4 +84,27 @@ export class QuestionBankQueryDto {
     message: `search must not exceed ${MAX_BANK_SEARCH_LENGTH} characters`,
   })
   search?: string;
+}
+
+export class SaveQuestionBankRequestDto {
+  @ApiProperty({
+    format: 'uuid',
+    description: 'Interview session whose questions are saved to the bank',
+  })
+  @IsUUID()
+  sessionPublicId!: string;
+
+  @ApiPropertyOptional({
+    type: [String],
+    format: 'uuid',
+    maxItems: MAX_QUESTION_COUNT,
+    description:
+      'Only these questions of the session. Omit to save every question of the session.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(MAX_QUESTION_COUNT)
+  @IsUUID('all', { each: true })
+  questionPublicIds?: string[];
 }

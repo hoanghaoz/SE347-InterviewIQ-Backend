@@ -22,6 +22,10 @@ describe('QuestionBankController (e2e)', () => {
   let token: string;
   let jwtService: JwtService;
   const listAsync = jest.fn();
+  const saveFromSessionAsync = jest.fn();
+  const deleteAsync = jest.fn();
+  const sessionId = '00000000-0000-4000-8000-000000000002';
+  const questionId = '00000000-0000-4000-8000-000000000003';
   const userId = '00000000-0000-4000-8000-000000000001';
   const route = '/api/question-bank';
   const item = {
@@ -35,13 +39,20 @@ describe('QuestionBankController (e2e)', () => {
   beforeEach(async () => {
     jest.resetAllMocks();
     listAsync.mockResolvedValue(ok(new PageResult([item], 1, 1, 1, 20)));
+    saveFromSessionAsync.mockResolvedValue(
+      ok({ savedCount: 3, skippedCount: 1 }),
+    );
+    deleteAsync.mockResolvedValue(ok(undefined));
     const module = await Test.createTestingModule({
       imports: [JwtModule.register({ secret: 'test-secret' })],
       controllers: [QuestionBankController],
       providers: [
         JwtAuthGuard,
         RolesGuard,
-        { provide: IQuestionBankService, useValue: { listAsync } },
+        {
+          provide: IQuestionBankService,
+          useValue: { listAsync, saveFromSessionAsync, deleteAsync },
+        },
       ],
     }).compile();
     jwtService = module.get(JwtService);
@@ -171,5 +182,147 @@ describe('QuestionBankController (e2e)', () => {
       .set('Authorization', `Bearer ${admin}`)
       .expect(200);
     expect(listAsync).toHaveBeenCalledWith(userId, expect.anything());
+  });
+
+  describe('POST /api/question-bank', () => {
+    const post = (body: unknown) =>
+      request(app.getHttpServer())
+        .post(route)
+        .set('Authorization', `Bearer ${token}`)
+        .send(body as object);
+
+    it('saves a whole session and returns 201 with the counts', async () => {
+      const response = await post({ sessionPublicId: sessionId }).expect(201);
+      expect(response.body).toMatchObject({
+        statusCode: 201,
+        success: true,
+        message: 'Questions saved to the question bank',
+        data: { savedCount: 3, skippedCount: 1 },
+      });
+      expect(saveFromSessionAsync).toHaveBeenCalledWith(
+        userId,
+        expect.objectContaining({ sessionPublicId: sessionId }),
+      );
+    });
+
+    it('forwards the selected questions and drops unknown fields', async () => {
+      await post({
+        sessionPublicId: sessionId,
+        questionPublicIds: [questionId],
+        userId: 'someone-else',
+      }).expect(201);
+      expect(saveFromSessionAsync).toHaveBeenCalledWith(userId, {
+        sessionPublicId: sessionId,
+        questionPublicIds: [questionId],
+      });
+    });
+
+    it.each([
+      ['sessionPublicId', {}],
+      ['sessionPublicId', { sessionPublicId: 'not-a-uuid' }],
+      [
+        'questionPublicIds',
+        { sessionPublicId: sessionId, questionPublicIds: [] },
+      ],
+      [
+        'questionPublicIds',
+        { sessionPublicId: sessionId, questionPublicIds: ['not-a-uuid'] },
+      ],
+      [
+        'questionPublicIds',
+        { sessionPublicId: sessionId, questionPublicIds: 'abc' },
+      ],
+      [
+        'questionPublicIds',
+        {
+          sessionPublicId: sessionId,
+          questionPublicIds: Array.from({ length: 11 }, () => questionId),
+        },
+      ],
+    ])(
+      'rejects an invalid %s before service execution',
+      async (field, body) => {
+        const response = await post(body).expect(400);
+        expect((response.body as Record<string, unknown>).errors).toEqual(
+          expect.arrayContaining([expect.objectContaining({ field })]),
+        );
+        expect(saveFromSessionAsync).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      [ErrorCode.NotFound, 404],
+      [ErrorCode.Conflict, 409],
+      [ErrorCode.BadRequest, 400],
+      [ErrorCode.InternalServerError, 500],
+    ])('maps %s results to HTTP %s', async (code, status) => {
+      saveFromSessionAsync.mockResolvedValue(
+        err(new AppError(code, 'Operation unavailable')),
+      );
+      const response = await post({ sessionPublicId: sessionId }).expect(
+        status,
+      );
+      expect(response.body).toMatchObject({ success: false, code });
+    });
+
+    it('requires authentication and rejects a VIEWER', async () => {
+      await request(app.getHttpServer())
+        .post(route)
+        .send({ sessionPublicId: sessionId })
+        .expect(401);
+      const viewer = jwtService.sign({ sub: userId, role: 'VIEWER' });
+      await request(app.getHttpServer())
+        .post(route)
+        .set('Authorization', `Bearer ${viewer}`)
+        .send({ sessionPublicId: sessionId })
+        .expect(403);
+      expect(saveFromSessionAsync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('DELETE /api/question-bank/:itemPublicId', () => {
+    const itemRoute = `${route}/${item.id}`;
+
+    it('removes the item for the caller and returns 200', async () => {
+      const response = await request(app.getHttpServer())
+        .delete(itemRoute)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(response.body).toMatchObject({
+        statusCode: 200,
+        success: true,
+        data: null,
+        message: 'Question removed from the question bank',
+      });
+      expect(deleteAsync).toHaveBeenCalledWith(userId, item.id);
+    });
+
+    it('rejects an id that is not a UUID', async () => {
+      await request(app.getHttpServer())
+        .delete(`${route}/not-a-uuid`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(400);
+      expect(deleteAsync).not.toHaveBeenCalled();
+    });
+
+    it('maps a service failure to a sanitized 500', async () => {
+      deleteAsync.mockResolvedValue(
+        err(new AppError(ErrorCode.InternalServerError, 'Failed to delete')),
+      );
+      await request(app.getHttpServer())
+        .delete(itemRoute)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(500);
+    });
+
+    it('requires authentication and rejects a VIEWER', async () => {
+      await request(app.getHttpServer()).delete(itemRoute).expect(401);
+      const viewer = jwtService.sign({ sub: userId, role: 'VIEWER' });
+      await request(app.getHttpServer())
+        .delete(itemRoute)
+        .set('Authorization', `Bearer ${viewer}`)
+        .expect(403);
+      expect(deleteAsync).not.toHaveBeenCalled();
+    });
   });
 });

@@ -34,3 +34,14 @@ export class QuestionBankItemDto {
   @ApiProperty({ format: 'date-time', example: '2026-11-22T07:58:11.000Z' })
   createdAt!: string;
 }
+
+export class SaveQuestionBankResponseDto {
+  @ApiProperty({ example: 4, description: 'Questions newly added to the bank' })
+  savedCount!: number;
+
+  @ApiProperty({
+    example: 1,
+    description: 'Questions skipped because the bank already holds them',
+  })
+  skippedCount!: number;
+}

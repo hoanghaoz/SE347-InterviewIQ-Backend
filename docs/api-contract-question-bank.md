@@ -4,7 +4,7 @@ A per-user bank of interview questions that can be reused across sessions (CR-00
 
 Every endpoint requires a bearer token with USER or ADMIN role and only ever touches the authenticated user's items. No route accepts a user id from the client.
 
-This document covers the endpoints that exist so far. Saving, deleting, reusing bank items and regenerating a single question are planned in follow-up changes.
+This document covers listing, saving and deleting bank items. Reusing bank items in a session and regenerating a single question are planned in follow-up changes.
 
 ## Bank item object
 
@@ -100,4 +100,73 @@ export type QuestionBankPage = {
   hasNext: boolean
 }
 // GET /api/question-bank -> ApiSuccessResponse<QuestionBankPage, 200>
+```
+
+`search` is matched literally: `%` and `_` are ordinary characters, not wildcards.
+
+## 2. Save questions of a session to the bank
+
+```http
+POST /api/question-bank
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+```json
+{
+  "sessionPublicId": "<sessionUUID>",
+  "questionPublicIds": ["<questionUUID>", "<questionUUID>"]
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `sessionPublicId` | UUID, required | A session of the authenticated user. |
+| `questionPublicIds` | UUID[], optional | 1 to 10 ids of questions of that session. Omit to save every question of the session. |
+
+Nothing is saved automatically: a question enters the bank only through this call.
+
+- **Duplicates are skipped.** Two questions are the same when their text matches after ignoring case, extra whitespace and unicode-equivalent forms. Vietnamese diacritics are kept, so "ý tưởng" and "y tuong" are different questions. A text repeated inside one request is stored once.
+- **Limit.** A user can keep at most **200** questions. If saving the new ones would exceed it, nothing is saved and the call returns 409.
+- **All or nothing.** A `questionPublicIds` entry that is not a question of the session returns 404 and nothing is saved.
+
+Success is HTTP 201:
+
+```json
+{
+  "statusCode": 201,
+  "success": true,
+  "data": { "savedCount": 3, "skippedCount": 1 },
+  "message": "Questions saved to the question bank",
+  "timestamp": "2026-11-22T08:00:00.000Z"
+}
+```
+
+`savedCount` is the number of questions newly added; `skippedCount` is the number already in the bank (or repeated in the request).
+
+| Status | When |
+|---|---|
+| 400 | Invalid body (`sessionPublicId` missing or not a UUID, `questionPublicIds` empty, longer than 10 or containing a non-UUID), or the session has no questions. |
+| 401 / 403 | Missing or invalid token / role is not USER or ADMIN. |
+| 404 | The session is missing or belongs to another user (same response for both), or a selected question is not part of the session. |
+| 409 | The bank would exceed 200 questions. |
+| 500 | Infrastructure failure, with a sanitized message. |
+
+## 3. Remove a question from the bank
+
+```http
+DELETE /api/question-bank/:itemPublicId
+Authorization: Bearer <token>
+```
+
+Success is HTTP 200 with `data: null` and the message `Question removed from the question bank`. The call is idempotent, like deleting a CV: an item that does not exist, was already removed, or belongs to another user also returns 200 and changes nothing. A non-UUID id returns 400.
+
+```ts
+export type SaveToQuestionBankRequest = {
+  sessionPublicId: string
+  questionPublicIds?: string[] // 1..10 UUIDs of that session; omit for all
+}
+export type SaveToQuestionBankResult = { savedCount: number; skippedCount: number }
+// POST   /api/question-bank       -> ApiSuccessResponse<SaveToQuestionBankResult, 201>
+// DELETE /api/question-bank/:id   -> ApiSuccessResponse<null, 200>
 ```

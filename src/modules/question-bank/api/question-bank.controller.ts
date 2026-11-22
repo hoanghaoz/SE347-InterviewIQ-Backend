@@ -1,4 +1,15 @@
-import { Controller, Get, HttpStatus, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+} from '@nestjs/common';
 import {
   ApiExtraModels,
   ApiOkResponse,
@@ -13,8 +24,14 @@ import { PageResult } from '../../../shared/common/pagination';
 import { Auth } from '../../../shared/decorators/auth.decorator';
 import { User } from '../../../shared/decorators/user.decorator';
 import { ApiSuccessResponse } from '../../../shared/response/apiResponse';
-import { QuestionBankQueryDto } from '../application/dtos/question-bank.request.dto';
-import { QuestionBankItemDto } from '../application/dtos/question-bank.response.dto';
+import {
+  QuestionBankQueryDto,
+  SaveQuestionBankRequestDto,
+} from '../application/dtos/question-bank.request.dto';
+import {
+  QuestionBankItemDto,
+  SaveQuestionBankResponseDto,
+} from '../application/dtos/question-bank.response.dto';
 import { IQuestionBankService } from '../application/interfaces/question-bank.service.interface';
 
 // Thin controller. Chỉ đọc ngân hàng của chính chủ token: không route nào nhận user id từ client.
@@ -85,6 +102,63 @@ export class QuestionBankController {
           HttpStatus.OK,
           data,
           'Question bank retrieved successfully',
+        ),
+      (error) => {
+        throw toHttpException(error);
+      },
+    );
+  }
+
+  @Post()
+  @HttpCode(HttpStatus.CREATED)
+  @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
+  @ApiOperation({
+    summary: 'Save questions of an interview session to the question bank',
+    description:
+      'Saves every question of the session, or only the given ones. Questions the bank already holds (same text ignoring case and extra spaces) are skipped. Fails with 409 when the bank would exceed its limit.',
+  })
+  async saveFromSessionAsync(
+    @User() user: JwtPayload,
+    @Body() request: SaveQuestionBankRequestDto,
+  ): Promise<ApiSuccessResponse<SaveQuestionBankResponseDto>> {
+    const result = await this.questionBankService.saveFromSessionAsync(
+      user.sub,
+      request,
+    );
+
+    return result.match(
+      (data) =>
+        new ApiSuccessResponse(
+          HttpStatus.CREATED,
+          data,
+          'Questions saved to the question bank',
+        ),
+      (error) => {
+        throw toHttpException(error);
+      },
+    );
+  }
+
+  // Idempotent như xóa CV: câu không tồn tại hoặc của người khác cũng trả 200.
+  @Delete(':itemPublicId')
+  @HttpCode(HttpStatus.OK)
+  @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
+  @ApiOperation({ summary: 'Remove a question from the question bank' })
+  async deleteAsync(
+    @User() user: JwtPayload,
+    @Param('itemPublicId', ParseUUIDPipe) itemPublicId: string,
+  ): Promise<ApiSuccessResponse<null>> {
+    const result = await this.questionBankService.deleteAsync(
+      user.sub,
+      itemPublicId,
+    );
+
+    return result.match(
+      () =>
+        new ApiSuccessResponse(
+          HttpStatus.OK,
+          null,
+          'Question removed from the question bank',
         ),
       (error) => {
         throw toHttpException(error);
