@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { err, ok, type Result } from 'neverthrow';
+import { Prisma } from '../../../../generated/prisma/client';
 import { SessionStatus } from '../../../../generated/prisma/enums';
 import { PrismaService } from '../../../shared/infrastructure/database/prisma.service';
 import {
@@ -78,10 +79,18 @@ export class InterviewAnswerRepository implements IInterviewAnswerRepository {
           transcript: data.transcript,
           durationSeconds: data.durationSeconds,
         };
+        // Luôn ghi cả cột này: câu trả lời lưu lại là bản ghi hình mới nên tóm tắt cũ phải
+        // được thay hoặc xóa (JSONB cần Prisma.DbNull để lưu SQL NULL).
+        const emotionData = {
+          emotionSummary:
+            data.emotionSummary === null
+              ? Prisma.DbNull
+              : (data.emotionSummary as unknown as Prisma.InputJsonValue),
+        };
         const answer = await tx.answer.upsert({
           where: { questionId: question.id },
-          create: { questionId: question.id, ...answerData },
-          update: answerData,
+          create: { questionId: question.id, ...answerData, ...emotionData },
+          update: { ...answerData, ...emotionData },
           select: { publicId: true, createdAt: true, updatedAt: true },
         });
         return { ...answer, ...answerData };

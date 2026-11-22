@@ -1,3 +1,7 @@
+/**
+ * `positive` là nhãn của phân tích blendshapes MediaPipe (CR-005); ba nhãn hiện dùng là
+ * positive, neutral, surprised. Bảy nhãn face-api cũ được giữ để dữ liệu và test cũ vẫn đọc được.
+ */
 export const ALLOWED_EMOTION_LABELS = [
   'neutral',
   'happy',
@@ -6,6 +10,7 @@ export const ALLOWED_EMOTION_LABELS = [
   'angry',
   'fearful',
   'disgusted',
+  'positive',
 ] as const;
 
 export type EmotionLabel = (typeof ALLOWED_EMOTION_LABELS)[number];
