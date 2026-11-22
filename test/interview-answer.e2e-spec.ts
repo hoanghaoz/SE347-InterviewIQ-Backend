@@ -142,6 +142,92 @@ describe('InterviewAnswerController (e2e)', () => {
     );
   });
 
+  describe('emotionSummary', () => {
+    const emotionSummary = {
+      sampleIntervalMs: 2000,
+      sampleCount: 30,
+      validSampleCount: 28,
+      distribution: { positive: 0.4, neutral: 0.5, surprised: 0.1 },
+      gazeAwayRatio: 0.2,
+      dominant: 'neutral',
+      timeline: [
+        { t: 0, state: 'neutral', gazeAway: false },
+        { t: 2, state: 'positive', gazeAway: true },
+      ],
+    };
+    const put = (body: unknown) =>
+      request(app.getHttpServer())
+        .put(route)
+        .set('Authorization', `Bearer ${token}`)
+        .send(body as object);
+
+    it('forwards a valid summary and strips unknown keys', async () => {
+      await put({
+        ...payload,
+        emotionSummary: {
+          ...emotionSummary,
+          distribution: { ...emotionSummary.distribution, wordsPerMinute: 130 },
+          unexpected: 'ignored',
+        },
+      }).expect(200);
+      expect(saveAnswerAsync).toHaveBeenCalledWith(
+        userId,
+        sessionId,
+        questionId,
+        { ...payload, emotionSummary },
+      );
+    });
+
+    it('accepts null when the client could not analyse the face', async () => {
+      await put({ ...payload, emotionSummary: null }).expect(200);
+      expect(saveAnswerAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['gazeAwayRatio above 1', { gazeAwayRatio: 1.5 }],
+      ['an unknown dominant label', { dominant: 'tense' }],
+      ['a distribution value above 1', { distribution: { positive: 2 } }],
+      ['a negative sampleCount', { sampleCount: -1 }],
+      ['a fractional sampleCount', { sampleCount: 1.5 }],
+      [
+        'more than 300 timeline points',
+        {
+          timeline: Array.from({ length: 301 }, (_, t) => ({
+            t,
+            state: 'neutral',
+            gazeAway: false,
+          })),
+        },
+      ],
+      [
+        'a timeline point without gazeAway',
+        { timeline: [{ t: 0, state: 'neutral' }] },
+      ],
+    ])('rejects %s before service execution', async (_name, override) => {
+      const response = await put({
+        ...payload,
+        emotionSummary: { ...emotionSummary, ...override },
+      }).expect(400);
+      expect(response.body).toMatchObject({
+        success: false,
+        code: ErrorCode.BadRequest,
+      });
+      expect((response.body as Record<string, unknown>).errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: expect.stringContaining('emotionSummary') as unknown,
+          }),
+        ]),
+      );
+      expect(saveAnswerAsync).not.toHaveBeenCalled();
+    });
+
+    it('rejects a summary that is not an object', async () => {
+      await put({ ...payload, emotionSummary: 'positive' }).expect(400);
+      expect(saveAnswerAsync).not.toHaveBeenCalled();
+    });
+  });
+
   it.each([
     ['cloudinaryPublicId', ''],
     ['cloudinaryPublicId', 'x'.repeat(256)],

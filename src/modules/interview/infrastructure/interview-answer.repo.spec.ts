@@ -1,3 +1,4 @@
+import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../shared/infrastructure/database/prisma.service';
 import {
   InterviewAnswerConflictError,
@@ -7,6 +8,10 @@ import { InterviewAnswerRepository } from './interview-answer.repo';
 
 jest.mock('../../../shared/infrastructure/database/prisma.service', () => ({
   PrismaService: class {},
+}));
+// Jest không nạp được Prisma client (ESM); repo chỉ cần Prisma.DbNull để ghi SQL NULL.
+jest.mock('../../../../generated/prisma/client', () => ({
+  Prisma: { DbNull: 'DB_NULL_SENTINEL' },
 }));
 
 describe('InterviewAnswerRepository', () => {
@@ -34,6 +39,16 @@ describe('InterviewAnswerRepository', () => {
     videoUrl: 'https://example.com/video.webm',
     transcript: 'My answer',
     durationSeconds: 13,
+    emotionSummary: null,
+  };
+  const emotionSummary = {
+    sampleIntervalMs: 2000,
+    sampleCount: 30,
+    validSampleCount: 28,
+    distribution: { positive: 0.4, neutral: 0.5, surprised: 0.1 },
+    gazeAwayRatio: 0.2,
+    dominant: 'neutral',
+    timeline: [{ t: 0, state: 'neutral', gazeAway: false }],
   };
   const row = {
     publicId: 'answer-id',
@@ -115,11 +130,13 @@ describe('InterviewAnswerRepository', () => {
         videoUrl: data.videoUrl,
         transcript: data.transcript,
         durationSeconds: 13,
+        emotionSummary: Prisma.DbNull,
       },
       update: {
         videoUrl: data.videoUrl,
         transcript: data.transcript,
         durationSeconds: 13,
+        emotionSummary: Prisma.DbNull,
       },
       select: { publicId: true, createdAt: true, updatedAt: true },
     });
@@ -132,6 +149,32 @@ describe('InterviewAnswerRepository', () => {
       transcript: 'My answer',
       durationSeconds: 13,
     });
+  });
+
+  it('writes the emotion summary on create and update, and clears it on a resave without one', async () => {
+    const withSummary = await repository.saveAnswer({
+      ...data,
+      emotionSummary,
+    });
+    const cleared = await repository.saveAnswer(data);
+    if (withSummary.isErr()) throw withSummary.error;
+    if (cleared.isErr()) throw cleared.error;
+    expect(upsert).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        create: expect.objectContaining({ emotionSummary }) as unknown,
+        update: expect.objectContaining({ emotionSummary }) as unknown,
+      }),
+    );
+    expect(upsert).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        update: expect.objectContaining({
+          emotionSummary: Prisma.DbNull,
+        }) as unknown,
+      }),
+    );
+    expect(withSummary.value).not.toHaveProperty('emotionSummary');
   });
 
   it('retries use the same unique question key and preserve the answer public ID', async () => {

@@ -29,6 +29,18 @@ describe('normalizeEmotionSummary', () => {
     });
   });
 
+  it('should accept the MediaPipe labels positive, neutral and surprised (CR-005)', () => {
+    const result = normalizeEmotionSummary({
+      dominant: 'positive',
+      distribution: { positive: 0.6, neutral: 0.3, surprised: 0.1 },
+    });
+
+    expect(result).toEqual({
+      dominant: 'positive',
+      distribution: { positive: 0.6, neutral: 0.3, surprised: 0.1 },
+    });
+  });
+
   it('should clamp probabilities to [0, 1] and ignore unknown keys like wordsPerMinute', () => {
     const raw = {
       dominant: '  HAPPY\u0000 ',

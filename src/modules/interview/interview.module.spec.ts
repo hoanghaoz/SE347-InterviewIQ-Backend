@@ -16,6 +16,9 @@ import { IInterviewVideoStorage } from './application/interfaces/interview-video
 jest.mock('../../shared/infrastructure/database/prisma.service', () => ({
   PrismaService: class {},
 }));
+jest.mock('../../../generated/prisma/client', () => ({
+  Prisma: { DbNull: 'DB_NULL_SENTINEL' },
+}));
 jest.mock('../cv/infrastructure/cv.repo', () => {
   const { ok } = jest.requireActual<typeof import('neverthrow')>('neverthrow');
   return {

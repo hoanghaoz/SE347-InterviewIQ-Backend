@@ -241,6 +241,7 @@ describe('InterviewAnswerService', () => {
         transcript: 'My answer',
         videoUrl: video.url,
         durationSeconds: 13,
+        emotionSummary: null,
       });
       expect(result.value).toEqual({
         publicId: 'answer-id',
@@ -254,6 +255,71 @@ describe('InterviewAnswerService', () => {
       expect(result.value).not.toHaveProperty('questionId');
     },
   );
+
+  describe('emotion summary', () => {
+    const emotionSummary = {
+      sampleIntervalMs: 2000,
+      sampleCount: 30,
+      validSampleCount: 28,
+      distribution: { positive: 0.4, neutral: 0.5, surprised: 0.1 },
+      gazeAwayRatio: 0.2,
+      dominant: 'neutral',
+      timeline: [
+        { t: 0, state: 'neutral', gazeAway: false },
+        { t: 2, state: 'positive', gazeAway: true },
+      ],
+    };
+    const saveWith = (summary: unknown) =>
+      service.saveAnswerAsync(userId, sessionId, questionId, {
+        ...request,
+        emotionSummary: summary as typeof emotionSummary | null | undefined,
+      });
+
+    it('stores the client emotion summary with the answer', async () => {
+      const result = await saveWith(emotionSummary);
+      if (result.isErr()) throw result.error;
+      expect(saveAnswer).toHaveBeenCalledWith(
+        expect.objectContaining({ emotionSummary }),
+      );
+    });
+
+    it.each([null, undefined])(
+      'stores null when the summary is %s (camera or model unavailable)',
+      async (missing) => {
+        const result = await saveWith(missing);
+        if (result.isErr()) throw result.error;
+        expect(saveAnswer).toHaveBeenCalledWith(
+          expect.objectContaining({ emotionSummary: null }),
+        );
+      },
+    );
+
+    it('keeps only the distribution labels that carry a value', async () => {
+      const result = await saveWith({
+        ...emotionSummary,
+        distribution: { positive: 0.5, neutral: undefined, surprised: 0.5 },
+      });
+      if (result.isErr()) throw result.error;
+      expect(saveAnswer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          emotionSummary: expect.objectContaining({
+            distribution: { positive: 0.5, surprised: 0.5 },
+          }) as unknown,
+        }),
+      );
+    });
+
+    it.each([
+      ['more valid samples than samples', { validSampleCount: 31 }],
+      ['an empty distribution', { distribution: {} }],
+    ])('rejects %s before verifying the video', async (_name, override) => {
+      const result = await saveWith({ ...emotionSummary, ...override });
+      if (result.isOk()) throw new Error('Expected invalid emotion summary');
+      expect(result.error.code).toBe(ErrorCode.BadRequest);
+      expect(getVideo).not.toHaveBeenCalled();
+      expect(saveAnswer).not.toHaveBeenCalled();
+    });
+  });
 
   it.each([
     [new InterviewAnswerConflictError(), ErrorCode.Conflict],

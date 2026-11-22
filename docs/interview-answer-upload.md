@@ -73,11 +73,30 @@ Content-Type: application/json
 ```json
 {
   "cloudinaryPublicId": "interview-answers/<userUUID>/<sessionUUID>/<questionUUID>/<uploadUUID>",
-  "transcript": "The candidate's answer transcript"
+  "transcript": "The candidate's answer transcript",
+  "emotionSummary": {
+    "sampleIntervalMs": 2000,
+    "sampleCount": 30,
+    "validSampleCount": 28,
+    "distribution": { "positive": 0.4, "neutral": 0.5, "surprised": 0.1 },
+    "gazeAwayRatio": 0.2,
+    "dominant": "neutral",
+    "timeline": [{ "t": 0, "state": "neutral", "gazeAway": false }]
+  }
 }
 ```
 
 `cloudinaryPublicId` is a required, nonempty string of at most 255 characters. It must match the scope of this user, session, and question and end in the upload UUID issued by signing. `transcript` is a required string of at most 50,000 characters; an empty string is allowed for a silent answer. This API stores the frontend's transcript and does not perform speech-to-text.
+
+`emotionSummary` is optional (CR-005). The browser analyses facial expression locally and sends only this summary, never images. Send `null` or omit it when the camera or model was unavailable; the backend then stores SQL NULL. The summary is stored as-is in the existing `answers.emotion_summary` JSONB column, and a re-save replaces or clears the previous value because it belongs to the new recording. Fields:
+
+- `sampleIntervalMs`: integer, 1 to 60,000. `sampleCount` and `validSampleCount`: integers from 0 to 100,000; `validSampleCount` counts samples with a visible face and must not exceed `sampleCount`.
+- `distribution`: share of time per label, each 0 to 1. At least one label must have a value; unknown keys are dropped. Current labels are `positive`, `neutral` and `surprised`. The legacy face-api labels (`happy`, `sad`, `angry`, `fearful`, `disgusted`) are still accepted but deprecated.
+- `gazeAwayRatio`: 0 to 1, share of valid samples where the candidate looks away from the screen.
+- `dominant`: one of the labels above.
+- `timeline`: at most 300 points, each `{ t, state, gazeAway }` where `t` is seconds since the answer started (0 to 86,400), `state` is a nonempty string of at most 32 characters, and `gazeAway` is a boolean. The client thins the series when an answer would exceed 300 points.
+
+Invalid shapes return 400 with field errors under `emotionSummary`. Scoring treats the summary as a light supporting signal for the confidence score and ignores it when it is `null`.
 
 Do not send videoUrl or durationSeconds: the backend reads trusted metadata from Cloudinary and verifies format, size, video dimensions and duration. Fractional video durations are rounded up to whole seconds for the existing integer column.
 
@@ -251,6 +270,18 @@ export type SignedParamsResponse = ApiSuccessResponse<
 export type SaveInterviewAnswerRequest = {
   cloudinaryPublicId: string; // Required, nonempty, <=255 chars; uploaded asset.public_id
   transcript: string; // Required, <=50000 chars; empty string allowed
+  emotionSummary?: AnswerEmotionSummary | null; // Optional; null/omitted when the face was not analysed
+};
+export type AnswerEmotionSummary = {
+  sampleIntervalMs: number; // Integer 1..60000
+  sampleCount: number; // Integer 0..100000
+  validSampleCount: number; // Integer 0..100000, <= sampleCount
+  distribution: Partial<
+    Record<'positive' | 'neutral' | 'surprised', number> // each 0..1; at least one key
+  >;
+  gazeAwayRatio: number; // 0..1
+  dominant: 'positive' | 'neutral' | 'surprised'; // legacy face-api labels also accepted
+  timeline: { t: number; state: string; gazeAway: boolean }[]; // <=300 points
 };
 export type InterviewAnswer = {
   publicId: string; // Answer public UUID; unchanged by retry/upsert
