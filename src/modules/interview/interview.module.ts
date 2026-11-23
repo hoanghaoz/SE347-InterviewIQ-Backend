@@ -18,6 +18,7 @@ import { IInterviewAnswerRepository } from './domain/repositories/interview-answ
 import { CloudinaryInterviewVideoStorage } from './infrastructure/cloudinary-interview-video-storage';
 import { InterviewAnswerRepository } from './infrastructure/interview-answer.repo';
 import { InterviewCheatLogController } from './api/interview-cheat-log.controller';
+import { InterviewCheatLogGateway } from './api/interview-cheat-log.gateway';
 import { ICheatLogService } from './application/interfaces/cheat-log.service.interface';
 import { CheatLogService } from './application/services/cheat-log.service';
 import { ICheatLogRepository } from './domain/repositories/cheat-log.repo.interface';
@@ -44,6 +45,7 @@ import { CheatLogRepository } from './infrastructure/cheat-log.repo';
   providers: [
     JwtAuthGuard,
     RolesGuard,
+    InterviewCheatLogGateway,
     { provide: IInterviewAnswerService, useClass: InterviewAnswerService },
     { provide: ICheatLogService, useClass: CheatLogService },
     { provide: ICheatLogRepository, useClass: CheatLogRepository },

@@ -27,7 +27,7 @@ const STATUS_ERROR_CODE_MAP: Partial<Record<number, ErrorCode>> = {
   [HttpStatus.TOO_MANY_REQUESTS]: ErrorCode.TooManyRequests,
 };
 
-function getErrorCode(statusCode: number, code: unknown): ErrorCode {
+export function getErrorCode(statusCode: number, code: unknown): ErrorCode {
   if (
     typeof code === 'string' &&
     Object.values(ErrorCode).includes(code as ErrorCode)
@@ -46,7 +46,7 @@ function getErrorCode(statusCode: number, code: unknown): ErrorCode {
     : ErrorCode.BadRequest;
 }
 
-function isValidationErrorDetails(
+export function isValidationErrorDetails(
   errors: unknown,
 ): errors is ValidationErrorDetail[] {
   if (!Array.isArray(errors)) {
