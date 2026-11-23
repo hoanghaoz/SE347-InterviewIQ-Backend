@@ -5,10 +5,15 @@ import { AppError, ErrorCode } from '../../../shared/common/errorCode';
 import type { ILlmProvider } from '../../../shared/llm/llm.provider';
 import type { QuestionGenerationInput } from '../application/interfaces/question-generator.interface';
 import {
+  QuestionDifficulty,
+  QuestionDomain,
+} from '../domain/enums/question.enum';
+import {
   GENERATION_FAILED_MESSAGE,
   LlmQuestionGenerator,
   readGenerationTimeoutMs,
 } from './llm-question-generator';
+import { buildQuestionSchema } from './question-prompt.builder';
 
 const input: QuestionGenerationInput = {
   parsedData: {
@@ -174,5 +179,82 @@ describe('readGenerationTimeoutMs', () => {
     ['-5', 45_000],
   ])('reads %p as %p', (value, expected) => {
     expect(readGenerationTimeoutMs(createConfig(value))).toBe(expected);
+  });
+});
+
+describe('LlmQuestionGenerator constraints', () => {
+  let generateJson: jest.Mock;
+  let generator: LlmQuestionGenerator;
+  const single: QuestionGenerationInput = { ...input, count: 1 };
+  const answer = (content: string, domain = 'TECHNICAL', difficulty = 'EASY') =>
+    llmResult({ questions: [{ content, domain, difficulty }] });
+
+  beforeEach(() => {
+    generateJson = jest.fn();
+    generator = new LlmQuestionGenerator(
+      { generateJson } as unknown as ILlmProvider,
+      createConfig(),
+    );
+  });
+
+  it('asks the model for the requested domain and difficulty and accepts a matching answer', async () => {
+    generateJson.mockResolvedValue(answer('One?', 'BEHAVIORAL', 'HARD'));
+
+    const result = await generator.generateAsync({
+      ...single,
+      domain: QuestionDomain.BEHAVIORAL,
+      difficulty: QuestionDifficulty.HARD,
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(generateJson).toHaveBeenCalledTimes(1);
+    expect(generateJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        schema: buildQuestionSchema(1, {
+          domain: QuestionDomain.BEHAVIORAL,
+          difficulty: QuestionDifficulty.HARD,
+        }),
+      }),
+    );
+  });
+
+  it('retries once when the model ignores the requested domain', async () => {
+    generateJson
+      .mockResolvedValueOnce(answer('Wrong?', 'TECHNICAL'))
+      .mockResolvedValueOnce(answer('Right?', 'BEHAVIORAL'));
+
+    const result = await generator.generateAsync({
+      ...single,
+      domain: QuestionDomain.BEHAVIORAL,
+    });
+
+    expect(result._unsafeUnwrap()[0].content).toBe('Right?');
+    expect(generateJson).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails after two answers that break the constraint', async () => {
+    generateJson.mockResolvedValue(answer('Wrong?', 'TECHNICAL'));
+
+    const result = await generator.generateAsync({
+      ...single,
+      domain: QuestionDomain.BEHAVIORAL,
+    });
+
+    expect(result._unsafeUnwrapErr().message).toBe(GENERATION_FAILED_MESSAGE);
+    expect(generateJson).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries when the model repeats a question it was told to avoid', async () => {
+    generateJson
+      .mockResolvedValueOnce(answer('what is a thread?'))
+      .mockResolvedValueOnce(answer('What is a process?'));
+
+    const result = await generator.generateAsync({
+      ...single,
+      exclude: ['What is a thread?'],
+    });
+
+    expect(result._unsafeUnwrap()[0].content).toBe('What is a process?');
+    expect(generateJson).toHaveBeenCalledTimes(2);
   });
 });

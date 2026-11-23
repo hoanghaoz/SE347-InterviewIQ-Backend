@@ -15,7 +15,11 @@ import {
   InterviewAnswerUnavailableError,
 } from '../../domain/errors/interview-answer.error';
 import { IInterviewAnswerRepository } from '../../domain/repositories/interview-answer.repo.interface';
-import { SaveInterviewAnswerRequestDto } from '../dtos/interview-answer.request.dto';
+import type { AnswerEmotionSummary } from '../../domain/types/answer-emotion-summary.type';
+import {
+  EmotionSummaryRequestDto,
+  SaveInterviewAnswerRequestDto,
+} from '../dtos/interview-answer.request.dto';
 import {
   InterviewAnswerResponseDto,
   InterviewVideoSignedParamsResponseDto,
@@ -54,6 +58,40 @@ function isValidVideo(video: UploadedInterviewVideo): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Chuẩn hóa tóm tắt biểu cảm client gửi lên (hình dạng đã được DTO kiểm). Chỉ còn luật liên
+ * trường: phải có ít nhất một giá trị phân bố và số mẫu thấy mặt không vượt tổng số mẫu.
+ * Không có tóm tắt (null hoặc bỏ qua) là hợp lệ: camera lỗi hoặc model không tải được.
+ */
+function toAnswerEmotionSummary(
+  summary: EmotionSummaryRequestDto | null | undefined,
+): Result<AnswerEmotionSummary | null, AppError> {
+  if (!summary) return ok(null);
+  const distribution: Record<string, number> = {};
+  for (const [label, value] of Object.entries(summary.distribution)) {
+    if (typeof value === 'number') distribution[label] = value;
+  }
+  if (
+    Object.keys(distribution).length === 0 ||
+    summary.validSampleCount > summary.sampleCount
+  ) {
+    return err(new AppError(ErrorCode.BadRequest, 'Invalid emotion summary'));
+  }
+  return ok({
+    sampleIntervalMs: summary.sampleIntervalMs,
+    sampleCount: summary.sampleCount,
+    validSampleCount: summary.validSampleCount,
+    distribution,
+    gazeAwayRatio: summary.gazeAwayRatio,
+    dominant: summary.dominant,
+    timeline: summary.timeline.map(({ t, state, gazeAway }) => ({
+      t,
+      state,
+      gazeAway,
+    })),
+  });
 }
 
 @Injectable()
@@ -129,6 +167,9 @@ export class InterviewAnswerService implements IInterviewAnswerService {
     ) {
       return err(new AppError(ErrorCode.BadRequest, 'Invalid uploaded video'));
     }
+    // Kiểm tra rẻ trước khi gọi Cloudinary.
+    const emotion = toAnswerEmotionSummary(request.emotionSummary);
+    if (emotion.isErr()) return err(emotion.error);
     const videoResult = await this.videoStorage.getVideo(
       request.cloudinaryPublicId,
     );
@@ -158,6 +199,7 @@ export class InterviewAnswerService implements IInterviewAnswerService {
       videoUrl: video.url,
       transcript: request.transcript,
       durationSeconds: Math.ceil(video.durationSeconds),
+      emotionSummary: emotion.value,
     });
     if (saved.isErr()) {
       if (saved.error instanceof InterviewAnswerConflictError)

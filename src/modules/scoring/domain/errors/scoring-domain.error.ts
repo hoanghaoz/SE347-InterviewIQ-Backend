@@ -9,6 +9,8 @@ export enum ScoringDomainError {
   InvalidStrengths = 'INVALID_STRENGTHS',
   InvalidImprovements = 'INVALID_IMPROVEMENTS',
   InvalidScoringModel = 'INVALID_SCORING_MODEL',
+  InvalidRubricPayload = 'INVALID_RUBRIC_PAYLOAD',
+  InvalidFeedbackItem = 'INVALID_FEEDBACK_ITEM',
 }
 
 export class ScoringDomainErrorValidation extends Error {

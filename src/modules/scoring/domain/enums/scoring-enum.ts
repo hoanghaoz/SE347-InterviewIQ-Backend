@@ -4,3 +4,15 @@ export enum ScoringJobStatus {
   COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
 }
+
+export enum FeedbackCategory {
+  TECHNICAL_KNOWLEDGE = 'TECHNICAL_KNOWLEDGE',
+  PROBLEM_SOLVING = 'PROBLEM_SOLVING',
+  RELEVANCE = 'RELEVANCE',
+  COMMUNICATION = 'COMMUNICATION',
+  CONFIDENCE = 'CONFIDENCE',
+  EXPERIENCE = 'EXPERIENCE',
+}
+
+export const ALLOWED_FEEDBACK_CATEGORIES: readonly FeedbackCategory[] =
+  Object.values(FeedbackCategory);

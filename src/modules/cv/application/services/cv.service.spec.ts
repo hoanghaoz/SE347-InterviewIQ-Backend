@@ -1,11 +1,16 @@
 import { err, ok } from 'neverthrow';
 import { ErrorCode } from '../../../../shared/common/errorCode';
 import { recordMetrics } from '../../../../shared/telemetry/metric-recorder.testing';
-import { Cv, type CvGetParams } from '../../domain/entities/cv.entity';
+import {
+  Cv,
+  MAX_CVS_PER_USER,
+  type CvGetParams,
+} from '../../domain/entities/cv.entity';
 import type { CvParsedData } from '../../domain/types/cv-parsed-data.type';
-import { ParseStatus } from '../../domain/enums/cv.enum';
+import { ParseFailureReason, ParseStatus } from '../../domain/enums/cv.enum';
 import {
   CvFileAlreadySavedError,
+  CvLimitReachedError,
   ICvManagementRepository,
 } from '../../domain/repositories/cv-management.repo.interface';
 import { ICvFileStorage } from '../interfaces/cv-file-storage.interface';
@@ -46,6 +51,14 @@ describe('CvService', () => {
       ReturnType<ICvManagementRepository['saveParsedData']>,
       Parameters<ICvManagementRepository['saveParsedData']>
     >(),
+    replaceFile: jest.fn<
+      ReturnType<ICvManagementRepository['replaceFile']>,
+      Parameters<ICvManagementRepository['replaceFile']>
+    >(),
+    deleteCv: jest.fn<
+      ReturnType<ICvManagementRepository['deleteCv']>,
+      Parameters<ICvManagementRepository['deleteCv']>
+    >(),
   };
   const storage = {
     createSignedUpload: jest.fn<
@@ -59,6 +72,10 @@ describe('CvService', () => {
     downloadFile: jest.fn<
       ReturnType<ICvFileStorage['downloadFile']>,
       Parameters<ICvFileStorage['downloadFile']>
+    >(),
+    deleteFile: jest.fn<
+      ReturnType<ICvFileStorage['deleteFile']>,
+      Parameters<ICvFileStorage['deleteFile']>
     >(),
   };
   const extractor = {
@@ -162,10 +179,26 @@ describe('CvService', () => {
       expect(result.isErr() && result.error.code).toBe(ErrorCode.BadRequest);
     });
 
-    it('rejects a non-PDF file', async () => {
+    it('rejects a non-PDF file and removes it from the storage', async () => {
       storage.getFile.mockResolvedValue(
         ok({ url: 'https://x', bytes: 1000, format: 'png' }),
       );
+      storage.deleteFile.mockResolvedValue(ok(undefined));
+
+      const result = await service.createCvAsync(userPublicId, {
+        fileName: 'cv.pdf',
+        cloudinaryPublicId: ownFileId,
+      });
+
+      expect(result.isErr() && result.error.code).toBe(ErrorCode.BadRequest);
+      expect(storage.deleteFile).toHaveBeenCalledWith(ownFileId);
+    });
+
+    it('still answers 400 when removing the rejected file fails', async () => {
+      storage.getFile.mockResolvedValue(
+        ok({ url: 'https://x', bytes: 1000, format: 'png' }),
+      );
+      storage.deleteFile.mockResolvedValue(err(new Error('storage down')));
 
       const result = await service.createCvAsync(userPublicId, {
         fileName: 'cv.pdf',
@@ -180,6 +213,7 @@ describe('CvService', () => {
         ok({ url: 'https://x', bytes: 6 * 1024 * 1024, format: 'pdf' }),
       );
       repo.getUserIdByPublicId.mockResolvedValue(ok(1));
+      storage.deleteFile.mockResolvedValue(ok(undefined));
 
       const result = await service.createCvAsync(userPublicId, {
         fileName: 'cv.pdf',
@@ -188,6 +222,27 @@ describe('CvService', () => {
 
       expect(result.isErr() && result.error.code).toBe(ErrorCode.BadRequest);
       expect(repo.createCv).not.toHaveBeenCalled();
+      expect(storage.deleteFile).toHaveBeenCalledWith(ownFileId);
+    });
+
+    it('saves with the per-user limit, and answers 429 and removes the file when it is reached', async () => {
+      storage.getFile.mockResolvedValue(
+        ok({ url: 'https://x', bytes: 1000, format: 'pdf' }),
+      );
+      repo.getUserIdByPublicId.mockResolvedValue(ok(1));
+      repo.createCv.mockResolvedValue(err(new CvLimitReachedError()));
+      storage.deleteFile.mockResolvedValue(ok(undefined));
+
+      const result = await service.createCvAsync(userPublicId, {
+        fileName: 'cv.pdf',
+        cloudinaryPublicId: ownFileId,
+      });
+
+      expect(result.isErr() && result.error.code).toBe(
+        ErrorCode.TooManyRequests,
+      );
+      expect(repo.createCv.mock.calls[0][1]).toBe(MAX_CVS_PER_USER);
+      expect(storage.deleteFile).toHaveBeenCalledWith(ownFileId);
     });
 
     it('saves a PENDING CV with the storage URL and size', async () => {
@@ -226,6 +281,8 @@ describe('CvService', () => {
       });
 
       expect(result.isErr() && result.error.code).toBe(ErrorCode.Conflict);
+      // The file belongs to the CV saved by the first request: it must stay.
+      expect(storage.deleteFile).not.toHaveBeenCalled();
     });
 
     it('hides database errors behind a generic 500', async () => {
@@ -323,6 +380,7 @@ describe('CvService', () => {
 
       const dto = result._unsafeUnwrap();
       expect(dto.parseStatus).toBe(ParseStatus.COMPLETED);
+      expect(dto.failureReason).toBeNull();
       expect(dto.parsedData).toEqual(parsedData);
       expect(storage.downloadFile).toHaveBeenCalledWith(ownFileId);
       expect(extractor.extractTextAsync).toHaveBeenCalledWith(pdfBytes);
@@ -339,6 +397,9 @@ describe('CvService', () => {
       const result = await service.parseCvAsync(userPublicId, cvId);
 
       expect(result._unsafeUnwrap().parseStatus).toBe(ParseStatus.FAILED);
+      expect(result._unsafeUnwrap().failureReason).toBe(
+        ParseFailureReason.FILE_UNAVAILABLE,
+      );
       expect(savedStatus()).toBe(ParseStatus.FAILED);
       expect(parser.parseAsync).not.toHaveBeenCalled();
     });
@@ -360,6 +421,9 @@ describe('CvService', () => {
       const result = await service.parseCvAsync(userPublicId, cvId);
 
       expect(result._unsafeUnwrap().parseStatus).toBe(ParseStatus.FAILED);
+      expect(result._unsafeUnwrap().failureReason).toBe(
+        ParseFailureReason.FILE_UNREADABLE,
+      );
       expect(parser.parseAsync).not.toHaveBeenCalled();
     });
 
@@ -370,6 +434,9 @@ describe('CvService', () => {
       const result = await service.parseCvAsync(userPublicId, cvId);
 
       expect(result._unsafeUnwrap().parseStatus).toBe(ParseStatus.FAILED);
+      expect(result._unsafeUnwrap().failureReason).toBe(
+        ParseFailureReason.NO_TEXT,
+      );
       expect(parser.parseAsync).not.toHaveBeenCalled();
     });
 
@@ -382,6 +449,7 @@ describe('CvService', () => {
       const dto = result._unsafeUnwrap();
       expect(dto.parseStatus).toBe(ParseStatus.FAILED);
       expect(dto.parsedData).toBeNull();
+      expect(dto.failureReason).toBe(ParseFailureReason.AI_FAILED);
     });
 
     it('turns an unexpected exception into FAILED instead of leaving PROCESSING', async () => {
@@ -470,6 +538,247 @@ describe('CvService', () => {
           });
         },
       );
+    });
+  });
+
+  describe('replaceCvFileAsync', () => {
+    const cvId = '22222222-2222-4222-8222-222222222222';
+    const newFileId = `cvs/${userPublicId}/file-2`;
+    const request = { fileName: 'new.pdf', cloudinaryPublicId: newFileId };
+
+    const happyPath = () => {
+      repo.getCvByPublicId.mockResolvedValue(
+        ok(
+          savedCv({
+            parseStatus: ParseStatus.COMPLETED,
+            parsedData,
+            rawText: cvText,
+          }),
+        ),
+      );
+      storage.getFile.mockResolvedValue(
+        ok({ url: 'https://new.pdf', bytes: 2000, format: 'pdf' }),
+      );
+      storage.deleteFile.mockResolvedValue(ok(undefined));
+      repo.replaceFile.mockImplementation((cv) => Promise.resolve(ok(cv)));
+    };
+
+    it('returns 404 when the CV is missing or owned by someone else', async () => {
+      repo.getCvByPublicId.mockResolvedValue(ok(null));
+
+      const result = await service.replaceCvFileAsync(
+        userPublicId,
+        cvId,
+        request,
+      );
+
+      expect(result.isErr() && result.error.code).toBe(ErrorCode.NotFound);
+      expect(storage.getFile).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 while the CV is being parsed', async () => {
+      happyPath();
+      repo.getCvByPublicId.mockResolvedValue(
+        ok(
+          savedCv({
+            parseStatus: ParseStatus.PROCESSING,
+            updatedAt: new Date(),
+          }),
+        ),
+      );
+
+      const result = await service.replaceCvFileAsync(
+        userPublicId,
+        cvId,
+        request,
+      );
+
+      expect(result.isErr() && result.error.code).toBe(ErrorCode.Conflict);
+      expect(repo.replaceFile).not.toHaveBeenCalled();
+    });
+
+    it('points the CV at the new file, resets the parse and removes the old file', async () => {
+      happyPath();
+
+      const result = await service.replaceCvFileAsync(
+        userPublicId,
+        cvId,
+        request,
+      );
+
+      const dto = result._unsafeUnwrap();
+      expect(dto.parseStatus).toBe(ParseStatus.PENDING);
+      expect(dto.parsedData).toBeNull();
+      expect(dto.fileName).toBe('new.pdf');
+      expect(dto.fileSize).toBe(2000);
+      const [replaced, previousId] = repo.replaceFile.mock.calls[0];
+      expect(replaced.cloudinaryPublicId).toBe(newFileId);
+      expect(replaced.rawText).toBeNull();
+      expect(previousId).toBe(ownFileId);
+      expect(storage.deleteFile).toHaveBeenCalledWith(ownFileId);
+    });
+
+    it('rejects a non-PDF and removes only the new file', async () => {
+      happyPath();
+      storage.getFile.mockResolvedValue(
+        ok({ url: 'https://x', bytes: 1000, format: 'png' }),
+      );
+
+      const result = await service.replaceCvFileAsync(
+        userPublicId,
+        cvId,
+        request,
+      );
+
+      expect(result.isErr() && result.error.code).toBe(ErrorCode.BadRequest);
+      expect(storage.deleteFile).toHaveBeenCalledTimes(1);
+      expect(storage.deleteFile).toHaveBeenCalledWith(newFileId);
+      expect(repo.replaceFile).not.toHaveBeenCalled();
+    });
+
+    it('rejects a file over 5 MB and removes only the new file', async () => {
+      happyPath();
+      storage.getFile.mockResolvedValue(
+        ok({ url: 'https://x', bytes: 6 * 1024 * 1024, format: 'pdf' }),
+      );
+
+      const result = await service.replaceCvFileAsync(
+        userPublicId,
+        cvId,
+        request,
+      );
+
+      expect(result.isErr() && result.error.code).toBe(ErrorCode.BadRequest);
+      expect(storage.deleteFile).toHaveBeenCalledTimes(1);
+      expect(storage.deleteFile).toHaveBeenCalledWith(newFileId);
+    });
+
+    it('returns 409 and keeps both files when the new file already has a CV', async () => {
+      happyPath();
+      repo.replaceFile.mockResolvedValue(err(new CvFileAlreadySavedError()));
+
+      const result = await service.replaceCvFileAsync(
+        userPublicId,
+        cvId,
+        request,
+      );
+
+      expect(result.isErr() && result.error.code).toBe(ErrorCode.Conflict);
+      expect(storage.deleteFile).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 and keeps both files when a parse or another replace got there first', async () => {
+      happyPath();
+      repo.replaceFile.mockResolvedValue(ok(null));
+
+      const result = await service.replaceCvFileAsync(
+        userPublicId,
+        cvId,
+        request,
+      );
+
+      expect(result.isErr() && result.error.code).toBe(ErrorCode.Conflict);
+      expect(storage.deleteFile).not.toHaveBeenCalled();
+    });
+
+    it('hides a database error behind a generic 500', async () => {
+      happyPath();
+      repo.replaceFile.mockResolvedValue(err(new Error('database secret')));
+
+      const result = await service.replaceCvFileAsync(
+        userPublicId,
+        cvId,
+        request,
+      );
+
+      if (result.isOk()) throw new Error('expected an error');
+      expect(result.error.code).toBe(ErrorCode.InternalServerError);
+      expect(result.error.message).not.toContain('database secret');
+    });
+  });
+
+  describe('deleteCvAsync', () => {
+    const cvId = '22222222-2222-4222-8222-222222222222';
+
+    it('returns 404 when the CV is missing or owned by someone else', async () => {
+      repo.getCvByPublicId.mockResolvedValue(ok(null));
+
+      const result = await service.deleteCvAsync(userPublicId, cvId);
+
+      expect(result.isErr() && result.error.code).toBe(ErrorCode.NotFound);
+      expect(storage.deleteFile).not.toHaveBeenCalled();
+      expect(repo.deleteCv).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 while the CV is being parsed', async () => {
+      repo.getCvByPublicId.mockResolvedValue(
+        ok(
+          savedCv({
+            parseStatus: ParseStatus.PROCESSING,
+            updatedAt: new Date(),
+          }),
+        ),
+      );
+
+      const result = await service.deleteCvAsync(userPublicId, cvId);
+
+      expect(result.isErr() && result.error.code).toBe(ErrorCode.Conflict);
+      expect(storage.deleteFile).not.toHaveBeenCalled();
+    });
+
+    it('deletes a CV whose parse crashed long ago', async () => {
+      repo.getCvByPublicId.mockResolvedValue(
+        ok(
+          savedCv({
+            parseStatus: ParseStatus.PROCESSING,
+            updatedAt: new Date(Date.now() - 10 * 60 * 1000),
+          }),
+        ),
+      );
+      storage.deleteFile.mockResolvedValue(ok(undefined));
+      repo.deleteCv.mockResolvedValue(ok(undefined));
+
+      const result = await service.deleteCvAsync(userPublicId, cvId);
+
+      expect(result.isOk()).toBe(true);
+    });
+
+    it('removes the file from the storage first, then the row', async () => {
+      repo.getCvByPublicId.mockResolvedValue(ok(savedCv()));
+      storage.deleteFile.mockResolvedValue(ok(undefined));
+      repo.deleteCv.mockResolvedValue(ok(undefined));
+
+      const result = await service.deleteCvAsync(userPublicId, cvId);
+
+      expect(result.isOk()).toBe(true);
+      expect(storage.deleteFile).toHaveBeenCalledWith(ownFileId);
+      expect(repo.deleteCv).toHaveBeenCalledWith(userPublicId, cvId);
+      expect(storage.deleteFile.mock.invocationCallOrder[0]).toBeLessThan(
+        repo.deleteCv.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('keeps the row (so the user can retry) when the storage fails', async () => {
+      repo.getCvByPublicId.mockResolvedValue(ok(savedCv()));
+      storage.deleteFile.mockResolvedValue(err(new Error('storage down')));
+
+      const result = await service.deleteCvAsync(userPublicId, cvId);
+
+      if (result.isOk()) throw new Error('expected an error');
+      expect(result.error.code).toBe(ErrorCode.InternalServerError);
+      expect(repo.deleteCv).not.toHaveBeenCalled();
+    });
+
+    it('hides a database error behind a generic 500', async () => {
+      repo.getCvByPublicId.mockResolvedValue(ok(savedCv()));
+      storage.deleteFile.mockResolvedValue(ok(undefined));
+      repo.deleteCv.mockResolvedValue(err(new Error('database secret')));
+
+      const result = await service.deleteCvAsync(userPublicId, cvId);
+
+      if (result.isOk()) throw new Error('expected an error');
+      expect(result.error.code).toBe(ErrorCode.InternalServerError);
+      expect(result.error.message).not.toContain('database secret');
     });
   });
 

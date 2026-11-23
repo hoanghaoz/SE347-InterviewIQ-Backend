@@ -167,6 +167,40 @@ export class CloudinaryFileStorage implements ICvFileStorage {
     }
   }
 
+  async deleteFile(cloudinaryPublicId: string): Promise<Result<void, Error>> {
+    const credentials = this.getCredentials();
+    if (credentials.isErr()) {
+      return err(credentials.error);
+    }
+
+    try {
+      // invalidate: also drop the copy cached on the CDN, so the old URL stops working.
+      const response = (await cloudinary.uploader.destroy(cloudinaryPublicId, {
+        resource_type: RESOURCE_TYPE,
+        type: 'upload',
+        invalidate: true,
+      })) as { result?: string };
+
+      if (response.result === 'ok' || response.result === 'not found') {
+        return ok(undefined);
+      }
+      this.logger.error(
+        `Cloudinary deleteFile failed: result "${String(response.result)}"`,
+      );
+      return err(new Error('Failed to delete file from storage.'));
+    } catch (error) {
+      // Never log the whole error object: request_options.auth is "api_key:api_secret".
+      const details = (
+        error as { error?: { http_code?: number; message?: unknown } }
+      ).error;
+      this.logger.error(
+        `Cloudinary deleteFile failed: HTTP ${details?.http_code ?? 'unknown'}` +
+          ` - ${typeof details?.message === 'string' ? details.message : 'no message'}`,
+      );
+      return err(new Error('Failed to delete file from storage.'));
+    }
+  }
+
   // Read lazily, so the app still boots on machines without Cloudinary keys;
   // only the CV upload endpoints fail (500) until they are set in .env.
   private getCredentials(): Result<CloudinaryCredentials, Error> {

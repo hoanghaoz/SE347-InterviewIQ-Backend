@@ -136,6 +136,41 @@ export class SummaryDto {
   generatedAt!: string;
 }
 
+export class EmotionSummaryDto {
+  @ApiProperty({ example: 'neutral' })
+  dominant!: string;
+
+  @ApiProperty({
+    type: 'object',
+    additionalProperties: { type: 'number' },
+    example: { neutral: 0.72, happy: 0.28 },
+  })
+  distribution!: Record<string, number>;
+}
+
+export class QuestionEmotionDto {
+  @ApiProperty({
+    format: 'uuid',
+    example: '880e8400-e29b-41d4-a716-446655440000',
+  })
+  questionPublicId!: string;
+
+  @ApiProperty({ example: 1 })
+  orderIndex!: number;
+
+  @ApiProperty({ example: 'TECHNICAL' })
+  domain!: string;
+
+  @ApiProperty({ example: 'MEDIUM' })
+  difficulty!: string;
+
+  @ApiProperty({ nullable: true, example: 65 })
+  durationSeconds!: number | null;
+
+  @ApiProperty({ nullable: true, type: EmotionSummaryDto })
+  emotionSummary!: EmotionSummaryDto | null;
+}
+
 export class SessionResultResponseDto {
   @ApiProperty({
     format: 'uuid',
@@ -148,4 +183,7 @@ export class SessionResultResponseDto {
 
   @ApiProperty({ type: SummaryDto })
   summary!: SummaryDto;
+
+  @ApiProperty({ type: [QuestionEmotionDto] })
+  emotionTimeline!: QuestionEmotionDto[];
 }

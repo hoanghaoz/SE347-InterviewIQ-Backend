@@ -8,6 +8,8 @@ import {
 
 const MAX_FILE_NAME_LENGTH = 255;
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+// Placeholder until the team confirms the real quota (open point #3).
+export const MAX_CVS_PER_USER = 10;
 
 export type CvGetParams = {
   readonly id: number;
@@ -34,6 +36,7 @@ export type CvCreateParams = Pick<
   CvGetParams,
   'userId' | 'fileName' | 'fileUrl' | 'cloudinaryPublicId' | 'fileSize'
 >;
+export type CvFileParams = Omit<CvCreateParams, 'userId'>;
 
 export class Cv {
   private constructor(private readonly params: CvProps) {}
@@ -134,6 +137,35 @@ export class Cv {
       parseStatus: ParseStatus.FAILED,
       parsedData: null,
     });
+  }
+
+  // The same CV record now points at a new file, so nothing parsed from the old one survives.
+  replaceFile(file: CvFileParams): Result<Cv, CvDomainErrorValidation> {
+    const validation = Cv.validate({ ...file, userId: this.params.userId });
+    if (validation.isErr()) {
+      return err(validation.error);
+    }
+
+    return ok(
+      new Cv({
+        ...this.params,
+        ...file,
+        parseStatus: ParseStatus.PENDING,
+        rawText: null,
+        parsedData: null,
+        parserVersion: null,
+      }),
+    );
+  }
+
+  // True while a parse is running; a PROCESSING row older than staleBefore crashed.
+  isBeingParsed(staleBefore: Date): boolean {
+    const { parseStatus, updatedAt } = this.params;
+    return (
+      parseStatus === ParseStatus.PROCESSING &&
+      updatedAt !== undefined &&
+      updatedAt >= staleBefore
+    );
   }
 
   canEditParsedData(): boolean {

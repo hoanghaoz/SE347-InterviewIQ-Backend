@@ -6,12 +6,14 @@ import { SessionStatus } from '../../../../generated/prisma/enums';
 import {
   ImprovementItem,
   InterviewSummary,
+  QuestionEmotionItem,
   Score,
   StrengthItem,
 } from '../domain/entities/scoring-job.entity';
 import { ScoringJobStatus } from '../domain/enums/scoring-enum';
 import {
   ImprovementDto,
+  QuestionEmotionDto,
   ScoreDto,
   SessionResultResponseDto,
   StrengthDto,
@@ -107,14 +109,34 @@ export function mapSummaryToDto(summary: InterviewSummary): SummaryDto {
   };
 }
 
+export function mapEmotionTimelineToDto(
+  timeline: readonly QuestionEmotionItem[],
+): QuestionEmotionDto[] {
+  return timeline.map((item) => ({
+    questionPublicId: item.questionPublicId,
+    orderIndex: item.orderIndex,
+    domain: item.domain,
+    difficulty: item.difficulty,
+    durationSeconds: item.durationSeconds,
+    emotionSummary: item.emotionSummary
+      ? {
+          dominant: item.emotionSummary.dominant,
+          distribution: { ...item.emotionSummary.distribution },
+        }
+      : null,
+  }));
+}
+
 export function mapToSessionResultDto(
   sessionId: string,
   score: Score,
   summary: InterviewSummary,
+  emotionTimeline: readonly QuestionEmotionItem[] = [],
 ): SessionResultResponseDto {
   return {
     sessionId,
     scores: mapScoreToDto(score),
     summary: mapSummaryToDto(summary),
+    emotionTimeline: mapEmotionTimelineToDto(emotionTimeline),
   };
 }

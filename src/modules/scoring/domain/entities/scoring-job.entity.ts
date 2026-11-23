@@ -1,8 +1,13 @@
 import { err, ok, type Result } from 'neverthrow';
 import {
+  calculateOverallScore,
+  SCORING_LIMITS,
+} from '../constants/scoring.constants';
+import {
   ScoringDomainError,
   ScoringDomainErrorValidation,
 } from '../errors/scoring-domain.error';
+import type { EmotionSummary } from '../types/emotion-summary.type';
 
 export interface StrengthItem {
   category: string;
@@ -41,6 +46,10 @@ export type ScoreCreateParams = {
   readonly scoredAt?: Date;
 };
 
+function sanitizeDbString(value: string): string {
+  return value.replaceAll('\u0000', '').trim();
+}
+
 export class Score {
   private constructor(private readonly params: ScoreProps) {}
 
@@ -52,22 +61,21 @@ export class Score {
       return err(validation.error);
     }
 
-    const calculatedOverall =
-      params.overallScore ??
-      Number(
-        (
-          params.contentScore * 0.4 +
-          params.relevanceScore * 0.4 +
-          params.confidenceScore * 0.2
-        ).toFixed(1),
-      );
+    const contentScore = Number(params.contentScore.toFixed(1));
+    const relevanceScore = Number(params.relevanceScore.toFixed(1));
+    const confidenceScore = Number(params.confidenceScore.toFixed(1));
+    const calculatedOverall = calculateOverallScore(
+      contentScore,
+      relevanceScore,
+      confidenceScore,
+    );
 
     return ok(
       new Score({
         sessionId: params.sessionId,
-        contentScore: params.contentScore,
-        relevanceScore: params.relevanceScore,
-        confidenceScore: params.confidenceScore,
+        contentScore,
+        relevanceScore,
+        confidenceScore,
         overallScore: calculatedOverall,
         scoredAt: params.scoredAt ?? new Date(),
       }),
@@ -81,7 +89,12 @@ export class Score {
   private static validate(
     params: ScoreCreateParams,
   ): Result<void, ScoringDomainErrorValidation> {
-    if (params.contentScore < 0 || params.contentScore > 10) {
+    if (
+      typeof params.contentScore !== 'number' ||
+      !Number.isFinite(params.contentScore) ||
+      params.contentScore < SCORING_LIMITS.minScore ||
+      params.contentScore > SCORING_LIMITS.maxScore
+    ) {
       return err(
         new ScoringDomainErrorValidation(
           ScoringDomainError.ScoreOutOfRange,
@@ -90,7 +103,12 @@ export class Score {
       );
     }
 
-    if (params.relevanceScore < 0 || params.relevanceScore > 10) {
+    if (
+      typeof params.relevanceScore !== 'number' ||
+      !Number.isFinite(params.relevanceScore) ||
+      params.relevanceScore < SCORING_LIMITS.minScore ||
+      params.relevanceScore > SCORING_LIMITS.maxScore
+    ) {
       return err(
         new ScoringDomainErrorValidation(
           ScoringDomainError.ScoreOutOfRange,
@@ -99,7 +117,12 @@ export class Score {
       );
     }
 
-    if (params.confidenceScore < 0 || params.confidenceScore > 10) {
+    if (
+      typeof params.confidenceScore !== 'number' ||
+      !Number.isFinite(params.confidenceScore) ||
+      params.confidenceScore < SCORING_LIMITS.minScore ||
+      params.confidenceScore > SCORING_LIMITS.maxScore
+    ) {
       return err(
         new ScoringDomainErrorValidation(
           ScoringDomainError.ScoreOutOfRange,
@@ -110,7 +133,9 @@ export class Score {
 
     if (
       params.overallScore !== undefined &&
-      (params.overallScore < 0 || params.overallScore > 10)
+      (!Number.isFinite(params.overallScore) ||
+        params.overallScore < SCORING_LIMITS.minScore ||
+        params.overallScore > SCORING_LIMITS.maxScore)
     ) {
       return err(
         new ScoringDomainErrorValidation(
@@ -200,14 +225,67 @@ export class InterviewSummary {
       return err(validation.error);
     }
 
+    const cleanedFeedback = sanitizeDbString(params.overallFeedback);
+    const cleanedModel = sanitizeDbString(params.scoringModel).slice(
+      0,
+      SCORING_LIMITS.maxScoringModelChars,
+    );
+    const cleanedPromptVersion =
+      params.promptVersion && sanitizeDbString(params.promptVersion) !== ''
+        ? sanitizeDbString(params.promptVersion).slice(
+            0,
+            SCORING_LIMITS.maxPromptVersionChars,
+          )
+        : null;
+
+    const cleanedStrengths: StrengthItem[] = params.strengths
+      .slice(0, SCORING_LIMITS.maxFeedbackItems)
+      .map((item) => ({
+        category: sanitizeDbString(item.category),
+        title: sanitizeDbString(item.title).slice(
+          0,
+          SCORING_LIMITS.maxItemTitleChars,
+        ),
+        description: sanitizeDbString(item.description).slice(
+          0,
+          SCORING_LIMITS.maxItemDescriptionChars,
+        ),
+      }));
+
+    const cleanedImprovements: ImprovementItem[] = params.improvements
+      .slice(0, SCORING_LIMITS.maxFeedbackItems)
+      .map((item) => {
+        const cleanedSuggestion =
+          item.suggestion !== undefined
+            ? sanitizeDbString(item.suggestion).slice(
+                0,
+                SCORING_LIMITS.maxItemSuggestionChars,
+              )
+            : undefined;
+        return {
+          category: sanitizeDbString(item.category),
+          title: sanitizeDbString(item.title).slice(
+            0,
+            SCORING_LIMITS.maxItemTitleChars,
+          ),
+          description: sanitizeDbString(item.description).slice(
+            0,
+            SCORING_LIMITS.maxItemDescriptionChars,
+          ),
+          ...(cleanedSuggestion !== undefined && cleanedSuggestion !== ''
+            ? { suggestion: cleanedSuggestion }
+            : {}),
+        };
+      });
+
     return ok(
       new InterviewSummary({
         sessionId: params.sessionId,
-        overallFeedback: params.overallFeedback.trim(),
-        strengths: params.strengths,
-        improvements: params.improvements,
-        scoringModel: params.scoringModel.trim(),
-        promptVersion: params.promptVersion ?? null,
+        overallFeedback: cleanedFeedback,
+        strengths: cleanedStrengths,
+        improvements: cleanedImprovements,
+        scoringModel: cleanedModel,
+        promptVersion: cleanedPromptVersion,
         generatedAt: params.generatedAt ?? new Date(),
       }),
     );
@@ -220,7 +298,12 @@ export class InterviewSummary {
   private static validate(
     params: InterviewSummaryCreateParams,
   ): Result<void, ScoringDomainErrorValidation> {
-    if (!params.overallFeedback || params.overallFeedback.trim() === '') {
+    const cleanedFeedback =
+      typeof params.overallFeedback === 'string'
+        ? sanitizeDbString(params.overallFeedback)
+        : '';
+
+    if (!cleanedFeedback) {
       return err(
         new ScoringDomainErrorValidation(
           ScoringDomainError.OverallFeedbackEmpty,
@@ -229,7 +312,7 @@ export class InterviewSummary {
       );
     }
 
-    if (params.overallFeedback.length > 10_000) {
+    if (cleanedFeedback.length > SCORING_LIMITS.maxOverallFeedbackChars) {
       return err(
         new ScoringDomainErrorValidation(
           ScoringDomainError.OverallFeedbackTooLong,
@@ -238,7 +321,12 @@ export class InterviewSummary {
       );
     }
 
-    if (!params.scoringModel || params.scoringModel.trim() === '') {
+    const cleanedModel =
+      typeof params.scoringModel === 'string'
+        ? sanitizeDbString(params.scoringModel)
+        : '';
+
+    if (!cleanedModel) {
       return err(
         new ScoringDomainErrorValidation(
           ScoringDomainError.InvalidScoringModel,
@@ -309,10 +397,20 @@ export class InterviewSummary {
   }
 }
 
+export interface QuestionEmotionItem {
+  readonly questionPublicId: string;
+  readonly orderIndex: number;
+  readonly domain: string;
+  readonly difficulty: string;
+  readonly durationSeconds: number | null;
+  readonly emotionSummary: EmotionSummary | null;
+}
+
 export class ScoringResult {
   constructor(
     public readonly score: Score,
     public readonly summary: InterviewSummary,
     public readonly sessionPublicId?: string,
+    public readonly emotionTimeline: readonly QuestionEmotionItem[] = [],
   ) {}
 }

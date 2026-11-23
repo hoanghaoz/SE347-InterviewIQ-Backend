@@ -6,12 +6,17 @@ import { JwtAuthGuard } from '../../shared/common/jwt.guard';
 import { RolesGuard } from '../../shared/decorators/roles.guard';
 import { LlmModule } from '../../shared/llm/llm.module';
 import { ScoringController } from './api/scoring.controller';
-import { ISCORING_LLM_PROVIDER } from './application/interfaces/scoring-llm.interface';
+import {
+  ISCORING_LLM_PROVIDER,
+  IScoringLlmProvider,
+} from './application/interfaces/scoring-llm.interface';
+import { IScoringEventBus } from './application/interfaces/scoring-event.interface';
 import { IScoringQueue } from './application/interfaces/scoring.queue.interface';
 import { IScoringService } from './application/interfaces/scoring.service.interface';
 import { ScoringService } from './application/services/scoring.service';
 import { IScoringRepository } from './domain/repositories/scoring.repo.interface';
 import { ScoringLlmAdapter } from './infrastructure/adapters/scoring-llm.adapter';
+import { ScoringEventBusService } from './infrastructure/events/scoring-event-bus.service';
 import {
   PG_BOSS_TOKEN,
   PgBossProvider,
@@ -41,6 +46,10 @@ import { ScoringRepository } from './infrastructure/scoring.repo';
       useClass: ScoringQueueService,
     },
     {
+      provide: IScoringEventBus,
+      useClass: ScoringEventBusService,
+    },
+    {
       provide: IScoringService,
       useClass: ScoringService,
     },
@@ -49,8 +58,12 @@ import { ScoringRepository } from './infrastructure/scoring.repo';
       useClass: ScoringRepository,
     },
     {
-      provide: ISCORING_LLM_PROVIDER,
+      provide: IScoringLlmProvider,
       useClass: ScoringLlmAdapter,
+    },
+    {
+      provide: ISCORING_LLM_PROVIDER,
+      useExisting: IScoringLlmProvider,
     },
     ScoringWorkerService,
   ],

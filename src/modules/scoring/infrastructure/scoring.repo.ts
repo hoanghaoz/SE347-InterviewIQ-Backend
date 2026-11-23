@@ -6,15 +6,48 @@ import { PrismaService } from '../../../shared/infrastructure/database/prisma.se
 import type { CvParsedData } from '../../cv/domain/types/cv-parsed-data.type';
 import {
   InterviewSummary,
+  QuestionEmotionItem,
   Score,
   ScoringResult,
 } from '../domain/entities/scoring-job.entity';
+import { normalizeEmotionSummary } from '../domain/types/emotion-summary.type';
 import {
   IScoringRepository,
   type SessionOwnerInfo,
   type SessionScoringContext,
 } from '../domain/repositories/scoring.repo.interface';
 import { mapScoreToDomain, mapSummaryToDomain } from './scoring-mapper';
+
+function extractCvParsedData(
+  cvSnapshot: unknown,
+  cv: { parsedData?: unknown } | null | undefined,
+): CvParsedData | null {
+  if (
+    typeof cvSnapshot === 'object' &&
+    cvSnapshot !== null &&
+    !Array.isArray(cvSnapshot)
+  ) {
+    const snapshotRecord = cvSnapshot as Record<string, unknown>;
+    if (
+      typeof snapshotRecord.parsedData === 'object' &&
+      snapshotRecord.parsedData !== null &&
+      !Array.isArray(snapshotRecord.parsedData)
+    ) {
+      return snapshotRecord.parsedData as unknown as CvParsedData;
+    }
+  }
+
+  if (
+    cv &&
+    typeof cv.parsedData === 'object' &&
+    cv.parsedData !== null &&
+    !Array.isArray(cv.parsedData)
+  ) {
+    return cv.parsedData as unknown as CvParsedData;
+  }
+
+  return null;
+}
 
 @Injectable()
 export class ScoringRepository implements IScoringRepository {
@@ -43,26 +76,28 @@ export class ScoringRepository implements IScoringRepository {
         return ok(null);
       }
 
-      let cvParsedData: CvParsedData | null = null;
-      if (session.cv?.parsedData) {
-        cvParsedData = session.cv.parsedData as unknown as CvParsedData;
-      }
+      const cvParsedData = extractCvParsedData(session.cvSnapshot, session.cv);
 
       const context: SessionScoringContext = {
         id: session.id,
         publicId: session.publicId,
         userId: session.userId,
         status: session.status,
+        title: session.title,
+        jobDescription: session.jobDescription ?? null,
         cvParsedData,
         questions: session.questions.map((q) => ({
           id: q.id,
           content: q.content,
           orderIndex: q.orderIndex,
+          domain: q.domain,
+          difficulty: q.difficulty,
           answer: q.answer
             ? {
                 id: q.answer.id,
                 transcript: q.answer.transcript,
                 emotionSummary: q.answer.emotionSummary,
+                durationSeconds: q.answer.durationSeconds ?? null,
               }
             : null,
         })),
@@ -144,13 +179,24 @@ export class ScoringRepository implements IScoringRepository {
           },
         });
 
-        await tx.interviewSession.update({
-          where: { id: sessionId },
+        const updated = await tx.interviewSession.updateMany({
+          where: {
+            id: sessionId,
+            status: {
+              in: [SessionStatus.SUBMITTED, SessionStatus.SCORING],
+            },
+          },
           data: {
             status: SessionStatus.COMPLETED,
             completedAt: new Date(),
           },
         });
+
+        if (updated.count !== 1) {
+          throw new Error(
+            `Session ${sessionId} is not in SUBMITTED or SCORING state.`,
+          );
+        }
       });
 
       return ok(undefined);
@@ -197,6 +243,21 @@ export class ScoringRepository implements IScoringRepository {
         include: {
           score: true,
           interviewSummary: true,
+          questions: {
+            orderBy: { orderIndex: 'asc' },
+            select: {
+              publicId: true,
+              orderIndex: true,
+              domain: true,
+              difficulty: true,
+              answer: {
+                select: {
+                  durationSeconds: true,
+                  emotionSummary: true,
+                },
+              },
+            },
+          },
         },
       });
 
@@ -206,8 +267,22 @@ export class ScoringRepository implements IScoringRepository {
 
       const score = mapScoreToDomain(session.score);
       const summary = mapSummaryToDomain(session.interviewSummary);
+      const emotionTimeline: QuestionEmotionItem[] = (
+        session.questions ?? []
+      ).map((question) => ({
+        questionPublicId: question.publicId,
+        orderIndex: question.orderIndex,
+        domain: String(question.domain),
+        difficulty: String(question.difficulty),
+        durationSeconds: question.answer?.durationSeconds ?? null,
+        emotionSummary: normalizeEmotionSummary(
+          question.answer?.emotionSummary,
+        ),
+      }));
 
-      return ok(new ScoringResult(score, summary, session.publicId));
+      return ok(
+        new ScoringResult(score, summary, session.publicId, emotionTimeline),
+      );
     } catch (error) {
       this.logger.error(
         `Failed to find session result for '${sessionPublicId}': ${(error as Error).message}`,

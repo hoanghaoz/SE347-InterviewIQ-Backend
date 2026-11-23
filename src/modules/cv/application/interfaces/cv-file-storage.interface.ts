@@ -33,4 +33,7 @@ export abstract class ICvFileStorage {
   abstract downloadFile(
     cloudinaryPublicId: string,
   ): Promise<Result<Uint8Array | null, Error>>;
+
+  // Idempotent: a file that is already gone counts as deleted.
+  abstract deleteFile(cloudinaryPublicId: string): Promise<Result<void, Error>>;
 }

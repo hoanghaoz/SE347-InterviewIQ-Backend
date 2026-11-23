@@ -23,7 +23,7 @@ describe('Scoring Domain Entities', () => {
       }
     });
 
-    it('should allow custom overallScore within valid range', () => {
+    it('should always compute overallScore deterministically using 0.4/0.4/0.2 formula even if custom overallScore is provided', () => {
       const result = Score.create({
         sessionId: 1,
         contentScore: 9.0,
@@ -34,7 +34,35 @@ describe('Scoring Domain Entities', () => {
 
       expect(result.isOk()).toBe(true);
       if (result.isOk()) {
-        expect(result.value.overallScore).toBe(9.5);
+        expect(result.value.overallScore).toBe(9.0);
+      }
+    });
+
+    it('should fail when any score is NaN or Infinity', () => {
+      const nanContent = Score.create({
+        sessionId: 1,
+        contentScore: Number.NaN,
+        relevanceScore: 8.0,
+        confidenceScore: 7.0,
+      });
+      expect(nanContent.isErr()).toBe(true);
+      if (nanContent.isErr()) {
+        expect(nanContent.error.errorCode).toBe(
+          ScoringDomainError.ScoreOutOfRange,
+        );
+      }
+
+      const infRelevance = Score.create({
+        sessionId: 1,
+        contentScore: 8.0,
+        relevanceScore: Number.POSITIVE_INFINITY,
+        confidenceScore: 7.0,
+      });
+      expect(infRelevance.isErr()).toBe(true);
+      if (infRelevance.isErr()) {
+        expect(infRelevance.error.errorCode).toBe(
+          ScoringDomainError.ScoreOutOfRange,
+        );
       }
     });
 
@@ -205,6 +233,29 @@ describe('Scoring Domain Entities', () => {
         expect(result.error.errorCode).toBe(
           ScoringDomainError.InvalidScoringModel,
         );
+      }
+    });
+
+    it('should truncate scoringModel to 100 chars, promptVersion to 50 chars, and strip null bytes', () => {
+      const longModel = 'gemini-model-\u0000' + 'x'.repeat(120);
+      const longPromptVersion = 'v2.0-\u0000' + 'p'.repeat(60);
+
+      const result = InterviewSummary.create({
+        sessionId: 1,
+        overallFeedback: 'Good\u0000 feedback',
+        strengths: validStrengths,
+        improvements: validImprovements,
+        scoringModel: longModel,
+        promptVersion: longPromptVersion,
+      });
+
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value.overallFeedback).toBe('Good feedback');
+        expect(result.value.scoringModel.length).toBe(100);
+        expect(result.value.scoringModel).not.toContain('\u0000');
+        expect(result.value.promptVersion?.length).toBe(50);
+        expect(result.value.promptVersion).not.toContain('\u0000');
       }
     });
 
