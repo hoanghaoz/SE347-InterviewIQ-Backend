@@ -1,6 +1,6 @@
 # API Contract: Interview History Module
 
-Hợp đồng giao tiếp (API Contract) cho **Module Lịch sử phỏng vấn (Interview History)** của MockMate AI. Module cung cấp danh sách các buổi phỏng vấn đã thực hiện (phân trang, lọc theo thời gian và trạng thái), dữ liệu cho trang chi tiết một buổi phỏng vấn (câu hỏi, câu trả lời, điểm và nhận xét của AI) và số liệu tổng hợp điểm cho dashboard.
+Hợp đồng giao tiếp (API Contract) cho **Module Lịch sử phỏng vấn (Interview History)** của MockMate AI. Module cung cấp danh sách các buổi phỏng vấn đã thực hiện (phân trang, lọc theo thời gian và trạng thái), dữ liệu cho trang chi tiết một buổi phỏng vấn (câu hỏi, câu trả lời, điểm và nhận xét của AI) số liệu tổng hợp điểm và nhận xét AI về toàn bộ quá trình luyện tập cho dashboard.
 
 Mã nguồn: `src/modules/interview-history/`. Branch: `feat/history-interview`.
 
@@ -12,10 +12,11 @@ Mã nguồn: `src/modules/interview-history/`. Branch: `feat/history-interview`.
 | --- | --- |
 | `GET /api/interviews` — danh sách lịch sử | Tạo / bắt đầu / nộp buổi phỏng vấn (`InterviewModule`) |
 | `GET /api/interviews/stats` — tổng hợp điểm cho dashboard | Chấm điểm, ghi điểm và nhận xét (`ScoringModule`) |
+| `GET /api/interviews/insight`, `POST /api/interviews/insight` — nhận xét AI tổng hợp | |
 | `GET /api/interviews/:id` — chi tiết một buổi | |
 | | Sinh câu hỏi, lưu câu trả lời và video (`InterviewModule`, `QuestionGenerationModule`) |
 
-Module chỉ **đọc**. Không có endpoint nào ghi dữ liệu, không sở hữu bảng nào trong database; nó đọc `interview_sessions` cùng các quan hệ `cv`, `score`, `interview_summaries`, `questions` → `answers` và `cheat_logs` (cờ gian lận, xem `docs/api-contract-cheat-log.md`).
+Module **đọc** `interview_sessions` cùng các quan hệ `cv`, `score`, `interview_summaries`, `questions` → `answers` và `cheat_logs` (cờ gian lận, xem `docs/api-contract-cheat-log.md`), và không bao giờ sửa các bảng đó. Bảng duy nhất module sở hữu và ghi là `user_insights` (nhận xét AI tổng hợp, mục 6); `POST /api/interviews/insight` là endpoint ghi duy nhất.
 
 ## 2. Quy ước chung
 
@@ -399,7 +400,95 @@ Mỗi phần tử của `trend`, `best`, `latest`, `previous` gồm `id`, `title
 
 ---
 
-## 6. Quan hệ với `GET /api/interview-session`
+## 6. Nhận xét AI tổng hợp: `GET` và `POST /api/interviews/insight`
+
+Nhận xét điểm mạnh, điểm yếu và gợi ý cải thiện về **toàn bộ** quá trình luyện tập của người gọi, hiển thị trên dashboard. Không dùng vector database: dữ liệu lịch sử được đưa thẳng vào prompt qua `ILlmProvider` (Gemini, fallback Groq).
+
+| Endpoint | Gọi AI? | Dùng khi |
+| --- | --- | --- |
+| `GET /api/interviews/insight` | **Không bao giờ** | Mở dashboard: đọc bản đã lưu và biết nó còn đúng không |
+| `POST /api/interviews/insight` | Chỉ khi lịch sử đã đổi | Người dùng bấm "Tạo / Cập nhật nhận xét" |
+
+Cả hai không có body, không có query. Route `insight` được khai báo trước `:id`, cùng lý do với `stats`.
+
+### 6.1. Response `200 OK` (cả GET và POST)
+
+```jsonc
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Interview insight retrieved successfully", // POST: "Interview insight refreshed successfully"
+  "timestamp": "2026-11-25T09:00:00.000Z",
+  "data": {
+    "completedSessions": 9,
+    "minCompletedSessions": 2,
+    "canGenerate": true,
+    "isStale": true,
+    "insight": {
+      "overallFeedback": "Điểm nội dung tăng đều qua các buổi, nhưng phần trình bày vẫn là điểm yếu lặp lại.",
+      "strengths": [
+        { "category": "TECHNICAL_KNOWLEDGE", "title": "Nền tảng NestJS vững", "description": "…" }
+      ],
+      "weaknesses": [
+        { "category": "COMMUNICATION", "title": "Thiếu ví dụ theo STAR", "description": "…" }
+      ],
+      "recommendations": [
+        { "title": "Luyện trả lời theo STAR", "description": "…" }
+      ],
+      "basedOnSessionCount": 8,
+      "generatedAt": "2026-11-20T10:00:00.000Z"
+    }
+  }
+}
+```
+
+`POST` luôn trả `200`, không trả `201`: khi lịch sử không đổi thì không có gì mới được tạo.
+
+| Field | Kiểu | Nullable | Ý nghĩa |
+| --- | --- | --- | --- |
+| `completedSessions` | integer | không | Số buổi `COMPLETED` **hiện tại** |
+| `minCompletedSessions` | integer | không | Số buổi tối thiểu để tạo nhận xét (hiện là `2`) |
+| `canGenerate` | boolean | không | `completedSessions >= minCompletedSessions` |
+| `isStale` | boolean | không | `true` khi đã có nhận xét nhưng từ đó có buổi mới chấm xong. `false` khi chưa có nhận xét |
+| `insight` | object | **có** | `null` cho tới lần `POST` thành công đầu tiên |
+| `insight.strengths`, `insight.weaknesses` | array | không | `{ category, title, description }`, tối đa 5; `weaknesses` luôn có ít nhất 1 |
+| `insight.recommendations` | array | không | `{ title, description }`, tối đa 5 |
+| `insight.basedOnSessionCount` | integer | không | Số buổi `COMPLETED` lúc tạo nhận xét |
+| `insight.generatedAt` | string (date-time) | không | Thời điểm tạo |
+
+Gợi ý cho frontend: `insight = null` và `canGenerate` thì hiện nút "Tạo nhận xét"; `isStale` thì hiện nút "Cập nhật"; `!canGenerate` thì hiện trạng thái trống "cần ít nhất `minCompletedSessions` buổi".
+
+### 6.2. Luồng của `POST`
+
+1. Đọc dấu vân tay lịch sử: số buổi `COMPLETED` và `completedAt` mới nhất.
+2. Dưới `minCompletedSessions` buổi thì trả `400`. Một buổi thì nhận xét tổng hợp chỉ chép lại summary của buổi đó.
+3. Đã có nhận xét với **cùng** dấu vân tay thì trả lại bản cũ, **không gọi AI, không tốn lượt rate limit**.
+4. Lấy một lượt trong giới hạn **5 lần gọi AI / user / giờ** (Redis, fixed window). Hết lượt thì trả `429`. Không đọc được Redis thì trả `500` chứ không gọi AI không giới hạn.
+5. Dựng prompt rồi gọi AI **đồng bộ** (thường vài giây). Output được validate; sai shape thì hỏi lại 1 lần.
+6. Ghi đè `user_insights` kèm dấu vân tay đọc ở bước 1. Nếu có buổi chấm xong trong lúc chờ AI, lần đọc sau trả `isStale: true`.
+
+AI lỗi thì nhận xét cũ (nếu có) vẫn giữ nguyên.
+
+### 6.3. Đưa gì vào prompt
+
+- **Số liệu tính bằng code**, lấy từ chính service của `GET /api/interviews/stats` để con số trong nhận xét khớp biểu đồ: số buổi, trung bình 4 điểm trên mọi buổi, chênh lệch buổi mới nhất với buổi liền trước, điểm tổng của tối đa 20 buổi gần nhất. Prompt dặn AI chỉ dùng các con số này, không tự tính.
+- **Tần suất category**: số buổi có mỗi `category` trong strengths/improvements, đếm theo buổi chứ không theo item.
+- **Chi tiết 20 buổi gần nhất**: tiêu đề, ngày, 4 điểm, strengths/improvements đã lưu (tối đa 1.200 ký tự mỗi buổi). **Không gửi transcript**: mỗi buổi đã được AI tóm tắt lúc chấm, insight chỉ cần gộp các bản tóm tắt đó, nên số token không phình theo độ dài câu trả lời.
+- **Buổi bỏ trống** (chấm 0 theo luật, `scoringModel = rule-based`) vẫn có mặt với điểm 0, nhưng được đánh dấu "bỏ trống" thay cho improvement viết sẵn của nó, và không được đếm vào tần suất. Nếu đếm, improvement `COMMUNICATION` viết sẵn đó sẽ khiến AI kết luận sai là người dùng yếu giao tiếp.
+- Tiêu đề và nhận xét là dữ liệu không tin cậy, vì nhận xét được sinh từ transcript của người dùng. Chúng được bọc trong `<session_title>` / `<session_feedback>`, các thẻ giả mạo bên trong bị xóa, và system prompt dặn bỏ qua mọi chỉ dẫn nằm trong đó.
+
+### 6.4. Lỗi
+
+| HTTP | `code` | Khi nào |
+| --- | --- | --- |
+| 400 | `BAD_REQUEST` | `POST` khi chưa đủ buổi: `"At least 2 completed interviews are needed to generate an insight"` |
+| 401 | `UNAUTHORIZED` | Thiếu hoặc sai token |
+| 429 | `TOO_MANY_REQUESTS` | `POST` vượt 5 lần gọi AI trong 1 giờ: `"Too many insight requests, please try again later"`; hoặc nhà cung cấp AI đang giới hạn: `"AI provider is busy, please try again later"` |
+| 500 | `INTERNAL_SERVER_ERROR` | `GET`: `"Failed to load the insight"`. `POST`: `"Failed to generate the insight"` (database, Redis, AI trả sai shape hai lần…), không lộ nguyên nhân gốc |
+
+---
+
+## 7. Quan hệ với `GET /api/interview-session`
 
 `GET /api/interview-session` (thuộc `InterviewModule`) đã làm sẵn việc liệt kê session của người gọi có phân trang, nhưng không lọc theo thời gian và không trả điểm. Kể từ module này, endpoint đó được đánh **deprecated** trong Swagger và `GET /api/interviews` là endpoint chính thức cho màn danh sách.
 
@@ -415,7 +504,7 @@ Endpoint cũ vẫn hoạt động để frontend có thời gian chuyển sang e
 | Lọc thời gian / trạng thái | không | `fromDate`, `toDate`, `status` |
 | Chặn trên `pageSize` | không | 100 |
 
-## 7. Giới hạn đã biết
+## 8. Giới hạn đã biết
 
 1. **Lọc theo `createdAt`, không theo thời điểm hoàn thành.** Người dùng lọc "tháng 10" sẽ thấy buổi phỏng vấn *tạo* trong tháng 10, kể cả khi nó hoàn thành sang tháng 11.
 2. **Không lọc theo khoảng điểm.** Màn danh sách hiển thị `overallScore` nhưng không cho lọc theo nó. Thêm sau sẽ cần index trên `scores.overall_score`.
@@ -432,3 +521,7 @@ Endpoint cũ vẫn hoạt động để frontend có thời gian chuyển sang e
 13. **`trend` là từng buổi, không gom theo tuần/tháng.** Gom theo khoảng thời gian cần chốt múi giờ của ranh giới tuần/tháng; để sau nếu số buổi lớn.
 14. **Các số của `stats` không chung một snapshot.** Bốn câu SQL chạy song song dưới Read Committed; một buổi vừa chấm xong giữa chừng có thể làm `completedSessions` và `trend` lệch nhau 1 buổi. Gọi lại là khớp.
 15. **`answeredQuestions` đếm cả transcript chỉ có khoảng trắng.** Điều kiện là khác `NULL` và khác chuỗi rỗng.
+16. **`POST /api/interviews/insight` gọi AI đồng bộ.** Request có thể mất từ vài giây tới vài chục giây khi provider chậm hoặc phải fallback. Nếu độ trễ thành vấn đề thì chuyển sang hàng đợi pg-boss.
+17. **Nhận xét chỉ bị coi là cũ khi số buổi `COMPLETED` hoặc mốc hoàn thành mới nhất thay đổi.** Đổi prompt (`prompt_version`) không tự làm cũ nhận xét đã lưu.
+18. **Chi tiết đưa vào nhận xét chỉ lấy từ 20 buổi gần nhất.** Các buổi cũ hơn chỉ góp mặt qua số trung bình.
+19. **Giới hạn 5 lần / giờ là fixed window trên Redis.** Lần bị từ chối vẫn được đếm. Người dùng có thể dùng hết lượt ở cuối một cửa sổ rồi dùng tiếp ngay ở đầu cửa sổ sau.
