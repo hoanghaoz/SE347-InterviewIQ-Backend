@@ -81,13 +81,19 @@ jobs:
 
       - name: Action lint
         run: |
-          bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          # Cố định actionlint 1.7.12: script cài đặt lấy theo commit, không theo nhánh main.
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/914e7df21a07ef503a81201c76d2b11c789d3fca/scripts/download-actionlint.bash) 1.7.12
           ./actionlint -color -format '{{range $err := .}}::error file={{$err.Filepath}},line={{$err.Line}},col={{$err.Column}}::{{$err.Message}}%0A```%0A{{replace $err.Snippet "\\n" "%0A"}}%0A```\n{{end}}' -ignore 'SC2016:'
 
         shell: bash
 
       - name: Run test
         run: npm test -- --ci --runInBand
+
+      # E2E dùng service mock nên không cần database. Job docker phụ thuộc job này:
+      # e2e lỗi thì không push image.
+      - name: Run e2e test
+        run: npm run test:e2e -- --ci --runInBand
 
       - name: Build project
         run: npm run build
@@ -98,7 +104,7 @@ jobs:
           cat > .env <<'EOF'
           POSTGRES_USER=ci
           POSTGRES_PASSWORD=ci-password
-          POSTGRES_DB=fitwork_ci
+          POSTGRES_DB=interviewiq_ci
           REDIS_PASSWORD=ci-password
           REDIS_PORT=6379
           EOF

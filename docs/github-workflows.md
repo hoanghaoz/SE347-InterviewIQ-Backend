@@ -9,7 +9,7 @@ Run local commands from the repository root.
 | Workflow         | File                                                    | Trigger                                             | Purpose                                                   |
 | ---------------- | ------------------------------------------------------- | --------------------------------------------------- | --------------------------------------------------------- |
 | Backend CI       | [`backend_ci.yml`](../.github/workflows/backend_ci.yml) | Pull requests targeting `main` and pushes to `main` | Validate the backend and decide whether to run Docker CI. |
-| Docker CI & Push | [`docker_ci.yml`](../.github/workflows/docker_ci.yml)   | Reusable workflow invoked through `workflow_call`   | Build the image and optionally publish it to Docker Hub.  |
+| Docker CI & Push | [`docker_ci.yml`](../.github/workflows/docker_ci.yml)   | Reusable workflow invoked through `workflow_call`   | Build and scan the image, optionally publish it.          |
 
 Neither workflow defines `workflow_dispatch`, a schedule, or a release trigger.
 The backend workflow does not run on pushes to feature branches or pull requests
@@ -72,11 +72,14 @@ The `ci` job executes these steps in order:
 5. Validate the Prisma schema with `npx prisma validate`.
 6. Generate the Prisma client with `npx prisma generate`.
 7. Run ESLint without automatic fixes using `npm run lint:check`.
-8. Download and run `actionlint` to validate GitHub Actions workflows. Errors are
-   formatted as GitHub annotations; ShellCheck diagnostic `SC2016` is ignored.
+8. Download and run `actionlint` 1.7.12 to validate GitHub Actions workflows.
+   The installer script is fetched from a fixed commit. Errors are formatted as
+   GitHub annotations; ShellCheck diagnostic `SC2016` is ignored.
 9. Run unit tests with `npm test -- --ci --runInBand`.
-10. Compile the application with `npm run build`.
-11. Validate Compose configuration with `docker compose -f compose.yml config --quiet`.
+10. Run e2e tests with `npm run test:e2e -- --ci --runInBand`. The suites mock
+    the service layer and need no `.env` or database.
+11. Compile the application with `npm run build`.
+12. Validate Compose configuration with `docker compose -f compose.yml config --quiet`.
 
 For Compose validation, the runner creates a temporary `.env` containing CI-only
 values for `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `REDIS_PASSWORD`,
@@ -84,7 +87,7 @@ and `REDIS_PORT`. This step validates configuration without starting services.
 The file is excluded from the Docker build context by `.dockerignore`.
 
 The active backend checks do not start PostgreSQL or Redis, apply migrations,
-seed a database, run e2e tests, run performance tests, or enforce a coverage
+seed a database, run performance tests, or enforce a coverage
 threshold. Prisma validation and generation use the configuration in
 [`prisma.config.ts`](../prisma.config.ts); they do not verify database connectivity.
 
@@ -106,11 +109,11 @@ The reusable workflow requests `contents: read`. Its `build-and-push` job runs o
 
 ### Invocation and Publication Rules
 
-| Event in Backend CI                                   | Docker job                | Publish input | Result                                   |
-| ----------------------------------------------------- | ------------------------- | ------------- | ---------------------------------------- |
-| Pull request to `main` with matching Docker inputs    | Runs after checks succeed | `false`       | Build only; no Docker Hub login or push. |
-| Pull request to `main` without matching Docker inputs | Skipped                   | Not passed    | Backend checks only.                     |
-| Push to `main`                                        | Runs after checks succeed | `true`        | Build and publish to Docker Hub.         |
+| Event in Backend CI                                   | Docker job                | Publish input | Result                                  |
+| ----------------------------------------------------- | ------------------------- | ------------- | --------------------------------------- |
+| Pull request to `main` with matching Docker inputs    | Runs after checks succeed | `false`       | Build and scan; no login or push.       |
+| Pull request to `main` without matching Docker inputs | Skipped                   | Not passed    | Backend checks only.                    |
+| Push to `main`                                        | Runs after checks succeed | `true`        | Build, scan, and publish to Docker Hub. |
 
 The reusable workflow requires a boolean `publish` input. Login, image metadata
 generation, and pushing additionally require that the original event is a push
@@ -127,7 +130,7 @@ Hub with `docker/login-action@v3` and compares `GITHUB_SHA` with the current rem
 Image metadata is generated with `docker/metadata-action@v5` for:
 
 ```text
-<DOCKERHUB_USERNAME>/fitwork-be-nestjs-api
+<DOCKERHUB_USERNAME>/interviewiq-api
 ```
 
 Publication uses two tag rules:
@@ -140,10 +143,30 @@ If `main` has already advanced at that check, the older run can still publish it
 commit tag but does not generate `latest`. The comparison occurs before the
 build; it is not an atomic check at push time.
 
-`docker/build-push-action@v6` builds from context `.` using
-[`Dockerfile`](../Dockerfile). It receives the generated tags and labels, and
-uses GitHub Actions cache with `cache-from: type=gha` and
-`cache-to: type=gha,mode=max`. No explicit platform list is configured.
+`docker/build-push-action@v6` runs twice from context `.` using
+[`Dockerfile`](../Dockerfile):
+
+1. **Build image** loads the result into the runner as `interviewiq-api:scan`,
+   reading and writing the GitHub Actions cache (`cache-from: type=gha`,
+   `cache-to: type=gha,mode=max`).
+2. **Push image** runs only when publication is enabled, after the scan. It
+   reuses the layers from the same builder and applies the generated tags and
+   labels.
+
+No explicit platform list is configured.
+
+### Image Scan
+
+Between the two build steps, Trivy `v0.76.2` scans the loaded image for HIGH and
+CRITICAL vulnerabilities and prints a table in the job log. The scan runs on
+pull requests too. It is report only: neither findings nor a Trivy failure (for
+example, a failed vulnerability database download) stops the job, so read the
+`Scan image` step log to see the results.
+
+`aquasecurity/trivy-action` is pinned to the commit of `v0.36.0` because the
+action was compromised in a supply chain attack
+([GHSA-69fq-xp46-6x23](https://github.com/advisories/GHSA-69fq-xp46-6x23)).
+When upgrading, pin the new release by commit SHA.
 
 The Dockerfile uses Node.js 24 Alpine stages to install dependencies, generate
 Prisma, compile the application, and remove development dependencies. The final
@@ -177,6 +200,7 @@ npx prisma validate
 npx prisma generate
 npm run lint:check
 npm test -- --ci --runInBand
+npm run test:e2e -- --ci --runInBand
 npm run build
 ```
 
@@ -194,21 +218,19 @@ If `actionlint` is installed locally, reproduce the workflow lint check with:
 actionlint -color -ignore 'SC2016:'
 ```
 
-Run `npm run test:e2e` locally when the change requires endpoint verification;
-the active CI workflow does not run that suite.
-
 ## Troubleshooting and Maintenance
 
-| Symptom                                         | What to check                                                                                         |
-| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| No Backend CI run                               | Confirm the event is a push to `main` or a pull request targeting `main`. There is no manual trigger. |
-| Docker job skipped on a pull request            | Check the filter paths and whether both prerequisite jobs succeeded.                                  |
-| Backend checks fail                             | Open the failed step in Actions and reproduce its command using Node.js 24.                           |
-| Compose validation fails                        | Check `.env` requirements and interpolation in `compose.yml`. CI creates its own temporary file.      |
-| Workflow lint fails                             | Inspect the actionlint annotations, including file, line, and column.                                 |
-| Docker login or push fails                      | Check both Docker Hub secrets and token permissions for the configured image repository.              |
-| Commit image published without `latest`         | Check whether remote `main` had advanced when the head-check step ran.                                |
-| Expected e2e or integration results are missing | E2e is not invoked, and the integration job is commented out. Run the relevant suite locally.         |
+| Symptom                                      | What to check                                                                                         |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| No Backend CI run                            | Confirm the event is a push to `main` or a pull request targeting `main`. There is no manual trigger. |
+| Docker job skipped on a pull request         | Check the filter paths and whether both prerequisite jobs succeeded.                                  |
+| Backend checks fail                          | Open the failed step in Actions and reproduce its command using Node.js 24.                           |
+| Compose validation fails                     | Check `.env` requirements and interpolation in `compose.yml`. CI creates its own temporary file.      |
+| Workflow lint fails                          | Inspect the actionlint annotations, including file, line, and column.                                 |
+| Docker login or push fails                   | Check both Docker Hub secrets and token permissions for the configured image repository.              |
+| Commit image published without `latest`      | Check whether remote `main` had advanced when the head-check step ran.                                |
+| Expected integration results are missing     | The integration job is commented out. Run the relevant suite locally.                                 |
+| Scan step shows a warning but the job passed | Expected: the scan is report only. Open the step log for findings or the Trivy error.                 |
 
 When editing workflow triggers, filter paths, jobs, image naming, or publication
 conditions, update this document and the CI summary in
