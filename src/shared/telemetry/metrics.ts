@@ -176,6 +176,10 @@ function createInstruments() {
       'cheat_log.rejected',
       'Cheat events rejected, by reason',
     ),
+    cheatLogDeduplicated: counter(
+      'cheat_log.deduplicated',
+      'Cheat events skipped because their clientEventId was already recorded',
+    ),
   };
 }
 
