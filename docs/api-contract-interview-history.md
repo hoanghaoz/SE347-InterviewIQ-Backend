@@ -1,6 +1,6 @@
 # API Contract: Interview History Module
 
-Hợp đồng giao tiếp (API Contract) cho **Module Lịch sử phỏng vấn (Interview History)** của MockMate AI. Module cung cấp danh sách các buổi phỏng vấn đã thực hiện (phân trang, lọc theo thời gian và trạng thái) và dữ liệu cho trang chi tiết một buổi phỏng vấn: câu hỏi, câu trả lời (video, transcript), điểm và nhận xét của AI.
+Hợp đồng giao tiếp (API Contract) cho **Module Lịch sử phỏng vấn (Interview History)** của MockMate AI. Module cung cấp danh sách các buổi phỏng vấn đã thực hiện (phân trang, lọc theo thời gian và trạng thái), dữ liệu cho trang chi tiết một buổi phỏng vấn (câu hỏi, câu trả lời, điểm và nhận xét của AI) và số liệu tổng hợp điểm cho dashboard.
 
 Mã nguồn: `src/modules/interview-history/`. Branch: `feat/history-interview`.
 
@@ -11,7 +11,8 @@ Mã nguồn: `src/modules/interview-history/`. Branch: `feat/history-interview`.
 | Thuộc module này | Không thuộc module này |
 | --- | --- |
 | `GET /api/interviews` — danh sách lịch sử | Tạo / bắt đầu / nộp buổi phỏng vấn (`InterviewModule`) |
-| `GET /api/interviews/:id` — chi tiết một buổi | Chấm điểm, ghi điểm và nhận xét (`ScoringModule`) |
+| `GET /api/interviews/stats` — tổng hợp điểm cho dashboard | Chấm điểm, ghi điểm và nhận xét (`ScoringModule`) |
+| `GET /api/interviews/:id` — chi tiết một buổi | |
 | | Sinh câu hỏi, lưu câu trả lời và video (`InterviewModule`, `QuestionGenerationModule`) |
 
 Module chỉ **đọc**. Không có endpoint nào ghi dữ liệu, không sở hữu bảng nào trong database; nó đọc `interview_sessions` cùng các quan hệ `cv`, `score`, `interview_summaries`, `questions` → `answers` và `cheat_logs` (cờ gian lận, xem `docs/api-contract-cheat-log.md`).
@@ -299,7 +300,106 @@ Cờ và nhật ký gian lận do tính năng cheat log ghi vào. `cheatLogs` ma
 
 ---
 
-## 5. Quan hệ với `GET /api/interview-session`
+## 5. `GET /api/interviews/stats`
+
+Số liệu cho dashboard của **chính người gọi**: điểm trung bình theo từng tiêu chí, xu hướng điểm theo thời gian (biểu đồ đường) và so sánh buổi mới nhất với buổi liền trước (biểu đồ radar). Chỉ tính các buổi `COMPLETED`.
+
+### 5.1. Request
+
+Không có body.
+
+| Query param | Kiểu | Bắt buộc | Mặc định | Ràng buộc |
+| --- | --- | --- | --- | --- |
+| `fromDate` | ISO 8601 date-time | không | — | chỉ tính buổi có `createdAt >= fromDate` |
+| `toDate` | ISO 8601 date-time | không | — | chỉ tính buổi có `createdAt <= toDate`, bao gồm mốc |
+| `limit` | integer | không | `20` | `1..100`. Số buổi gần nhất trả trong `trend` |
+
+Lọc theo `createdAt` vì cùng lý do với màn danh sách (mục 3.1): cùng index `[userId, createdAt desc]` và cùng nghĩa với filter ngày ở màn danh sách.
+
+Route `stats` được khai báo **trước** `:id` trong controller. Express khớp route theo thứ tự đăng ký, nên nếu đặt sau thì `/api/interviews/stats` rơi vào `:id` và bị `ParseUUIDPipe` trả 400. E2E có test chặn hồi quy này.
+
+### 5.2. Response `200 OK`
+
+```jsonc
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Interview stats retrieved successfully",
+  "timestamp": "2026-11-25T09:00:00.000Z",
+  "data": {
+    "maxScore": 10,
+    "completedSessions": 3,
+    "answeredQuestions": 14,
+    "averages": {
+      "contentScore": 6.7,
+      "relevanceScore": 6.5,
+      "confidenceScore": 5.8,
+      "overallScore": 6.4
+    },
+    "best": {
+      "id": "3f1c2b9e-8a4d-4f6b-9c1e-2d7a5b0e4f11",
+      "title": "Backend Intern - NestJS",
+      "createdAt": "2026-10-20T07:58:11.000Z",
+      "contentScore": 8,
+      "relevanceScore": 7.6,
+      "confidenceScore": 6,
+      "overallScore": 7.4
+    },
+    "trend": [
+      { "id": "…", "title": "Frontend Intern", "createdAt": "2026-10-02T08:00:00.000Z", "contentScore": 4.5, "relevanceScore": 5, "confidenceScore": 5, "overallScore": 4.8 },
+      { "id": "…", "title": "Java Fresher", "createdAt": "2026-10-10T08:00:00.000Z", "contentScore": 7.5, "relevanceScore": 6.9, "confidenceScore": 6.5, "overallScore": 7.1 },
+      { "id": "3f1c2b9e-8a4d-4f6b-9c1e-2d7a5b0e4f11", "title": "Backend Intern - NestJS", "createdAt": "2026-10-20T07:58:11.000Z", "contentScore": 8, "relevanceScore": 7.6, "confidenceScore": 6, "overallScore": 7.4 }
+    ],
+    "comparison": {
+      "latest": { "id": "3f1c2b9e-8a4d-4f6b-9c1e-2d7a5b0e4f11", "…": "…" },
+      "previous": { "id": "…", "…": "…" },
+      "delta": {
+        "contentScore": 0.5,
+        "relevanceScore": 0.7,
+        "confidenceScore": -0.5,
+        "overallScore": 0.3
+      }
+    }
+  }
+}
+```
+
+| Field | Kiểu | Nullable | Ý nghĩa |
+| --- | --- | --- | --- |
+| `maxScore` | number | không | Chặn trên của mọi điểm (thang `0..maxScore`), dùng cho trục y |
+| `completedSessions` | integer | không | Số buổi `COMPLETED` trong khoảng ngày |
+| `answeredQuestions` | integer | không | Số câu trả lời có transcript khác rỗng trong các buổi đó |
+| `averages` | object | **có** | Trung bình 4 điểm trên **mọi** buổi trong khoảng ngày, làm tròn 1 chữ số. `null` khi không có buổi nào |
+| `best` | object | **có** | Buổi có `overallScore` cao nhất; hòa điểm thì lấy buổi mới hơn |
+| `trend` | array | không | Tối đa `limit` buổi gần nhất, **cũ nhất trước**. Luôn là mảng |
+| `comparison` | object | **có** | `null` khi không có buổi nào |
+| `comparison.latest` | object | không | Buổi mới nhất theo `createdAt` |
+| `comparison.previous` | object | **có** | Buổi liền trước; `null` khi mới có 1 buổi |
+| `comparison.delta` | object | **có** | `latest - previous` cho từng điểm, làm tròn 1 chữ số; dương là tiến bộ. `null` khi không có `previous` |
+
+Mỗi phần tử của `trend`, `best`, `latest`, `previous` gồm `id`, `title`, `createdAt`, `contentScore`, `relevanceScore`, `confidenceScore`, `overallScore`.
+
+### 5.3. Cách tính
+
+- **Chỉ buổi `COMPLETED`.** Cùng luật với mục 4.3: buổi `SCORING` hay `FAILED` có thể còn bản ghi `scores` nhưng đó chưa phải kết quả cuối.
+- **Buổi bị chấm 0 vì bỏ trống được tính.** Scoring module chấm 0 theo luật cố định (`scoringModel = rule-based`) khi không câu nào có transcript. Đó là kết quả thật nên query không lọc theo `scoringModel`; bỏ dở nhiều buổi thì điểm trung bình đi xuống.
+- **`averages` phủ cả khoảng ngày, `trend` thì không.** Trung bình do Postgres tính (`_avg`) trên mọi buổi trong khoảng; `trend` chỉ có `limit` buổi gần nhất, nên `trend.length` có thể nhỏ hơn `completedSessions`.
+- **Làm tròn:** `averages` và `delta` làm tròn 1 chữ số giống `calculateOverallScore`. Điểm từng buổi giữ nguyên giá trị đã lưu, giống API chi tiết.
+- **`comparison` luôn có buổi liền trước khi có từ 2 buổi**, kể cả khi `limit=1`: service luôn đọc ít nhất 2 buổi gần nhất, rồi mới cắt `trend` theo `limit`.
+- **Lịch sử rỗng trả `200`**, với `0`, `null` và `trend: []`, không trả `404`.
+
+### 5.4. Lỗi
+
+| HTTP | `code` | Khi nào |
+| --- | --- | --- |
+| 400 | `BAD_REQUEST` | `limit` không phải số nguyên trong `1..100`, `fromDate`/`toDate` không phải ISO date-time. Kèm `errors: [{ field, messages }]` |
+| 400 | `BAD_REQUEST` | `fromDate > toDate` — `message`: `"fromDate must be before or equal to toDate"` |
+| 401 | `UNAUTHORIZED` | Thiếu hoặc sai token |
+| 500 | `INTERNAL_SERVER_ERROR` | Lỗi truy vấn database. `message` là `"Failed to load the interview stats"` |
+
+---
+
+## 6. Quan hệ với `GET /api/interview-session`
 
 `GET /api/interview-session` (thuộc `InterviewModule`) đã làm sẵn việc liệt kê session của người gọi có phân trang, nhưng không lọc theo thời gian và không trả điểm. Kể từ module này, endpoint đó được đánh **deprecated** trong Swagger và `GET /api/interviews` là endpoint chính thức cho màn danh sách.
 
@@ -315,7 +415,7 @@ Endpoint cũ vẫn hoạt động để frontend có thời gian chuyển sang e
 | Lọc thời gian / trạng thái | không | `fromDate`, `toDate`, `status` |
 | Chặn trên `pageSize` | không | 100 |
 
-## 6. Giới hạn đã biết
+## 7. Giới hạn đã biết
 
 1. **Lọc theo `createdAt`, không theo thời điểm hoàn thành.** Người dùng lọc "tháng 10" sẽ thấy buổi phỏng vấn *tạo* trong tháng 10, kể cả khi nó hoàn thành sang tháng 11.
 2. **Không lọc theo khoảng điểm.** Màn danh sách hiển thị `overallScore` nhưng không cho lọc theo nó. Thêm sau sẽ cần index trên `scores.overall_score`.
@@ -328,3 +428,7 @@ Endpoint cũ vẫn hoạt động để frontend có thời gian chuyển sang e
 9. **`videoUrl` là URL public.** Ai có link đều xem được, và path chứa UUID của user/session. Muốn khóa lại cần chuyển upload sang `type: authenticated` và sinh signed delivery URL lúc đọc; việc đó ảnh hưởng luồng upload. Video bị xóa trên Cloudinary sẽ 404 ở phía frontend; backend không phát hiện vì cố ý không gọi Cloudinary mỗi request.
 10. **`totalQuestions` là số frontend báo lúc submit**, có thể khác số phần tử `questions`.
 11. **ADMIN cũng chỉ xem được buổi phỏng vấn của chính mình** (404 với buổi của người khác), khác với Scoring module nơi ADMIN xem được mọi session.
+12. **Radar chỉ có 3 trục.** Mỗi buổi chỉ có 3 tiêu chí cấp buổi (`content`, `relevance`, `confidence`); muốn nhiều trục hơn phải có điểm theo domain hoặc theo câu, tức là đổi rubric của Scoring module.
+13. **`trend` là từng buổi, không gom theo tuần/tháng.** Gom theo khoảng thời gian cần chốt múi giờ của ranh giới tuần/tháng; để sau nếu số buổi lớn.
+14. **Các số của `stats` không chung một snapshot.** Bốn câu SQL chạy song song dưới Read Committed; một buổi vừa chấm xong giữa chừng có thể làm `completedSessions` và `trend` lệch nhau 1 buổi. Gọi lại là khớp.
+15. **`answeredQuestions` đếm cả transcript chỉ có khoảng trắng.** Điều kiện là khác `NULL` và khác chuỗi rỗng.
