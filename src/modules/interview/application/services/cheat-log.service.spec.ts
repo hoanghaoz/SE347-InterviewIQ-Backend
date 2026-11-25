@@ -1,4 +1,5 @@
 import { err, ok } from 'neverthrow';
+import { recordMetrics } from '../../../../shared/telemetry/metric-recorder.testing';
 import { ErrorCode } from '../../../../shared/common/errorCode';
 import {
   CommonCheatEventType,
@@ -8,6 +9,16 @@ import { ICheatLogRepository } from '../../domain/repositories/cheat-log.repo.in
 import { CheatLogService } from './cheat-log.service';
 
 describe('CheatLogService', () => {
+  let recorded: ReturnType<typeof recordMetrics>;
+
+  beforeEach(() => {
+    recorded = recordMetrics();
+  });
+
+  afterEach(() => {
+    recorded.stop();
+  });
+
   const getSessionForCheatLog = jest.fn<
     ReturnType<ICheatLogRepository['getSessionForCheatLog']>,
     Parameters<ICheatLogRepository['getSessionForCheatLog']>
@@ -126,6 +137,35 @@ describe('CheatLogService', () => {
         expect(createCheatLog).not.toHaveBeenCalled();
       },
     );
+
+    it('counts a recorded event by type', async () => {
+      await record();
+
+      expect(
+        recorded.named('cheat_log.recorded').map((m) => m.attributes),
+      ).toEqual([{ event_type: 'TAB_SWITCH' }]);
+      expect(recorded.named('cheat_log.rejected')).toHaveLength(0);
+    });
+
+    it('counts a rejected event by reason and does not count it as recorded', async () => {
+      await service.recordCheatEventAsync('user', 'session', {
+        ...request,
+        occurredAt: '2026-11-09T09:00:00.000Z',
+      });
+
+      expect(
+        recorded.named('cheat_log.rejected').map((m) => m.attributes),
+      ).toEqual([{ reason: 'OCCURRED_OUT_OF_RANGE' }]);
+      expect(recorded.named('cheat_log.recorded')).toHaveLength(0);
+    });
+
+    it('does not count an event when saving it fails', async () => {
+      createCheatLog.mockResolvedValue(err(new Error('db')));
+
+      await record();
+
+      expect(recorded.named('cheat_log.recorded')).toHaveLength(0);
+    });
 
     it('returns 400 when occurredAt is outside the session time range', async () => {
       const result = await service.recordCheatEventAsync('user', 'session', {

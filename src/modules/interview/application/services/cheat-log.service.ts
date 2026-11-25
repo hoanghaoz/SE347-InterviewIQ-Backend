@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { err, ok, type Result } from 'neverthrow';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
+import { instruments } from '../../../../shared/telemetry/metrics';
 import { CheatLogRejectionReason } from '../../domain/errors/cheat-log.error';
 import { checkCheatLogAcceptance } from '../../domain/policies/cheat-log.policy';
 import {
@@ -43,6 +44,7 @@ export class CheatLogService implements ICheatLogService {
     });
     if (accepted.isErr()) {
       const { reason, message } = accepted.error;
+      instruments().cheatLogRejected.add(1, { reason });
       return err(
         new AppError(
           reason === CheatLogRejectionReason.OCCURRED_OUT_OF_RANGE
@@ -68,6 +70,7 @@ export class CheatLogService implements ICheatLogService {
     );
     if (counts.isErr()) return err(internalError());
 
+    instruments().cheatLogRecorded.add(1, { event_type: request.eventType });
     return ok({
       log: toCheatLogDto(created.value),
       summary: toCheatSummary(counts.value),

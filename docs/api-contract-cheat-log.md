@@ -11,7 +11,8 @@ Mã nguồn: `src/modules/interview/` (controller `interview-cheat-log.controlle
 | Thuộc tính năng này | Không thuộc tính năng này |
 | --- | --- |
 | `POST /api/interview-session/:sessionPublicId/cheat-logs` — ghi một sự kiện | Phát hiện sự kiện (do **frontend** làm: sự kiện trình duyệt, nhận diện khuôn mặt) |
-| `GET /api/interview-session/:sessionPublicId/cheat-logs` — lấy lại log và bộ đếm | Hủy phòng, khóa phiên, trừ điểm |
+| `GET /api/interview-session/:sessionPublicId/cheat-logs` — lấy lại log và bộ đếm |
+| WebSocket `cheat-log:record` — ghi một sự kiện qua kết nối realtime, đợi ack (mục 5b) | Hủy phòng, khóa phiên, trừ điểm |
 | Cờ `isFlagged` và nhật ký trong lịch sử (xem `api-contract-interview-history.md`) | Admin xem log của người khác |
 
 Bảng dùng: `cheat_logs` (đã có sẵn, **không có migration**). Enum `CheatEventType` giữ nguyên 4 giá trị.
@@ -169,6 +170,49 @@ Lấy lại toàn bộ log và bộ đếm, dùng khi ứng viên tải lại tr
 | 401 | `UNAUTHORIZED` | Thiếu hoặc sai token |
 | 404 | `NOT_FOUND` | `Interview session not found` (không tồn tại hoặc của người khác) |
 | 500 | `INTERNAL_SERVER_ERROR` | `Failed to process the cheat log` |
+
+---
+
+## 5b. WebSocket: ghi sự kiện realtime
+
+Kênh realtime thay cho `POST` ở mục 4: frontend giữ **một kết nối**, gửi từng sự kiện và **đợi ack** chứa kết quả. Cùng `CheatLogService`, nên luật nhận log (mục 4.3), `summary` và telemetry giống hệt `POST`. `POST` vẫn dùng được làm fallback. `GET` (mục 5) không có bản WebSocket.
+
+### 5b.1. Kết nối
+
+| | |
+| --- | --- |
+| URL | `<host>/cheat-logs` (socket.io, namespace `cheat-logs`, cùng cổng với API) |
+| Token | `auth: { token: "<access_token>" }` hoặc header `Authorization: Bearer <access_token>` |
+| Vai trò | `ADMIN`, `USER` |
+
+Thiếu token, token sai hoặc vai trò không hợp lệ thì kết nối bị từ chối: client nhận `connect_error` với message `Unauthorized`. Người gọi lấy từ `sub` của token lúc handshake.
+
+```ts
+const socket = io('http://localhost:3000/cheat-logs', { auth: { token } });
+
+const ack = await socket.emitWithAck('cheat-log:record', {
+  sessionPublicId: '3f1c2b9e-8a4d-4f6b-9c1e-2d7a5b0e4f11',
+  eventType: 'TAB_SWITCH',
+  occurredAt: new Date().toISOString(),
+  description: 'Switched to another browser tab',
+});
+// ack.success === true  -> ack.data.summary.totalCount
+// ack.success === false -> ack.code, ack.message, ack.errors
+```
+
+### 5b.2. Sự kiện `cheat-log:record`
+
+Payload là body của mục 4.1 cộng thêm `sessionPublicId` (UUID, thay cho path param). **Client phải truyền callback ack**, nếu không sẽ không nhận được kết quả.
+
+Ack thành công có đúng envelope của mục 4.2 (`statusCode: 201`, `data: { log, summary }`).
+
+Ack lỗi có envelope lỗi chuẩn (`statusCode`, `success: false`, `code`, `message`, `errors?`, `timestamp`); `path` là tên sự kiện (`cheat-log:record`). Mã lỗi và điều kiện giống mục 4.4 (400, 404, 409, 500). Lỗi không đóng kết nối, client gửi tiếp được.
+
+### 5b.3. Lưu ý
+
+- Mất kết nối thì socket.io tự nối lại, nhưng sự kiện đang gửi dở **không** được gửi lại tự động: frontend nên bật `socket.timeout(ms)` và gửi lại hoặc chuyển sang `POST`.
+- Token chỉ kiểm tra lúc handshake. Token hết hạn khi kết nối còn mở vẫn tiếp tục dùng được đến khi ngắt; nối lại thì phải dùng token mới.
+- CORS dùng chung danh sách origin với API (`src/shared/common/cors.config.ts`).
 
 ---
 

@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { IInterviewService } from '../interfaces/interview.service.interface';
 import { err, ok, type Result } from 'neverthrow';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
+import { instruments } from '../../../../shared/telemetry/metrics';
+import { withResultSpan } from '../../../../shared/telemetry/telemetry';
 import {
   CreateInterviewRequestDto,
   SubmitInterviewSessionRequestDto,
@@ -58,7 +60,25 @@ export class InterviewService implements IInterviewService {
     });
   }
 
-  async startInterviewSessionAsync(
+  startInterviewSessionAsync(
+    userPublicId: string,
+    sessionPublicId: string,
+  ): Promise<Result<StartInterviewSessionResponseDto, AppError>> {
+    return withResultSpan(
+      'interview.start',
+      { 'session.id': sessionPublicId },
+      async () => {
+        const result = await this.startInterviewSessionInternalAsync(
+          userPublicId,
+          sessionPublicId,
+        );
+        if (result.isOk()) instruments().interviewSessionStarted.add(1);
+        return result;
+      },
+    );
+  }
+
+  private async startInterviewSessionInternalAsync(
     userPublicId: string,
     sessionPublicId: string,
   ): Promise<Result<StartInterviewSessionResponseDto, AppError>> {
@@ -115,7 +135,24 @@ export class InterviewService implements IInterviewService {
     });
   }
 
-  async submitInterviewSessionAsync(
+  submitInterviewSessionAsync(
+    userPublicId: string,
+    sessionPublicId: string,
+    request: SubmitInterviewSessionRequestDto,
+  ): Promise<Result<SubmitInterviewSessionResponseDto, AppError>> {
+    return withResultSpan(
+      'interview.submit',
+      { 'session.id': sessionPublicId },
+      () =>
+        this.submitInterviewSessionInternalAsync(
+          userPublicId,
+          sessionPublicId,
+          request,
+        ),
+    );
+  }
+
+  private async submitInterviewSessionInternalAsync(
     userPublicId: string,
     sessionPublicId: string,
     request: SubmitInterviewSessionRequestDto,
@@ -195,18 +232,28 @@ export class InterviewService implements IInterviewService {
       );
     }
 
+    // The session is already SUBMITTED here; a failed enqueue leaves it unscored.
+    instruments().interviewSessionSubmitted.add(1);
     try {
       const enqueueResult = await this.scoringService.enqueueAsync(
         sessionPublicId,
         userPublicId,
       );
-      if (enqueueResult.isErr()) return err(enqueueResult.error);
+      if (enqueueResult.isErr()) {
+        instruments().interviewSubmitEnqueueFailed.add(1, {
+          error_code: enqueueResult.error.code,
+        });
+        return err(enqueueResult.error);
+      }
       return ok({
         sessionPublicId,
         jobId: enqueueResult.value.jobId,
         status: enqueueResult.value.status,
       });
     } catch {
+      instruments().interviewSubmitEnqueueFailed.add(1, {
+        error_code: ErrorCode.InternalServerError,
+      });
       return err(
         new AppError(
           ErrorCode.InternalServerError,
@@ -215,7 +262,21 @@ export class InterviewService implements IInterviewService {
       );
     }
   }
-  async createInterviewSessionAsync(
+  createInterviewSessionAsync(
+    userPublicId: string,
+    request: CreateInterviewRequestDto,
+  ): Promise<Result<string, AppError>> {
+    return withResultSpan('interview.create', {}, async () => {
+      const result = await this.createInterviewSessionInternalAsync(
+        userPublicId,
+        request,
+      );
+      if (result.isOk()) instruments().interviewSessionCreated.add(1);
+      return result;
+    });
+  }
+
+  private async createInterviewSessionInternalAsync(
     userPublicId: string,
     request: CreateInterviewRequestDto,
   ): Promise<Result<string, AppError>> {

@@ -103,6 +103,7 @@ export class ScoringLlmAdapter implements IScoringLlmProvider {
         schema: SCORING_RUBRIC_SCHEMA,
         temperature: SCORING_TEMPERATURE,
         maxOutputTokens: SCORING_MAX_OUTPUT_TOKENS,
+        purpose: 'scoring',
       });
 
       if (llmResult.isErr()) {

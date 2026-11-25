@@ -3,6 +3,8 @@ import { Result, ok, err } from 'neverthrow';
 import { IEmailSender } from '../domain/repositories/email-sender.interface';
 import { ConfigService } from '@nestjs/config';
 import { createTransport, type Transporter } from 'nodemailer';
+import { instruments, startTimer } from '../../../shared/telemetry/metrics';
+import { withSpan } from '../../../shared/telemetry/telemetry';
 
 const SMTP_TIMEOUT_MS = 10_000;
 
@@ -71,22 +73,31 @@ export class SmtpEmailSender implements IEmailSender {
     otp: string,
     content: OtpMailContent,
   ): Promise<Result<void, Error>> {
+    const elapsedSeconds = startTimer();
     try {
-      await this.transporter.sendMail({
-        from: this.from,
-        to: email,
-        subject: content.subject,
-        text: `${content.intro} ${otp}. ${content.warning}`,
-        html: `
+      await withSpan(
+        'email.send',
+        { 'peer.service': 'smtp', 'email.template': content.subject },
+        () =>
+          this.transporter.sendMail({
+            from: this.from,
+            to: email,
+            subject: content.subject,
+            text: `${content.intro} ${otp}. ${content.warning}`,
+            html: `
           <p>${content.intro}:</p>
           <h2 style="letter-spacing:4px">${otp}</h2>
           <p>${content.warning}</p>
         `,
-      });
+          }),
+      );
       return ok(undefined);
     } catch (error) {
+      instruments().emailSendFailures.add(1);
       this.logger.error(error instanceof Error ? error.message : String(error));
       return err(new Error('Failed to send email.'));
+    } finally {
+      instruments().emailSendDuration.record(elapsedSeconds());
     }
   }
 }

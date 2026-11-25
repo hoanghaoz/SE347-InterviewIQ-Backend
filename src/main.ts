@@ -5,10 +5,15 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { CORS_ORIGINS } from './shared/common/cors.config';
 import { AllExceptionsFilter } from './shared/common/exceptions.filter';
+import { OtelLogger } from './shared/telemetry/otel-logger';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // bufferLogs holds startup logs until OtelLogger is attached, so they carry
+  // the same format and reach Loki too.
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.useLogger(new OtelLogger());
   app.useGlobalFilters(new AllExceptionsFilter());
   const options = new DocumentBuilder()
     .setTitle('MockMate API')
@@ -24,7 +29,7 @@ async function bootstrap() {
     },
   });
   app.enableCors({
-    origin: ['http://localhost:5173', 'http://localhost:3000'], // default react dev server port
+    origin: CORS_ORIGINS,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });

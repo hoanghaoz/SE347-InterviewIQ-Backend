@@ -6,7 +6,19 @@ import {
   Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Span } from '@opentelemetry/api';
 import { SessionStatus } from '../../../../../generated/prisma/enums';
+import {
+  instruments,
+  registerObservableGauge,
+  startTimer,
+} from '../../../../shared/telemetry/metrics';
+import {
+  errorCodeOf,
+  extractTraceContext,
+  withResultSpan,
+  withSpan,
+} from '../../../../shared/telemetry/telemetry';
 import type { Job, PgBoss } from 'pg-boss';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
 import { ScoringJobData } from '../../application/dtos/scoring.request.dto';
@@ -66,6 +78,7 @@ export class ScoringWorkerService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     await this.boss.createQueue(SCORING_QUEUE_NAME);
+    this.registerQueueDepthGauge();
     await this.boss.work<ScoringJobData>(
       SCORING_QUEUE_NAME,
       { localConcurrency: this.concurrency },
@@ -81,13 +94,42 @@ export class ScoringWorkerService implements OnModuleInit {
     );
   }
 
-  async handleJob(job: Job<ScoringJobData>): Promise<void> {
-    const { sessionId, userId } = job.data;
+  handleJob(job: Job<ScoringJobData>): Promise<void> {
     const jobAny = job as Record<string, any>;
     const retryCount = Number(jobAny.retrycount ?? jobAny.retryCount ?? 0);
     const retryLimit = Number(
       jobAny.retrylimit ?? jobAny.retryLimit ?? this.defaultRetryLimit,
     );
+
+    return withSpan(
+      'scoring.job.process',
+      {
+        'job.id': job.id,
+        'session.id': job.data.sessionId,
+        'scoring.attempt': retryCount + 1,
+        'scoring.retry_limit': retryLimit,
+      },
+      (span) => this.runJob(job, retryCount, retryLimit, span),
+      extractTraceContext(job.data.traceContext),
+    );
+  }
+
+  private async runJob(
+    job: Job<ScoringJobData>,
+    retryCount: number,
+    retryLimit: number,
+    span: Span,
+  ): Promise<void> {
+    const { sessionId, userId } = job.data;
+    const elapsedSeconds = startTimer();
+    let outcome = 'completed';
+
+    if (retryCount === 0) {
+      const waitSeconds = (Date.now() - Date.parse(job.data.enqueuedAt)) / 1000;
+      if (Number.isFinite(waitSeconds) && waitSeconds >= 0) {
+        instruments().scoringQueueWaitTime.record(waitSeconds);
+      }
+    }
 
     this.logger.log(
       `Processing scoring job ${job.id} for session ${sessionId} (user: ${userId}) [retry: ${retryCount}/${retryLimit}]`,
@@ -108,6 +150,9 @@ export class ScoringWorkerService implements OnModuleInit {
       const session = sessionResult.value;
       if (!session) {
         this.logger.warn(`Session '${sessionId}' not found for job ${job.id}`);
+        span.setAttribute('scoring.session_missing', true);
+        instruments().scoringJobsSessionMissing.add(1);
+        outcome = 'session_missing';
         return;
       }
 
@@ -150,21 +195,24 @@ export class ScoringWorkerService implements OnModuleInit {
       this.logger.log(
         `Invoking IScoringLlmProvider for session ${sessionId} evaluation...`,
       );
-      const evalResult = await this.llmProvider.evaluateSession({
-        sessionPublicId: session.publicId,
-        title: session.title,
-        jobDescription: session.jobDescription,
-        cvParsedData: session.cvParsedData,
-        questions: session.questions.map((q) => ({
-          content: q.content,
-          orderIndex: q.orderIndex,
-          domain: q.domain,
-          difficulty: q.difficulty,
-          transcript: q.answer?.transcript ?? null,
-          emotionSummary: q.answer?.emotionSummary ?? null,
-          durationSeconds: q.answer?.durationSeconds ?? null,
-        })),
-      });
+      const llmProvider = this.llmProvider;
+      const evalResult = await withResultSpan('scoring.llm.evaluate', {}, () =>
+        llmProvider.evaluateSession({
+          sessionPublicId: session.publicId,
+          title: session.title,
+          jobDescription: session.jobDescription,
+          cvParsedData: session.cvParsedData,
+          questions: session.questions.map((q) => ({
+            content: q.content,
+            orderIndex: q.orderIndex,
+            domain: q.domain,
+            difficulty: q.difficulty,
+            transcript: q.answer?.transcript ?? null,
+            emotionSummary: q.answer?.emotionSummary ?? null,
+            durationSeconds: q.answer?.durationSeconds ?? null,
+          })),
+        }),
+      );
 
       if (evalResult.isErr()) {
         this.logger.error(
@@ -201,10 +249,8 @@ export class ScoringWorkerService implements OnModuleInit {
       }
       const summary = summaryResult.value;
 
-      const saveResult = await this.scoringRepo.saveScoringResult(
-        session.id,
-        score,
-        summary,
+      const saveResult = await withResultSpan('scoring.save', {}, () =>
+        this.scoringRepo.saveScoringResult(session.id, score, summary),
       );
       if (saveResult.isErr()) {
         this.logger.error(
@@ -229,18 +275,24 @@ export class ScoringWorkerService implements OnModuleInit {
           `provider=${evaluation.provider ?? 'n/a'}, latencyMs=${evaluation.latencyMs ?? 0}, ` +
           `inputTokens=${evaluation.inputTokens ?? 0}, outputTokens=${evaluation.outputTokens ?? 0}]`,
       );
+      instruments().scoringJobsCompleted.add(1);
     } catch (error) {
       const err = error as Error;
+      const isNonRetryable = this.isNonRetryableError(error);
+      const isLastAttempt = retryCount + 1 >= retryLimit;
+      const isFinal = isNonRetryable || isLastAttempt;
+      outcome = 'failed';
+      instruments().scoringJobsFailed.add(1, {
+        final: isFinal,
+        error_code: errorCodeOf(error),
+      });
       this.logger.error(
         `Failed to process scoring job ${job.id} for session ${sessionId} [retry: ${retryCount}/${retryLimit}]: ${err.message}`,
         err.stack,
       );
 
       if (sessionDbId !== null) {
-        const isNonRetryable = this.isNonRetryableError(error);
-        const isLastAttempt = retryCount + 1 >= retryLimit;
-
-        if (isNonRetryable || isLastAttempt) {
+        if (isFinal) {
           const failureReason = err.message || 'Scoring job processing failed';
           const markResult = await this.scoringRepo.markSessionFailed(
             sessionDbId,
@@ -250,6 +302,8 @@ export class ScoringWorkerService implements OnModuleInit {
             this.logger.error(
               `Failed to mark session ${sessionDbId} as FAILED: ${markResult.error.message}`,
             );
+          } else {
+            instruments().scoringSessionsMarkedFailed.add(1);
           }
 
           this.eventBus?.publish({
@@ -266,8 +320,27 @@ export class ScoringWorkerService implements OnModuleInit {
 
       throw error;
     } finally {
+      instruments().scoringJobDuration.record(elapsedSeconds(), { outcome });
       this.lastJobCompletedAt = Date.now();
     }
+  }
+
+  private registerQueueDepthGauge(): void {
+    registerObservableGauge(
+      'scoring.queue.depth',
+      'Scoring jobs currently in the queue, by state',
+      async () => {
+        const [stats] = await this.boss.getQueueStats(SCORING_QUEUE_NAME);
+        if (!stats) {
+          return [];
+        }
+        return [
+          { value: stats.queuedCount, attributes: { state: 'queued' } },
+          { value: stats.activeCount, attributes: { state: 'active' } },
+          { value: stats.deferredCount, attributes: { state: 'deferred' } },
+        ];
+      },
+    );
   }
 
   private isNonRetryableError(error: unknown): boolean {

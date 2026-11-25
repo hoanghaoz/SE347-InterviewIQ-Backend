@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { err, ok, type Result } from 'neverthrow';
 import { AppError, ErrorCode } from '../../../shared/common/errorCode';
 import { ILlmProvider } from '../../../shared/llm/llm.provider';
+import { instruments, startTimer } from '../../../shared/telemetry/metrics';
+import { withResultSpan } from '../../../shared/telemetry/telemetry';
 import {
   IQuestionGenerator,
   type QuestionGenerationInput,
@@ -41,7 +43,24 @@ export class LlmQuestionGenerator implements IQuestionGenerator {
     this.timeoutMs = readGenerationTimeoutMs(config);
   }
 
-  async generateAsync(
+  generateAsync(
+    input: QuestionGenerationInput,
+  ): Promise<Result<GeneratedQuestion[], AppError>> {
+    return withResultSpan(
+      'question_generation.generate',
+      { 'question_generation.count': input.count },
+      async () => {
+        const elapsedSeconds = startTimer();
+        const result = await this.generateWithTimeoutAsync(input);
+        instruments().questionGenerationDuration.record(elapsedSeconds(), {
+          outcome: result.isOk() ? 'ok' : 'error',
+        });
+        return result;
+      },
+    );
+  }
+
+  private async generateWithTimeoutAsync(
     input: QuestionGenerationInput,
   ): Promise<Result<GeneratedQuestion[], AppError>> {
     let timer: NodeJS.Timeout | undefined;
@@ -49,6 +68,7 @@ export class LlmQuestionGenerator implements IQuestionGenerator {
       (resolve) => {
         timer = setTimeout(() => {
           this.logger.warn(`Generation timed out after ${this.timeoutMs}ms`);
+          instruments().questionGenerationTimeout.add(1);
           resolve(err(this.failure()));
         }, this.timeoutMs);
       },
@@ -81,6 +101,7 @@ export class LlmQuestionGenerator implements IQuestionGenerator {
         schema,
         temperature: TEMPERATURE,
         maxOutputTokens: MAX_OUTPUT_TOKENS,
+        purpose: 'question_generation',
       });
       if (response.isErr()) {
         this.logger.warn(`LLM call failed: ${response.error.message}`);
@@ -98,6 +119,9 @@ export class LlmQuestionGenerator implements IQuestionGenerator {
       this.logger.warn(
         `Invalid question set (attempt ${attempt}/${MAX_ATTEMPTS}): ${validated.error.message}`,
       );
+      instruments().questionGenerationValidationRetry.add(1, {
+        final: attempt === MAX_ATTEMPTS,
+      });
     }
 
     return err(this.failure());

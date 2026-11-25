@@ -4,11 +4,22 @@ import { randomUUID, type UUID } from 'crypto';
 import { err, ok } from 'neverthrow';
 import { CommonUserRole } from '../../../../shared/common/commonEnum';
 import { ErrorCode } from '../../../../shared/common/errorCode';
+import { recordMetrics } from '../../../../shared/telemetry/metric-recorder.testing';
 import { UserAlreadyExistsError } from '../../../user/domain/repositories/user.repo.interface';
 import { RefreshTokenAlreadyRevokedError } from '../../domain/repositories/refresh-token.repo.interface';
 import { AuthService } from './auth.service';
 
 describe('AuthService', () => {
+  let recorded: ReturnType<typeof recordMetrics>;
+
+  beforeEach(() => {
+    recorded = recordMetrics();
+  });
+
+  afterEach(() => {
+    recorded.stop();
+  });
+
   const userRepository = {
     getUserByEmail: jest.fn(),
     createUser: jest.fn(),
@@ -141,6 +152,14 @@ describe('AuthService', () => {
         300,
       );
       expect(otpStore.resetFailedAttempts).toHaveBeenCalledWith(email);
+    });
+
+    it('counts the registration otp email that was sent', async () => {
+      await service.registerAsync(request);
+
+      expect(recorded.named('auth.otp.sent').map((m) => m.attributes)).toEqual([
+        { purpose: 'registration' },
+      ]);
     });
 
     it('keeps the pending registration alive longer than the otp', async () => {
@@ -487,6 +506,19 @@ describe('AuthService', () => {
       expect(userRepository.createUser).not.toHaveBeenCalled();
     });
 
+    it('records invalid and locked otp checks as separate outcomes', async () => {
+      passwordHasher.compare.mockResolvedValue(ok(false));
+      otpStore.incrementFailedAttempts.mockResolvedValueOnce(ok(1));
+      otpStore.incrementFailedAttempts.mockResolvedValueOnce(ok(5));
+
+      await service.verifyRegistrationAsync(request);
+      await service.verifyRegistrationAsync(request);
+
+      expect(
+        recorded.named('auth.otp.verify').map((m) => m.attributes.outcome),
+      ).toEqual(['invalid', 'locked']);
+    });
+
     it('deletes the otp and returns TooManyRequests on the 5th wrong attempt', async () => {
       passwordHasher.compare.mockResolvedValue(ok(false));
       otpStore.incrementFailedAttempts.mockResolvedValue(ok(5));
@@ -680,6 +712,16 @@ describe('AuthService', () => {
       expect(refreshTokenRepository.createRefreshToken).not.toHaveBeenCalled();
     });
 
+    it('counts successful and rejected logins by outcome', async () => {
+      await service.loginAsync(request);
+      passwordHasher.compare.mockResolvedValue(ok(false));
+      await service.loginAsync(request);
+
+      expect(
+        recorded.named('auth.login').map((m) => m.attributes.outcome),
+      ).toEqual(['success', 'invalid_credentials']);
+    });
+
     it('returns Unauthorized and issues no tokens when the password is wrong', async () => {
       passwordHasher.compare.mockResolvedValue(ok(false));
 
@@ -855,6 +897,16 @@ describe('AuthService', () => {
       expect(loggerWarn).toHaveBeenCalled();
       expect(accessTokenIssuer.issueAccessToken).not.toHaveBeenCalled();
       expect(refreshTokenRepository.rotateRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it('counts a refresh token reuse as a security signal', async () => {
+      refreshTokenRepository.getRefreshTokenByHash.mockResolvedValue(
+        ok({ ...storedToken, revokedAt: new Date(now - 10_001) }),
+      );
+
+      await service.refreshAsync(request);
+
+      expect(recorded.named('auth.refresh.reuse_detected')).toHaveLength(1);
     });
 
     it('still returns Unauthorized when revoking all sessions fails after reuse', async () => {

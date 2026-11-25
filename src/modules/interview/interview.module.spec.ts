@@ -122,6 +122,7 @@ describe('InterviewModule', () => {
           sessionId: 'session-public-id',
           userId: 'user-public-id',
           enqueuedAt: expect.any(String) as unknown,
+          traceContext: {},
         },
         expect.objectContaining({ singletonKey: 'session-public-id' }),
       );

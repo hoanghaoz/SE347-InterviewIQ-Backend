@@ -1,0 +1,17 @@
+apiVersion: 1
+
+datasources:
+  - name: Jaeger
+    uid: jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    editable: true
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: '-5m'
+        spanEndTimeShift: '5m'
+        filterByTraceID: false
+        customQuery: true
+        query: '{service_name="interviewiq-api"} |= "$${__span.traceId}"'

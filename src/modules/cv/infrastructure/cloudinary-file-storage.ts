@@ -7,6 +7,7 @@ import {
   CvStoredFile,
   ICvFileStorage,
 } from '../application/interfaces/cv-file-storage.interface';
+import { trackCloudinaryCall } from '../../../shared/telemetry/external-call';
 
 // Cloudinary stores PDFs as the `image` resource type (enables page previews).
 const RESOURCE_TYPE = 'image';
@@ -85,9 +86,11 @@ export class CloudinaryFileStorage implements ICvFileStorage {
 
     try {
       // Admin API: the real metadata Cloudinary stored for this file.
-      const resource = (await cloudinary.api.resource(cloudinaryPublicId, {
-        resource_type: RESOURCE_TYPE,
-      })) as { secure_url: string; bytes: number; format: string };
+      const resource = (await trackCloudinaryCall('cv_get_file', () =>
+        cloudinary.api.resource(cloudinaryPublicId, {
+          resource_type: RESOURCE_TYPE,
+        }),
+      )) as { secure_url: string; bytes: number; format: string };
 
       return ok({
         url: resource.secure_url,
@@ -132,9 +135,9 @@ export class CloudinaryFileStorage implements ICvFileStorage {
     );
 
     try {
-      const response = await fetch(url, {
-        signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-      });
+      const response = await trackCloudinaryCall('cv_download', () =>
+        fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) }),
+      );
       if (response.status === 404) {
         return ok(null);
       }

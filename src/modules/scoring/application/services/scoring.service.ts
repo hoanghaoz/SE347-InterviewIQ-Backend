@@ -20,6 +20,8 @@ import {
 } from '../interfaces/scoring.service.interface';
 import { IScoringRepository } from '../../domain/repositories/scoring.repo.interface';
 import { mapToSessionResultDto } from '../../infrastructure/scoring-mapper';
+import { instruments } from '../../../../shared/telemetry/metrics';
+import { withResultSpan } from '../../../../shared/telemetry/telemetry';
 
 @Injectable()
 export class ScoringService implements IScoringService {
@@ -31,7 +33,16 @@ export class ScoringService implements IScoringService {
     @Optional() private readonly eventBus?: IScoringEventBus,
   ) {}
 
-  async enqueueAsync(
+  enqueueAsync(
+    sessionId: string,
+    userId: string,
+  ): Promise<Result<EnqueueResult, AppError>> {
+    return withResultSpan('scoring.enqueue', { 'session.id': sessionId }, () =>
+      this.enqueueInternalAsync(sessionId, userId),
+    );
+  }
+
+  private async enqueueInternalAsync(
     sessionId: string,
     userId: string,
   ): Promise<Result<EnqueueResult, AppError>> {
@@ -58,6 +69,7 @@ export class ScoringService implements IScoringService {
 
     const jobId = await this.scoringQueue.enqueue(jobData);
     if (!jobId) {
+      instruments().scoringJobsDeduped.add(1);
       return err(
         new AppError(
           ErrorCode.Conflict,
@@ -66,6 +78,7 @@ export class ScoringService implements IScoringService {
       );
     }
 
+    instruments().scoringJobsEnqueued.add(1);
     this.logger.log(`Scoring job enqueued: ${jobId} for session ${sessionId}`);
 
     return ok({ jobId, status: 'QUEUED' });

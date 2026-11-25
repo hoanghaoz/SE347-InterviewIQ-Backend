@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { randomInt, type UUID } from 'crypto';
 import { err, ok, type Result } from 'neverthrow';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
+import { instruments } from '../../../../shared/telemetry/metrics';
+import { withResultSpan } from '../../../../shared/telemetry/telemetry';
 import {
   IUserRepository,
   UserAlreadyExistsError,
@@ -84,7 +86,15 @@ export class AuthService implements IAuthService {
     }
   }
 
-  async registerAsync(request: RegisterDto): Promise<Result<void, AppError>> {
+  registerAsync(request: RegisterDto): Promise<Result<void, AppError>> {
+    return withResultSpan('auth.register', {}, () =>
+      this.registerInternalAsync(request),
+    );
+  }
+
+  private async registerInternalAsync(
+    request: RegisterDto,
+  ): Promise<Result<void, AppError>> {
     const existingUser = await this.userRepository.getUserByEmail(
       request.email,
     );
@@ -163,7 +173,15 @@ export class AuthService implements IAuthService {
     return this.sendRegistrationOtpAsync(request.email);
   }
 
-  async verifyRegistrationAsync(
+  verifyRegistrationAsync(
+    request: VerifyRegistrationDto,
+  ): Promise<Result<LoginResponseDto, AppError>> {
+    return withResultSpan('auth.register.verify', {}, () =>
+      this.verifyRegistrationInternalAsync(request),
+    );
+  }
+
+  private async verifyRegistrationInternalAsync(
     request: VerifyRegistrationDto,
   ): Promise<Result<LoginResponseDto, AppError>> {
     const { email, otp } = request;
@@ -235,7 +253,21 @@ export class AuthService implements IAuthService {
     return ok(tokensResult.value);
   }
 
-  async loginAsync(
+  loginAsync(request: LoginDto): Promise<Result<LoginResponseDto, AppError>> {
+    return withResultSpan('auth.login', {}, async () => {
+      const result = await this.loginInternalAsync(request);
+      instruments().authLogin.add(1, {
+        outcome: result.isOk()
+          ? 'success'
+          : result.error.code === ErrorCode.Unauthorized
+            ? 'invalid_credentials'
+            : 'error',
+      });
+      return result;
+    });
+  }
+
+  private async loginInternalAsync(
     request: LoginDto,
   ): Promise<Result<LoginResponseDto, AppError>> {
     const credentialsResult =
@@ -270,7 +302,15 @@ export class AuthService implements IAuthService {
     return ok(tokensResult.value);
   }
 
-  async refreshAsync(
+  refreshAsync(
+    request: RefreshTokenDto,
+  ): Promise<Result<LoginResponseDto, AppError>> {
+    return withResultSpan('auth.refresh', {}, () =>
+      this.refreshInternalAsync(request),
+    );
+  }
+
+  private async refreshInternalAsync(
     request: RefreshTokenDto,
   ): Promise<Result<LoginResponseDto, AppError>> {
     // 1. DB chỉ lưu hash nên tìm theo hash của token client gửi lên
@@ -296,6 +336,7 @@ export class AuthService implements IAuthService {
       }
 
       this.logger.warn(`Refresh token reuse detected for user ${token.userId}`);
+      instruments().authRefreshReuse.add(1);
       const revokeAll =
         await this.refreshTokenRepository.revokeAllRefreshTokensForUser(
           token.userId,
@@ -412,6 +453,7 @@ export class AuthService implements IAuthService {
         new AppError(ErrorCode.InternalServerError, 'Failed to send OTP email'),
       );
     }
+    instruments().authOtpSent.add(1, { purpose: 'password_reset' });
 
     return ok(undefined);
   }
@@ -661,6 +703,30 @@ export class AuthService implements IAuthService {
     otp: string,
     failedError: AppError,
   ): Promise<Result<void, AppError>> {
+    const result = await this.checkOtpInternalAsync(
+      store,
+      email,
+      otp,
+      failedError,
+    );
+    instruments().authOtpVerify.add(1, {
+      outcome: result.isOk()
+        ? 'success'
+        : result.error.code === ErrorCode.TooManyRequests
+          ? 'locked'
+          : result.error.code === ErrorCode.BadRequest
+            ? 'invalid'
+            : 'error',
+    });
+    return result;
+  }
+
+  private async checkOtpInternalAsync(
+    store: IEmailOtpStore,
+    email: string,
+    otp: string,
+    failedError: AppError,
+  ): Promise<Result<void, AppError>> {
     const otpHashResult = await store.findOtp(email);
     if (otpHashResult.isErr()) {
       return err(failedError);
@@ -717,6 +783,7 @@ export class AuthService implements IAuthService {
         new AppError(ErrorCode.InternalServerError, 'Failed to send OTP email'),
       );
     }
+    instruments().authOtpSent.add(1, { purpose: 'registration' });
 
     return ok(undefined);
   }

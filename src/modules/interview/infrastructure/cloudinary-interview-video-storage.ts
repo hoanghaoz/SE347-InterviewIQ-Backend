@@ -11,6 +11,7 @@ import {
   type InterviewVideoSignedUpload,
   type UploadedInterviewVideo,
 } from '../application/interfaces/interview-video-storage.interface';
+import { trackCloudinaryCall } from '../../../shared/telemetry/external-call';
 
 type VideoResource = {
   secure_url: string;
@@ -67,13 +68,15 @@ export class CloudinaryInterviewVideoStorage implements IInterviewVideoStorage {
     const { cloudName, apiKey, apiSecret } = credentials.value;
     try {
       // Credentials are passed per call, so this adapter does not mutate SDK globals.
-      const resource = (await cloudinary.api.resource(cloudinaryPublicId, {
-        resource_type: 'video',
-        media_metadata: true,
-        cloud_name: cloudName,
-        api_key: apiKey,
-        api_secret: apiSecret,
-      })) as VideoResource;
+      const resource = (await trackCloudinaryCall('video_get', () =>
+        cloudinary.api.resource(cloudinaryPublicId, {
+          resource_type: 'video',
+          media_metadata: true,
+          cloud_name: cloudName,
+          api_key: apiKey,
+          api_secret: apiSecret,
+        }),
+      )) as VideoResource;
       return ok({
         url: resource.secure_url,
         bytes: resource.bytes,
