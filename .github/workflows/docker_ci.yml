@@ -54,7 +54,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/fitwork-be-nestjs-api
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/interviewiq-api
           tags: |
             type=raw,value=latest,enable=${{ steps.main-head.outputs.is_current == 'true' }}
             type=sha,format=long
