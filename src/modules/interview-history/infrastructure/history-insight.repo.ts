@@ -29,8 +29,10 @@ const INSIGHT_SELECT = {
 } as const;
 
 // Chỉ những gì prompt cần: không jobDescription, cvSnapshot hay transcript.
-// scoringModel chỉ để nhận ra buổi bỏ trống chấm theo luật.
+// scoringModel chỉ để nhận ra buổi bỏ trống chấm theo luật; publicId để khớp
+// với các buổi trong số liệu thống kê.
 const INSIGHT_SESSION_SELECT = {
+  publicId: true,
   title: true,
   createdAt: true,
   score: {
@@ -120,6 +122,7 @@ export class HistoryInsightRepository implements IHistoryInsightRepository {
           row.score
             ? [
                 {
+                  sessionPublicId: row.publicId,
                   title: row.title,
                   createdAt: row.createdAt,
                   contentScore: row.score.contentScore,

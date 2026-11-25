@@ -44,6 +44,9 @@ export type NewHistoryInsight = HistoryInsightData & {
 
 // Một buổi COMPLETED kèm nhận xét đã lưu, nguyên liệu cho prompt.
 export type InsightSessionData = InterviewStatsScores & {
+  // Để khớp với các buổi trong số liệu thống kê (vd. buổi liền trước có phải
+  // buổi bỏ trống không); không bao giờ được đưa vào prompt.
+  readonly sessionPublicId: string;
   readonly title: string;
   readonly createdAt: Date;
   // Buổi bỏ trống bị chấm 0 theo luật: nhận xét là câu viết sẵn, không phản ánh

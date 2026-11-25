@@ -10,6 +10,7 @@ describe('history insight rules', () => {
   const session = (
     overrides: Partial<InsightSessionData> = {},
   ): InsightSessionData => ({
+    sessionPublicId: '00000000-0000-4000-8000-0000000000a1',
     title: 'Session',
     createdAt: new Date('2026-10-01T08:00:00.000Z'),
     contentScore: 7,

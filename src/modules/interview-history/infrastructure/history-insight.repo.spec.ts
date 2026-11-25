@@ -96,6 +96,7 @@ describe('HistoryInsightRepository', () => {
 
   describe('getInsightSessions', () => {
     const sessionRow = (scoringModel: string) => ({
+      publicId: '00000000-0000-4000-8000-0000000000a1',
       title: 'Backend Intern',
       createdAt: new Date('2026-10-20T08:00:00.000Z'),
       score: {
@@ -131,6 +132,7 @@ describe('HistoryInsightRepository', () => {
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: 20,
         select: {
+          publicId: true,
           title: true,
           createdAt: true,
           score: {
@@ -156,6 +158,7 @@ describe('HistoryInsightRepository', () => {
       if (result.isErr()) throw result.error;
       expect(result.value).toEqual([
         {
+          sessionPublicId: '00000000-0000-4000-8000-0000000000a1',
           title: 'Backend Intern',
           createdAt: new Date('2026-10-20T08:00:00.000Z'),
           contentScore: 8,

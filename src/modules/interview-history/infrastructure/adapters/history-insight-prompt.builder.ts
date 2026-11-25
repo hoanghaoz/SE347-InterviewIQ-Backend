@@ -118,12 +118,24 @@ function buildStatsSection(payload: HistoryInsightLlmPayload): string {
   if (stats.averages) {
     lines.push(`- Điểm trung bình mọi buổi: ${formatScores(stats.averages)}`);
   }
-  if (stats.comparison?.delta) {
-    const delta = stats.comparison.delta;
+  if (stats.comparison?.delta && stats.comparison.previous) {
+    const { delta, latest, previous } = stats.comparison;
+    // Chênh lệch với một buổi bỏ trống (0 điểm) trông như tiến bộ vượt bậc hoặc
+    // tụt dốc; ghi rõ để AI không diễn giải nó thành thay đổi năng lực.
+    const blankIds = new Set(
+      payload.sessions
+        .filter((session) => session.isRuleBased)
+        .map((session) => session.sessionPublicId),
+    );
+    const note = blankIds.has(previous.id)
+      ? ' (buổi liền trước là buổi bỏ trống bị chấm 0, chênh lệch này không phản ánh tiến bộ thật)'
+      : blankIds.has(latest.id)
+        ? ' (buổi gần nhất là buổi bỏ trống bị chấm 0, chênh lệch này không phản ánh năng lực đi xuống)'
+        : '';
     lines.push(
       `- Buổi gần nhất so với buổi liền trước: tổng ${formatSigned(delta.overallScore)}, ` +
         `nội dung ${formatSigned(delta.contentScore)}, bám sát câu hỏi ${formatSigned(delta.relevanceScore)}, ` +
-        `tự tin ${formatSigned(delta.confidenceScore)}`,
+        `tự tin ${formatSigned(delta.confidenceScore)}${note}`,
     );
   }
   if (stats.trend.length > 0) {

@@ -47,6 +47,7 @@ describe('buildHistoryInsightPrompt', () => {
   const session = (
     overrides: Partial<InsightSessionData> = {},
   ): InsightSessionData => ({
+    sessionPublicId: '00000000-0000-4000-8000-0000000000a1',
     title: 'Backend Intern',
     createdAt: new Date('2026-10-20T08:00:00.000Z'),
     contentScore: 8,
@@ -93,6 +94,69 @@ describe('buildHistoryInsightPrompt', () => {
     expect(prompt).toContain('tổng +0.3');
     expect(prompt).toContain('tự tin -0.5');
     expect(prompt).toContain('4.8 -> 7.1 -> 7.4');
+    // Không buổi nào bỏ trống thì dòng so sánh không có ghi chú
+    expect(prompt).not.toContain('không phản ánh');
+  });
+
+  // Chênh lệch với buổi 0 điểm trông như tiến bộ vượt bậc: phải ghi chú cho AI
+  it('notes when the previous session was left blank', () => {
+    const latestId = '00000000-0000-4000-8000-0000000000c1';
+    const blankId = '00000000-0000-4000-8000-0000000000c2';
+    const { prompt } = buildHistoryInsightPrompt(
+      payloadOf(
+        [
+          session({ sessionPublicId: latestId }),
+          session({
+            sessionPublicId: blankId,
+            isRuleBased: true,
+            overallScore: 0,
+          }),
+        ],
+        {
+          stats: {
+            ...stats,
+            comparison: {
+              latest: { ...point(7.4), id: latestId },
+              previous: { ...point(0), id: blankId },
+              delta: stats.comparison!.delta,
+            },
+          },
+        },
+      ),
+    );
+
+    expect(prompt).toContain(
+      'buổi liền trước là buổi bỏ trống bị chấm 0, chênh lệch này không phản ánh tiến bộ thật',
+    );
+  });
+
+  it('notes when the latest session was left blank', () => {
+    const blankId = '00000000-0000-4000-8000-0000000000c1';
+    const previousId = '00000000-0000-4000-8000-0000000000c2';
+    const { prompt } = buildHistoryInsightPrompt(
+      payloadOf(
+        [
+          session({
+            sessionPublicId: blankId,
+            isRuleBased: true,
+            overallScore: 0,
+          }),
+          session({ sessionPublicId: previousId }),
+        ],
+        {
+          stats: {
+            ...stats,
+            comparison: {
+              latest: { ...point(0), id: blankId },
+              previous: { ...point(7.4), id: previousId },
+              delta: stats.comparison!.delta,
+            },
+          },
+        },
+      ),
+    );
+
+    expect(prompt).toContain('buổi gần nhất là buổi bỏ trống bị chấm 0');
   });
 
   it('skips the comparison line when there is no previous session', () => {
