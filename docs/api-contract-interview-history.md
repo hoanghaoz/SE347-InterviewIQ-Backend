@@ -1,6 +1,6 @@
 # API Contract: Interview History Module
 
-Hợp đồng giao tiếp (API Contract) cho **Module Lịch sử phỏng vấn (Interview History)** của MockMate AI. Module cung cấp danh sách các buổi phỏng vấn đã thực hiện (phân trang, lọc theo thời gian và trạng thái) và khung dữ liệu cho trang chi tiết một buổi phỏng vấn.
+Hợp đồng giao tiếp (API Contract) cho **Module Lịch sử phỏng vấn (Interview History)** của MockMate AI. Module cung cấp danh sách các buổi phỏng vấn đã thực hiện (phân trang, lọc theo thời gian và trạng thái) và dữ liệu cho trang chi tiết một buổi phỏng vấn: câu hỏi, câu trả lời (video, transcript), điểm và nhận xét của AI.
 
 Mã nguồn: `src/modules/interview-history/`. Branch: `feat/history-interview`.
 
@@ -11,10 +11,10 @@ Mã nguồn: `src/modules/interview-history/`. Branch: `feat/history-interview`.
 | Thuộc module này | Không thuộc module này |
 | --- | --- |
 | `GET /api/interviews` — danh sách lịch sử | Tạo / bắt đầu / nộp buổi phỏng vấn (`InterviewModule`) |
-| `GET /api/interviews/:id` — chi tiết một buổi | Chấm điểm và kết quả chi tiết (`ScoringModule`) |
-| | Câu hỏi và câu trả lời của buổi phỏng vấn (`InterviewModule`) |
+| `GET /api/interviews/:id` — chi tiết một buổi | Chấm điểm, ghi điểm và nhận xét (`ScoringModule`) |
+| | Sinh câu hỏi, lưu câu trả lời và video (`InterviewModule`, `QuestionGenerationModule`) |
 
-Module chỉ **đọc**. Không có endpoint nào ghi dữ liệu, không sở hữu bảng nào trong database; nó đọc `interview_sessions` cùng ba quan hệ `cv`, `score` và `cheat_logs` (cờ gian lận, xem `docs/api-contract-cheat-log.md`).
+Module chỉ **đọc**. Không có endpoint nào ghi dữ liệu, không sở hữu bảng nào trong database; nó đọc `interview_sessions` cùng các quan hệ `cv`, `score`, `interview_summaries`, `questions` → `answers` và `cheat_logs` (cờ gian lận, xem `docs/api-contract-cheat-log.md`).
 
 ## 2. Quy ước chung
 
@@ -121,7 +121,9 @@ Danh sách rỗng trả `200` với `items: []`, không trả `404`.
 
 ## 4. `GET /api/interviews/:id`
 
-Chi tiết một buổi phỏng vấn của chính người gọi. Đây là **khung** cho trang chi tiết: ba field `score`, `summary`, `questions` đã có mặt trong contract nhưng chưa có dữ liệu, dành cho các module khác đổ vào sau.
+Chi tiết một buổi phỏng vấn của chính người gọi: thông tin buổi, danh sách câu hỏi kèm câu trả lời đã ghi (URL video, transcript), điểm cấp buổi và nhận xét của AI khi đã chấm xong.
+
+Toàn bộ dữ liệu được đọc bằng **một** lời gọi `findFirst` có điều kiện chủ sở hữu, với nested `select` cho các quan hệ. Số câu SQL cố định theo số quan hệ, không tăng theo số câu hỏi (không N+1). Không đọc cột `cvSnapshot`, `answers.emotion_summary`, `interview_summaries.scoring_model` / `prompt_version`.
 
 ### 4.1. Request
 
@@ -154,9 +156,54 @@ Không có body, không có query param.
       "id": "9b1c2d3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
       "fileName": "nguyen-van-a-cv.pdf"
     },
-    "score": null,
-    "summary": null,
-    "questions": [],
+    "score": {
+      "contentScore": 8.0,
+      "relevanceScore": 7.5,
+      "confidenceScore": 7.0,
+      "overallScore": 7.6,
+      "maxScore": 10,
+      "scoredAt": "2026-10-20T08:14:02.000Z"
+    },
+    "summary": {
+      "overallFeedback": "Ứng viên nắm vững nền tảng NestJS, trả lời đúng trọng tâm nhưng còn thiếu ví dụ thực tế.",
+      "strengths": [
+        {
+          "category": "TECHNICAL_KNOWLEDGE",
+          "title": "Hiểu rõ Dependency Injection",
+          "description": "Giải thích đúng vòng đời provider và cách Nest resolve dependency."
+        }
+      ],
+      "improvements": [
+        {
+          "category": "COMMUNICATION",
+          "title": "Thiếu ví dụ từ dự án thật",
+          "description": "Câu trả lời thiên về lý thuyết.",
+          "suggestion": "Dùng mô hình STAR để kể một tình huống cụ thể."
+        }
+      ]
+    },
+    "questions": [
+      {
+        "id": "5d2e1c4b-7a3f-4e9d-8b6c-1f0a2e3d4c5b",
+        "orderIndex": 1,
+        "content": "Giải thích cơ chế Dependency Injection trong NestJS.",
+        "domain": "TECHNICAL",
+        "difficulty": "MEDIUM",
+        "answer": {
+          "videoUrl": "https://res.cloudinary.com/demo/video/upload/v1/interview-answers/answer.webm",
+          "durationSeconds": 95,
+          "transcript": "Dependency Injection trong NestJS là..."
+        }
+      },
+      {
+        "id": "6e3f2d5c-8b4a-4f0e-9c7d-2a1b3c4d5e6f",
+        "orderIndex": 2,
+        "content": "Kể về một lần bạn xử lý bug khó trên production.",
+        "domain": "BEHAVIORAL",
+        "difficulty": "MEDIUM",
+        "answer": null
+      }
+    ],
     "isFlagged": true,
     "cheatSummary": {
       "totalCount": 1,
@@ -195,25 +242,49 @@ Không có body, không có query param.
 | `cv` | object | **có** | `null` khi buổi phỏng vấn không gắn CV, hoặc CV đã bị xóa (quan hệ là `onDelete: SetNull`) |
 | `cv.id` | string (uuid) | không | `publicId` của CV |
 | `cv.fileName` | string | không | Tên file CV |
+| `score` | object | **có** | Điểm **cấp buổi**. `null` khi `status` khác `COMPLETED` (xem 4.3) |
+| `score.contentScore` / `relevanceScore` / `confidenceScore` | number | không | Ba tiêu chí, thang `0..maxScore` |
+| `score.overallScore` | number | không | `content × 0.4 + relevance × 0.4 + confidence × 0.2`, làm tròn 1 chữ số |
+| `score.maxScore` | number | không | Hiện là `10`, lấy từ `SCORING_LIMITS.maxScore` |
+| `score.scoredAt` | string (date-time) | không | Thời điểm chấm |
+| `summary` | object | **có** | Nhận xét của AI cho cả buổi. `null` khi `status` khác `COMPLETED` |
+| `summary.overallFeedback` | string | không | Nhận xét tổng |
+| `summary.strengths` | array | không | `{ category, title, description }`; mảng rỗng nếu không có |
+| `summary.improvements` | array | không | `{ category, title, description, suggestion? }`; `suggestion` có thể vắng mặt |
+| `questions` | array | không | Sắp theo `orderIndex` tăng dần; **không bao giờ `null`**, có mặt ở mọi `status` kể cả `FAILED` |
+| `questions[].id` | string (uuid) | không | `publicId` của câu hỏi |
+| `questions[].orderIndex` | integer | không | Thứ tự câu hỏi trong buổi |
+| `questions[].content` | string | không | Nội dung câu hỏi |
+| `questions[].domain` | enum | không | `TECHNICAL`, `BEHAVIORAL`, `SITUATIONAL` |
+| `questions[].difficulty` | enum | không | `EASY`, `MEDIUM`, `HARD` |
+| `questions[].answer` | object | **có** | `null` khi câu này chưa được trả lời |
+| `questions[].answer.videoUrl` | string | **có** | URL Cloudinary đã lưu lúc save answer; `null` khi không có video |
+| `questions[].answer.durationSeconds` | integer | **có** | Độ dài video (giây) |
+| `questions[].answer.transcript` | string | **có** | Transcript do frontend gửi; chuỗi rỗng là câu trả lời im lặng |
 | `isFlagged` | boolean | không | `true` khi buổi có ít nhất 1 cheat log |
 | `cheatSummary` | object | không | `{ totalCount, countsByType }`; `countsByType` luôn đủ 4 loại sự kiện, loại chưa xảy ra là `0` |
 | `cheatLogs` | array | không | Nhật ký gian lận sắp theo `occurredAt` tăng dần; mảng rỗng khi sạch, **không bao giờ `null`** |
 
 Response **không** trả `cvSnapshot`: đó là cột `Json` chứa toàn bộ nội dung CV tại thời điểm nộp, không cần cho trang chi tiết và làm payload phình to.
 
-### 4.3. Khung cho module khác
+### 4.3. Điểm, nhận xét và trạng thái chấm
 
-Ba field dưới đây luôn có mặt trong response với giá trị rỗng. Module sở hữu dữ liệu sẽ đổ vào sau; khi đó **shape của response không đổi**, nên frontend không phải sửa.
+`score` và `summary` chỉ có giá trị khi `status = COMPLETED`, **kể cả khi database đã có bản ghi**:
 
-| Field | Giá trị hiện tại | Ai sẽ đổ dữ liệu | Nguồn dữ liệu sẵn có |
-| --- | --- | --- | --- |
-| `score` | `null` | Scoring module | Bảng `scores`; hiện đã có `GET /api/scoring/sessions/:sessionId/result` |
-| `summary` | `null` | Scoring module | Bảng `interview_summaries` |
-| `questions` | `[]` | Interview module | Bảng `questions` và `answers` |
+| `status` | `score` / `summary` | `questions` |
+| --- | --- | --- |
+| `CREATED`, `IN_PROGRESS`, `SUBMITTED`, `CANCELLED` | `null` | có (answer có thể `null`) |
+| `SCORING` | `null` — đang chấm, kết quả chưa phải cuối | có |
+| `COMPLETED` | có giá trị (nếu bản ghi tồn tại) | có |
+| `FAILED` | `null` — không trả kết quả dở dang | có, câu trả lời đã ghi vẫn xem được |
 
-`questions` là mảng rỗng chứ không `null`, để frontend gọi `.map` trực tiếp mà không cần kiểm tra null.
+Lý do chặn theo `status` chứ không theo "có bản ghi hay không": worker ghi `scores`, `interview_summaries` và `status = COMPLETED` trong **cùng một transaction**. Nested `select` của Prisma có thể chạy nhiều câu SQL; dưới Read Committed các câu đó có thể thấy dữ liệu ở hai thời điểm khác nhau. `status` được đọc trước các quan hệ, nên thấy `COMPLETED` nghĩa là transaction đã commit và điểm chắc chắn đọc được; còn thấy `SCORING` mà lỡ đọc được điểm thì điểm bị ẩn. Nhờ vậy không cần mở transaction riêng cho API đọc.
 
-Cờ và nhật ký gian lận là dữ liệu **thật** (khác với `score`, `summary`, `questions` ở trên), do tính năng cheat log ghi vào. `cheatLogs` mang `id`, `eventType`, `description`, `occurredAt`, `createdAt`; xem `docs/api-contract-cheat-log.md`.
+Tiến độ chấm (`QUEUED` / `PROCESSING`) vẫn tra qua `GET /api/scoring/jobs/:jobId/status`. API này không trả phần trăm tiến độ vì hệ thống không theo dõi nó.
+
+**Video:** `videoUrl` là URL Cloudinary lưu sẵn khi save answer (asset kiểu `upload`, public). API không gọi Cloudinary khi đọc và không sinh signed URL.
+
+Cờ và nhật ký gian lận do tính năng cheat log ghi vào. `cheatLogs` mang `id`, `eventType`, `description`, `occurredAt`, `createdAt`; xem `docs/api-contract-cheat-log.md`.
 
 ### 4.4. Lỗi
 
@@ -251,3 +322,9 @@ Endpoint cũ vẫn hoạt động để frontend có thời gian chuyển sang e
 3. **Phân trang bằng offset.** `skip/take` nên càng lật tới trang sâu càng chậm, và nếu có buổi phỏng vấn mới được tạo giữa hai lần gọi thì bản ghi ở ranh giới trang có thể bị lặp hoặc bị nhảy. Với số buổi phỏng vấn của một người dùng thì không đáng lo; đổi sang cursor-based là việc của sau này nếu dữ liệu lớn lên.
 4. **Không tìm theo từ khóa** trên `title` hoặc `jobDescription`.
 5. **`PageResult` trả cả `currentPage` lẫn `pageNumber`** với cùng giá trị. Giữ nguyên vì các endpoint khác đã phụ thuộc vào shape này.
+6. **Không có điểm, nhận xét hay tiêu chí cho từng câu hỏi.** LLM chấm cả buổi trong một lần và schema chỉ có bảng `scores` / `interview_summaries` cấp buổi. Muốn có cần bảng mới (ví dụ `question_evaluations`), đổi prompt và worker của Scoring module.
+7. **Không có trạng thái xử lý transcript.** Transcript do frontend gửi kèm khi save answer (bắt buộc), backend không chạy speech-to-text, nên không có trạng thái `PROCESSING` / `FAILED` để trả.
+8. **Không có `startedAt` của lần chấm hay phần trăm tiến độ.** Lúc chuyển sang `SCORING` không được lưu thời điểm; pg-boss không theo dõi phần trăm.
+9. **`videoUrl` là URL public.** Ai có link đều xem được, và path chứa UUID của user/session. Muốn khóa lại cần chuyển upload sang `type: authenticated` và sinh signed delivery URL lúc đọc; việc đó ảnh hưởng luồng upload. Video bị xóa trên Cloudinary sẽ 404 ở phía frontend; backend không phát hiện vì cố ý không gọi Cloudinary mỗi request.
+10. **`totalQuestions` là số frontend báo lúc submit**, có thể khác số phần tử `questions`.
+11. **ADMIN cũng chỉ xem được buổi phỏng vấn của chính mình** (404 với buổi của người khác), khác với Scoring module nơi ADMIN xem được mọi session.

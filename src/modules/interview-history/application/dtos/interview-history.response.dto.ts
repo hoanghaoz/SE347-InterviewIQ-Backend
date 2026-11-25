@@ -4,6 +4,14 @@ import {
   CheatSummaryDto,
 } from '../../../interview/application/dtos/cheat-log.response.dto';
 import { CommonSessionStatus } from '../../../interview/domain/enums/interview-enum';
+import {
+  QuestionDifficulty,
+  QuestionDomain,
+} from '../../../question-generation/domain/enums/question.enum';
+import {
+  ImprovementDto,
+  StrengthDto,
+} from '../../../scoring/application/dtos/scoring.response.dto';
 
 // Response DTOs only describe the output for Swagger: no class-validator here.
 export class InterviewHistoryItemDto {
@@ -75,6 +83,111 @@ export class InterviewHistoryCvDto {
   fileName!: string;
 }
 
+export class InterviewHistoryAnswerDto {
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description:
+      'Cloudinary delivery URL stored when the answer was saved. Null when the answer has no video.',
+    example:
+      'https://res.cloudinary.com/demo/video/upload/v1/interview-answers/answer.webm',
+  })
+  videoUrl!: string | null;
+
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    description: 'Video length in whole seconds',
+    example: 95,
+  })
+  durationSeconds!: number | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description:
+      'Transcript sent by the frontend. An empty string is a silent answer.',
+  })
+  transcript!: string | null;
+}
+
+export class InterviewHistoryQuestionDto {
+  @ApiProperty({
+    format: 'uuid',
+    example: '5d2e1c4b-7a3f-4e9d-8b6c-1f0a2e3d4c5b',
+  })
+  id!: string;
+
+  @ApiProperty({ example: 1 })
+  orderIndex!: number;
+
+  @ApiProperty({
+    example: 'Giải thích cơ chế Dependency Injection trong NestJS.',
+  })
+  content!: string;
+
+  @ApiProperty({
+    enum: QuestionDomain,
+    enumName: 'QuestionDomain',
+    example: QuestionDomain.TECHNICAL,
+  })
+  domain!: QuestionDomain;
+
+  @ApiProperty({
+    enum: QuestionDifficulty,
+    enumName: 'QuestionDifficulty',
+    example: QuestionDifficulty.MEDIUM,
+  })
+  difficulty!: QuestionDifficulty;
+
+  @ApiProperty({
+    type: InterviewHistoryAnswerDto,
+    nullable: true,
+    description: 'Null when the question was never answered',
+  })
+  answer!: InterviewHistoryAnswerDto | null;
+}
+
+export class InterviewHistoryScoreDto {
+  @ApiProperty({ example: 8.0 })
+  contentScore!: number;
+
+  @ApiProperty({ example: 7.5 })
+  relevanceScore!: number;
+
+  @ApiProperty({ example: 7.0 })
+  confidenceScore!: number;
+
+  @ApiProperty({
+    example: 7.6,
+    description: 'content 40% + relevance 40% + confidence 20%',
+  })
+  overallScore!: number;
+
+  @ApiProperty({
+    example: 10,
+    description: 'Upper bound of every score above (scale 0..maxScore)',
+  })
+  maxScore!: number;
+
+  @ApiProperty({ format: 'date-time' })
+  scoredAt!: string;
+}
+
+export class InterviewHistorySummaryDto {
+  @ApiProperty({
+    example:
+      'Ứng viên nắm vững nền tảng NestJS, trả lời đúng trọng tâm nhưng còn thiếu ví dụ thực tế.',
+  })
+  overallFeedback!: string;
+
+  @ApiProperty({ type: [StrengthDto] })
+  strengths!: StrengthDto[];
+
+  @ApiProperty({ type: [ImprovementDto] })
+  improvements!: ImprovementDto[];
+}
+
 export class InterviewHistoryDetailDto {
   @ApiProperty({
     format: 'uuid',
@@ -121,37 +234,30 @@ export class InterviewHistoryDetailDto {
   })
   cv!: InterviewHistoryCvDto | null;
 
-  // Ba field dưới đây là khung cho trang chi tiết: có mặt trong contract từ bây
-  // giờ nhưng chưa có dữ liệu, để khi module sở hữu đổ vào thì shape của
-  // response không đổi và frontend không phải sửa.
+  // score và summary chỉ có giá trị khi status = COMPLETED, kể cả khi database
+  // đã có bản ghi: trước lúc đó kết quả chưa phải kết quả cuối.
   @ApiProperty({
-    type: 'object',
-    additionalProperties: true,
+    type: InterviewHistoryScoreDto,
     nullable: true,
     description:
-      'Reserved for the scoring module (table `scores`). Always null for now.',
-    example: null,
+      'Session-level scores. Null unless status is COMPLETED. There is no per-question score.',
   })
-  score!: Record<string, unknown> | null;
+  score!: InterviewHistoryScoreDto | null;
 
   @ApiProperty({
-    type: 'object',
-    additionalProperties: true,
+    type: InterviewHistorySummaryDto,
     nullable: true,
     description:
-      'Reserved for the scoring module (table `interview_summaries`). Always null for now.',
-    example: null,
+      'AI feedback for the whole session. Null unless status is COMPLETED.',
   })
-  summary!: Record<string, unknown> | null;
+  summary!: InterviewHistorySummaryDto | null;
 
   @ApiProperty({
-    type: 'array',
-    items: { type: 'object', additionalProperties: true },
+    type: [InterviewHistoryQuestionDto],
     description:
-      'Reserved for the interview module (tables `questions` and `answers`). Always [] for now, never null.',
-    example: [],
+      'Ordered by orderIndex ascending. Always an array, never null. Present in every status, including FAILED.',
   })
-  questions!: Record<string, unknown>[];
+  questions!: InterviewHistoryQuestionDto[];
 
   @ApiProperty({
     description: 'True when the session has at least one cheat log',

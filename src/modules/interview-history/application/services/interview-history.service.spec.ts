@@ -4,6 +4,15 @@ import {
   CommonCheatEventType,
   CommonSessionStatus,
 } from '../../../interview/domain/enums/interview-enum';
+import {
+  QuestionDifficulty,
+  QuestionDomain,
+} from '../../../question-generation/domain/enums/question.enum';
+import type {
+  InterviewHistoryQuestionData,
+  InterviewHistoryScoreData,
+  InterviewHistorySummaryData,
+} from '../../domain/repositories/interview-history.repo.interface';
 import { InterviewHistoryService } from './interview-history.service';
 
 describe('InterviewHistoryService', () => {
@@ -57,6 +66,66 @@ describe('InterviewHistoryService', () => {
     createdAt: new Date('2026-10-20T07:58:11.000Z'),
     cv: { cvPublicId, fileName: 'nguyen-van-a-cv.pdf' },
     cheatLogs: [] as ReturnType<typeof cheatLogData>[],
+    questions: [] as InterviewHistoryQuestionData[],
+    score: null as InterviewHistoryScoreData | null,
+    summary: null as InterviewHistorySummaryData | null,
+  };
+
+  const questionId1 = '00000000-0000-4000-8000-0000000000b1';
+  const questionId2 = '00000000-0000-4000-8000-0000000000b2';
+
+  const scoreData: InterviewHistoryScoreData = {
+    contentScore: 8,
+    relevanceScore: 7.5,
+    confidenceScore: 7,
+    overallScore: 7.6,
+    scoredAt: new Date('2026-10-20T08:14:02.000Z'),
+  };
+
+  const summaryData: InterviewHistorySummaryData = {
+    overallFeedback: 'Good fundamentals',
+    strengths: [
+      { category: 'TECHNICAL_KNOWLEDGE', title: 'DI', description: 'Clear' },
+    ],
+    improvements: [
+      {
+        category: 'COMMUNICATION',
+        title: 'Examples',
+        description: 'Too theoretical',
+        suggestion: 'Use STAR',
+      },
+    ],
+  };
+
+  const questionsData: InterviewHistoryQuestionData[] = [
+    {
+      questionPublicId: questionId1,
+      orderIndex: 1,
+      content: 'Explain DI in NestJS',
+      domain: QuestionDomain.TECHNICAL,
+      difficulty: QuestionDifficulty.MEDIUM,
+      answer: {
+        videoUrl: 'https://res.cloudinary.com/demo/video/upload/v1/a.webm',
+        durationSeconds: 95,
+        transcript: 'My answer',
+      },
+    },
+    {
+      questionPublicId: questionId2,
+      orderIndex: 2,
+      content: 'Tell me about a hard bug',
+      domain: QuestionDomain.BEHAVIORAL,
+      difficulty: QuestionDifficulty.HARD,
+      answer: null,
+    },
+  ];
+
+  // Buổi đã chấm xong, có đủ câu hỏi, điểm và nhận xét
+  const scoredDetail = {
+    ...detailData,
+    questions: questionsData,
+    score: scoreData,
+    summary: summaryData,
   };
 
   const query = { pageNumber: 1, pageSize: 20 };
@@ -266,7 +335,7 @@ describe('InterviewHistoryService', () => {
   });
 
   describe('getInterviewAsync', () => {
-    it('maps the detail and leaves the slots of the other modules empty', async () => {
+    it('maps the detail of a session that has no question, score or summary yet', async () => {
       interviewHistoryRepo.getInterviewDetail.mockResolvedValue(ok(detailData));
 
       const result = await service.getInterviewAsync(
@@ -359,6 +428,137 @@ describe('InterviewHistoryService', () => {
         occurredAt: '2026-10-20T08:01:00.000Z',
         createdAt: '2026-10-20T08:01:00.000Z',
       });
+    });
+
+    it('returns the session score with its scale and the summary once COMPLETED', async () => {
+      interviewHistoryRepo.getInterviewDetail.mockResolvedValue(
+        ok(scoredDetail),
+      );
+
+      const result = await service.getInterviewAsync(
+        userPublicId,
+        sessionPublicId,
+      );
+
+      if (result.isErr()) throw result.error;
+      expect(result.value.score).toEqual({
+        contentScore: 8,
+        relevanceScore: 7.5,
+        confidenceScore: 7,
+        overallScore: 7.6,
+        maxScore: 10,
+        scoredAt: '2026-10-20T08:14:02.000Z',
+      });
+      expect(result.value.summary).toEqual({
+        overallFeedback: 'Good fundamentals',
+        strengths: [
+          {
+            category: 'TECHNICAL_KNOWLEDGE',
+            title: 'DI',
+            description: 'Clear',
+          },
+        ],
+        improvements: [
+          {
+            category: 'COMMUNICATION',
+            title: 'Examples',
+            description: 'Too theoretical',
+            suggestion: 'Use STAR',
+          },
+        ],
+      });
+    });
+
+    it('maps every question with its answer, and keeps an unanswered one as answer null', async () => {
+      interviewHistoryRepo.getInterviewDetail.mockResolvedValue(
+        ok(scoredDetail),
+      );
+
+      const result = await service.getInterviewAsync(
+        userPublicId,
+        sessionPublicId,
+      );
+
+      if (result.isErr()) throw result.error;
+      expect(result.value.questions).toEqual([
+        {
+          id: questionId1,
+          orderIndex: 1,
+          content: 'Explain DI in NestJS',
+          domain: QuestionDomain.TECHNICAL,
+          difficulty: QuestionDifficulty.MEDIUM,
+          answer: {
+            videoUrl: 'https://res.cloudinary.com/demo/video/upload/v1/a.webm',
+            durationSeconds: 95,
+            transcript: 'My answer',
+          },
+        },
+        {
+          id: questionId2,
+          orderIndex: 2,
+          content: 'Tell me about a hard bug',
+          domain: QuestionDomain.BEHAVIORAL,
+          difficulty: QuestionDifficulty.HARD,
+          answer: null,
+        },
+      ]);
+    });
+
+    // Bản ghi điểm đã có nhưng status chưa COMPLETED (đọc lệch snapshot hoặc
+    // dữ liệu cũ): chưa phải kết quả cuối nên không được lộ ra.
+    it.each([
+      CommonSessionStatus.SUBMITTED,
+      CommonSessionStatus.SCORING,
+      CommonSessionStatus.FAILED,
+    ])(
+      'hides the score and the summary while the status is %s even if rows exist',
+      async (status) => {
+        interviewHistoryRepo.getInterviewDetail.mockResolvedValue(
+          ok({ ...scoredDetail, status }),
+        );
+
+        const result = await service.getInterviewAsync(
+          userPublicId,
+          sessionPublicId,
+        );
+
+        if (result.isErr()) throw result.error;
+        expect(result.value.status).toBe(status);
+        expect(result.value.score).toBeNull();
+        expect(result.value.summary).toBeNull();
+      },
+    );
+
+    // Chấm thất bại không làm mất câu trả lời đã ghi
+    it('still returns the recorded questions and answers when grading FAILED', async () => {
+      interviewHistoryRepo.getInterviewDetail.mockResolvedValue(
+        ok({ ...scoredDetail, status: CommonSessionStatus.FAILED }),
+      );
+
+      const result = await service.getInterviewAsync(
+        userPublicId,
+        sessionPublicId,
+      );
+
+      if (result.isErr()) throw result.error;
+      expect(result.value.questions).toHaveLength(2);
+      expect(result.value.questions[0].answer?.transcript).toBe('My answer');
+    });
+
+    // COMPLETED mà thiếu bản ghi (không nên xảy ra) thì trả null, không bịa điểm
+    it('returns score and summary null when COMPLETED but the rows are missing', async () => {
+      interviewHistoryRepo.getInterviewDetail.mockResolvedValue(
+        ok({ ...scoredDetail, score: null, summary: null }),
+      );
+
+      const result = await service.getInterviewAsync(
+        userPublicId,
+        sessionPublicId,
+      );
+
+      if (result.isErr()) throw result.error;
+      expect(result.value.score).toBeNull();
+      expect(result.value.summary).toBeNull();
     });
 
     // questions là [] chứ không null để frontend map thẳng không cần guard
