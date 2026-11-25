@@ -19,7 +19,7 @@ import {
   withResultSpan,
   withSpan,
 } from '../../../../shared/telemetry/telemetry';
-import type { Job, PgBoss } from 'pg-boss';
+import type { Job, JobResult, JobWithMetadata, PgBoss } from 'pg-boss';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
 import { ScoringJobData } from '../../application/dtos/scoring.request.dto';
 import { IScoringEventBus } from '../../application/interfaces/scoring-event.interface';
@@ -35,6 +35,9 @@ import {
 import { IScoringRepository } from '../../domain/repositories/scoring.repo.interface';
 import { PG_BOSS_TOKEN } from './pg-boss.provider';
 import { SCORING_QUEUE_NAME } from './scoring-queue.service';
+
+const DEFAULT_SAFE_FAILURE_MESSAGE =
+  'Scoring failed due to an internal error. Please try again later.';
 
 @Injectable()
 export class ScoringWorkerService implements OnModuleInit {
@@ -81,12 +84,28 @@ export class ScoringWorkerService implements OnModuleInit {
     this.registerQueueDepthGauge();
     await this.boss.work<ScoringJobData>(
       SCORING_QUEUE_NAME,
-      { localConcurrency: this.concurrency },
-      async (jobs: Job<ScoringJobData>[]) => {
+      {
+        localConcurrency: this.concurrency,
+        includeMetadata: true,
+        perJobResults: true,
+      },
+      async (jobs: JobWithMetadata<ScoringJobData>[]): Promise<JobResult[]> => {
+        const results: JobResult[] = [];
         for (const job of jobs) {
           await this.applyPacingDelay();
-          await this.handleJob(job);
+          try {
+            await this.handleJob(job);
+            results.push({ id: job.id, status: 'completed' });
+          } catch (error) {
+            const isNonRetryable = this.isNonRetryableError(error);
+            results.push({
+              id: job.id,
+              status: isNonRetryable ? 'deadletter' : 'failed',
+              output: { message: this.toSafeFailureMessage(error) },
+            });
+          }
         }
+        return results;
       },
     );
     this.logger.log(
@@ -158,7 +177,8 @@ export class ScoringWorkerService implements OnModuleInit {
 
       if (
         session.status === SessionStatus.COMPLETED ||
-        session.status === SessionStatus.CANCELLED
+        session.status === SessionStatus.CANCELLED ||
+        session.status === SessionStatus.FAILED
       ) {
         this.logger.warn(
           `Session '${sessionId}' is already in terminal status '${session.status}' for job ${job.id}. Skipping scoring safely.`,
@@ -279,7 +299,7 @@ export class ScoringWorkerService implements OnModuleInit {
     } catch (error) {
       const err = error as Error;
       const isNonRetryable = this.isNonRetryableError(error);
-      const isLastAttempt = retryCount + 1 >= retryLimit;
+      const isLastAttempt = retryCount >= retryLimit;
       const isFinal = isNonRetryable || isLastAttempt;
       outcome = 'failed';
       instruments().scoringJobsFailed.add(1, {
@@ -294,6 +314,7 @@ export class ScoringWorkerService implements OnModuleInit {
       if (sessionDbId !== null) {
         if (isFinal) {
           const failureReason = err.message || 'Scoring job processing failed';
+          const safeErrorMessage = this.toSafeFailureMessage(error);
           const markResult = await this.scoringRepo.markSessionFailed(
             sessionDbId,
             failureReason,
@@ -312,7 +333,7 @@ export class ScoringWorkerService implements OnModuleInit {
             type: 'answer-failed',
             payload: {
               sessionId,
-              error: failureReason,
+              error: safeErrorMessage,
             },
           });
         }
@@ -341,6 +362,19 @@ export class ScoringWorkerService implements OnModuleInit {
         ];
       },
     );
+  }
+
+  private toSafeFailureMessage(error: unknown): string {
+    if (error instanceof ScoringDomainErrorValidation) {
+      return error.message;
+    }
+    if (error instanceof AppError) {
+      if (error.code === ErrorCode.InternalServerError) {
+        return DEFAULT_SAFE_FAILURE_MESSAGE;
+      }
+      return error.message;
+    }
+    return DEFAULT_SAFE_FAILURE_MESSAGE;
   }
 
   private isNonRetryableError(error: unknown): boolean {
