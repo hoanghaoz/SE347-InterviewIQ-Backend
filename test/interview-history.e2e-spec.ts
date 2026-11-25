@@ -129,6 +129,35 @@ describe('InterviewHistoryController (e2e)', () => {
     request(app.getHttpServer())
       .get(`${route}/${id}`)
       .set('Authorization', `Bearer ${token}`);
+  const statsOf = (query = '') =>
+    request(app.getHttpServer())
+      .get(`${route}/stats${query}`)
+      .set('Authorization', `Bearer ${token}`);
+
+  const statsSession = {
+    id: sessionPublicId,
+    title: 'Backend Intern - NestJS',
+    createdAt: '2026-10-20T07:58:11.000Z',
+    contentScore: 8,
+    relevanceScore: 7.5,
+    confidenceScore: 7,
+    overallScore: 7.6,
+  };
+
+  const stats = {
+    maxScore: 10,
+    completedSessions: 1,
+    answeredQuestions: 4,
+    averages: {
+      contentScore: 8,
+      relevanceScore: 7.5,
+      confidenceScore: 7,
+      overallScore: 7.6,
+    },
+    best: statsSession,
+    trend: [statsSession],
+    comparison: { latest: statsSession, previous: null, delta: null },
+  };
 
   beforeEach(async () => {
     getInterviewHistoryAsync.mockReset();
@@ -326,6 +355,123 @@ describe('InterviewHistoryController (e2e)', () => {
         code: ErrorCode.InternalServerError,
         message: 'Failed to load the interview history',
       });
+    });
+  });
+
+  describe('GET /api/interviews/stats', () => {
+    it('returns the score stats of the token owner', async () => {
+      getInterviewStatsAsync.mockResolvedValue(ok(stats));
+
+      const response = await statsOf().expect(200);
+
+      expect(response.body).toMatchObject({
+        statusCode: 200,
+        success: true,
+        message: 'Interview stats retrieved successfully',
+        data: stats,
+      });
+    });
+
+    // Route tĩnh phải thắng :id; nếu bị khai báo sau thì ParseUUIDPipe trả 400
+    it('is not captured by the :id route', async () => {
+      getInterviewStatsAsync.mockResolvedValue(ok(stats));
+
+      await statsOf().expect(200);
+
+      expect(getInterviewStatsAsync).toHaveBeenCalledTimes(1);
+      expect(getInterviewAsync).not.toHaveBeenCalled();
+    });
+
+    it('applies the default limit and passes the token subject', async () => {
+      getInterviewStatsAsync.mockResolvedValue(ok(stats));
+
+      await statsOf().expect(200);
+
+      expect(getInterviewStatsAsync).toHaveBeenCalledWith(
+        userPublicId,
+        expect.objectContaining({ limit: 20 }),
+      );
+    });
+
+    it('passes the parsed limit and date range to the service', async () => {
+      getInterviewStatsAsync.mockResolvedValue(ok(stats));
+
+      await statsOf(
+        '?limit=5&fromDate=2026-10-01T00:00:00.000Z&toDate=2026-10-31T23:59:59.000Z',
+      ).expect(200);
+
+      expect(getInterviewStatsAsync).toHaveBeenCalledWith(userPublicId, {
+        limit: 5,
+        fromDate: '2026-10-01T00:00:00.000Z',
+        toDate: '2026-10-31T23:59:59.000Z',
+      });
+    });
+
+    it.each(['0', '101', 'abc', '1.5'])(
+      'rejects limit=%s with field errors before reaching the service',
+      async (limit) => {
+        const response = await statsOf(`?limit=${limit}`).expect(400);
+
+        expect(response.body).toMatchObject({
+          code: ErrorCode.BadRequest,
+          message: 'Request validation failed',
+          errors: [expect.objectContaining({ field: 'limit' })],
+        });
+        expect(getInterviewStatsAsync).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects a fromDate that is not an ISO date string', async () => {
+      const response = await statsOf('?fromDate=yesterday').expect(400);
+
+      expect(response.body).toMatchObject({
+        errors: [expect.objectContaining({ field: 'fromDate' })],
+      });
+      expect(getInterviewStatsAsync).not.toHaveBeenCalled();
+    });
+
+    it('maps a reversed date range from the service to 400', async () => {
+      getInterviewStatsAsync.mockResolvedValue(
+        err(
+          new AppError(
+            ErrorCode.BadRequest,
+            'fromDate must be before or equal to toDate',
+          ),
+        ),
+      );
+
+      const response = await statsOf(
+        '?fromDate=2026-11-01T00:00:00.000Z&toDate=2026-10-01T00:00:00.000Z',
+      ).expect(400);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.BadRequest,
+        message: 'fromDate must be before or equal to toDate',
+        path: `${route}/stats`,
+      });
+    });
+
+    it('returns a sanitized 500 when the service fails', async () => {
+      getInterviewStatsAsync.mockResolvedValue(
+        err(
+          new AppError(
+            ErrorCode.InternalServerError,
+            'Failed to load the interview stats',
+          ),
+        ),
+      );
+
+      const response = await statsOf().expect(500);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.InternalServerError,
+        message: 'Failed to load the interview stats',
+      });
+    });
+
+    it('returns 401 without a bearer token', async () => {
+      await request(app.getHttpServer()).get(`${route}/stats`).expect(401);
+      expect(getInterviewStatsAsync).not.toHaveBeenCalled();
     });
   });
 
