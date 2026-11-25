@@ -9,6 +9,7 @@ import { err, ok } from 'neverthrow';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { InterviewHistoryController } from '../src/modules/interview-history/api/interview-history.controller';
+import { IHistoryInsightService } from '../src/modules/interview-history/application/interfaces/history-insight.service.interface';
 import { IInterviewHistoryService } from '../src/modules/interview-history/application/interfaces/interview-history.service.interface';
 import { IInterviewStatsService } from '../src/modules/interview-history/application/interfaces/interview-stats.service.interface';
 import { CommonSessionStatus } from '../src/modules/interview/domain/enums/interview-enum';
@@ -30,6 +31,8 @@ describe('InterviewHistoryController (e2e)', () => {
   const getInterviewHistoryAsync = jest.fn();
   const getInterviewAsync = jest.fn();
   const getInterviewStatsAsync = jest.fn();
+  const getInsightAsync = jest.fn();
+  const generateInsightAsync = jest.fn();
 
   const userPublicId = '00000000-0000-4000-8000-000000000001';
   const sessionPublicId = '00000000-0000-4000-8000-000000000003';
@@ -163,6 +166,8 @@ describe('InterviewHistoryController (e2e)', () => {
     getInterviewHistoryAsync.mockReset();
     getInterviewAsync.mockReset();
     getInterviewStatsAsync.mockReset();
+    getInsightAsync.mockReset();
+    generateInsightAsync.mockReset();
 
     const module = await Test.createTestingModule({
       imports: [JwtModule.register({ secret: 'test-secret' })],
@@ -177,6 +182,10 @@ describe('InterviewHistoryController (e2e)', () => {
         {
           provide: IInterviewStatsService,
           useValue: { getInterviewStatsAsync },
+        },
+        {
+          provide: IHistoryInsightService,
+          useValue: { getInsightAsync, generateInsightAsync },
         },
       ],
     }).compile();
