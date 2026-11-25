@@ -59,15 +59,39 @@ jobs:
             type=raw,value=latest,enable=${{ steps.main-head.outputs.is_current == 'true' }}
             type=sha,format=long
 
-      # 3. Build và Push
-      - name: Build and push
+      # 3. Build và nạp image vào runner để quét (chạy cả trên pull request)
+      - name: Build image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile # Đường dẫn file Dockerfile
-          push: ${{ inputs.publish && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          tags: ${{ steps.meta.outputs.tags }} # Lấy kết quả của Docker Meta
-          labels: ${{ steps.meta.outputs.labels }}
+          load: true
+          tags: interviewiq-api:scan
           # Bật Cache để lần sau build nhanh hơn
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # 4. Quét lỗ hổng: chỉ báo cáo ra log, không bao giờ làm hỏng workflow.
+      # Action được cố định theo commit vì từng bị tấn công chuỗi cung ứng (GHSA-69fq-xp46-6x23).
+      - name: Scan image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        continue-on-error: true
+        with:
+          image-ref: interviewiq-api:scan
+          version: v0.76.2
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: '0'
+
+      # 5. Push đúng bản vừa quét (cùng builder nên dùng lại toàn bộ layer)
+      - name: Push image
+        if: inputs.publish && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }} # Lấy kết quả của Docker Meta
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
