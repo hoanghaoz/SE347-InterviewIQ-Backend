@@ -12,7 +12,7 @@
     "start:dev": "nest start --watch",
     "start:dev:otel": "node --env-file-if-exists=.env --require @opentelemetry/auto-instrumentations-node/register ./node_modules/@nestjs/cli/bin/nest.js start --watch",
     "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/main",
+    "start:prod": "node dist/src/main.js",
     "start:prod:otel": "node --env-file-if-exists=.env --require @opentelemetry/auto-instrumentations-node/register dist/src/main.js",
     "doctor": "ts-node scripts/doctor-cli.ts",
     "scaffold": "ts-node scripts/scaffold-cli.ts",
