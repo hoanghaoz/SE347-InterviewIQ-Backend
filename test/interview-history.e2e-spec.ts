@@ -132,6 +132,38 @@ describe('InterviewHistoryController (e2e)', () => {
     request(app.getHttpServer())
       .get(`${route}/${id}`)
       .set('Authorization', `Bearer ${token}`);
+  const getInsight = () =>
+    request(app.getHttpServer())
+      .get(`${route}/insight`)
+      .set('Authorization', `Bearer ${token}`);
+  const postInsight = () =>
+    request(app.getHttpServer())
+      .post(`${route}/insight`)
+      .set('Authorization', `Bearer ${token}`);
+
+  const insightState = {
+    completedSessions: 3,
+    minCompletedSessions: 2,
+    canGenerate: true,
+    isStale: false,
+    insight: {
+      overallFeedback: 'Tiến bộ đều ở phần kỹ thuật.',
+      strengths: [
+        { category: 'TECHNICAL_KNOWLEDGE', title: 'DI', description: 'Clear' },
+      ],
+      weaknesses: [
+        {
+          category: 'COMMUNICATION',
+          title: 'Dài dòng',
+          description: 'Đi vòng',
+        },
+      ],
+      recommendations: [{ title: 'STAR', description: 'Luyện kể chuyện' }],
+      basedOnSessionCount: 3,
+      generatedAt: '2026-10-21T00:00:00.000Z',
+    },
+  };
+
   const statsOf = (query = '') =>
     request(app.getHttpServer())
       .get(`${route}/stats${query}`)
@@ -481,6 +513,114 @@ describe('InterviewHistoryController (e2e)', () => {
     it('returns 401 without a bearer token', async () => {
       await request(app.getHttpServer()).get(`${route}/stats`).expect(401);
       expect(getInterviewStatsAsync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('GET /api/interviews/insight', () => {
+    it('returns the stored insight state of the token owner', async () => {
+      getInsightAsync.mockResolvedValue(ok(insightState));
+
+      const response = await getInsight().expect(200);
+
+      expect(response.body).toMatchObject({
+        statusCode: 200,
+        success: true,
+        message: 'Interview insight retrieved successfully',
+        data: insightState,
+      });
+      expect(getInsightAsync).toHaveBeenCalledWith(userPublicId);
+      expect(generateInsightAsync).not.toHaveBeenCalled();
+    });
+
+    it('is not captured by the :id route', async () => {
+      getInsightAsync.mockResolvedValue(ok(insightState));
+
+      await getInsight().expect(200);
+
+      expect(getInterviewAsync).not.toHaveBeenCalled();
+    });
+
+    it('returns 401 without a bearer token', async () => {
+      await request(app.getHttpServer()).get(`${route}/insight`).expect(401);
+      expect(getInsightAsync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /api/interviews/insight', () => {
+    // 200 chứ không phải 201 mặc định của @Post
+    it('returns 200 with the refreshed insight', async () => {
+      generateInsightAsync.mockResolvedValue(ok(insightState));
+
+      const response = await postInsight().expect(200);
+
+      expect(response.body).toMatchObject({
+        statusCode: 200,
+        success: true,
+        message: 'Interview insight refreshed successfully',
+        data: insightState,
+      });
+      expect(generateInsightAsync).toHaveBeenCalledWith(userPublicId);
+    });
+
+    it('maps a too short history to 400', async () => {
+      generateInsightAsync.mockResolvedValue(
+        err(
+          new AppError(
+            ErrorCode.BadRequest,
+            'At least 2 completed interviews are needed to generate an insight',
+          ),
+        ),
+      );
+
+      const response = await postInsight().expect(400);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.BadRequest,
+        message:
+          'At least 2 completed interviews are needed to generate an insight',
+        path: `${route}/insight`,
+      });
+    });
+
+    it('maps the generation limit to 429', async () => {
+      generateInsightAsync.mockResolvedValue(
+        err(
+          new AppError(
+            ErrorCode.TooManyRequests,
+            'Too many insight requests, please try again later',
+          ),
+        ),
+      );
+
+      const response = await postInsight().expect(429);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.TooManyRequests,
+        message: 'Too many insight requests, please try again later',
+      });
+    });
+
+    it('returns a sanitized 500 when generation fails', async () => {
+      generateInsightAsync.mockResolvedValue(
+        err(
+          new AppError(
+            ErrorCode.InternalServerError,
+            'Failed to generate the insight',
+          ),
+        ),
+      );
+
+      const response = await postInsight().expect(500);
+
+      expect(response.body).toMatchObject({
+        code: ErrorCode.InternalServerError,
+        message: 'Failed to generate the insight',
+      });
+    });
+
+    it('returns 401 without a bearer token', async () => {
+      await request(app.getHttpServer()).post(`${route}/insight`).expect(401);
+      expect(generateInsightAsync).not.toHaveBeenCalled();
     });
   });
 
