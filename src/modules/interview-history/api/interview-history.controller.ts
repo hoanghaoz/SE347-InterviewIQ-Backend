@@ -25,16 +25,24 @@ import {
   InterviewHistoryDetailDto,
   InterviewHistoryItemDto,
 } from '../application/dtos/interview-history.response.dto';
+import { InterviewStatsQueryDto } from '../application/dtos/interview-stats.request.dto';
+import { InterviewStatsDto } from '../application/dtos/interview-stats.response.dto';
 import { IInterviewHistoryService } from '../application/interfaces/interview-history.service.interface';
+import { IInterviewStatsService } from '../application/interfaces/interview-stats.service.interface';
 
 // Thin controller: read input, call the service, turn Result into HTTP.
 // Chỉ đọc lịch sử của chính chủ token: không route nào nhận user id từ client.
 @ApiTags('interviews')
-@ApiExtraModels(InterviewHistoryItemDto, InterviewHistoryDetailDto)
+@ApiExtraModels(
+  InterviewHistoryItemDto,
+  InterviewHistoryDetailDto,
+  InterviewStatsDto,
+)
 @Controller('api/interviews')
 export class InterviewHistoryController {
   constructor(
     private readonly interviewHistoryService: IInterviewHistoryService,
+    private readonly interviewStatsService: IInterviewStatsService,
   ) {}
 
   // @Auth phải đặt trên từng method: RolesGuard đọc metadata bằng
@@ -101,6 +109,55 @@ export class InterviewHistoryController {
           HttpStatus.OK,
           data,
           'Interview history retrieved successfully',
+        ),
+      (error) => {
+        throw toHttpException(error);
+      },
+    );
+  }
+
+  // Phải khai báo trước @Get(':id'): Express khớp route theo thứ tự đăng ký,
+  // đặt sau thì "stats" rơi vào :id và bị ParseUUIDPipe trả 400.
+  @Get('stats')
+  @Auth([CommonUserRole.ADMIN, CommonUserRole.USER])
+  @ApiOperation({
+    summary: 'Score statistics of the current user',
+    description:
+      'Averages over every COMPLETED session in the createdAt range, the best session, a trend of the most recent sessions (oldest first) ' +
+      'and latest vs previous comparison. Sessions scored 0 for having no answer are included. Empty history returns 200 with nulls.',
+  })
+  @ApiOkResponse({
+    description: 'Score statistics',
+    schema: {
+      type: 'object',
+      required: ['statusCode', 'success', 'data', 'message', 'timestamp'],
+      properties: {
+        statusCode: { type: 'integer', example: 200 },
+        success: { type: 'boolean', example: true },
+        message: {
+          type: 'string',
+          example: 'Interview stats retrieved successfully',
+        },
+        timestamp: { type: 'string', format: 'date-time' },
+        data: { $ref: getSchemaPath(InterviewStatsDto) },
+      },
+    },
+  })
+  async getInterviewStatsAsync(
+    @User() user: JwtPayload,
+    @Query() query: InterviewStatsQueryDto,
+  ): Promise<ApiSuccessResponse<InterviewStatsDto>> {
+    const result = await this.interviewStatsService.getInterviewStatsAsync(
+      user.sub,
+      query,
+    );
+
+    return result.match(
+      (data) =>
+        new ApiSuccessResponse(
+          HttpStatus.OK,
+          data,
+          'Interview stats retrieved successfully',
         ),
       (error) => {
         throw toHttpException(error);

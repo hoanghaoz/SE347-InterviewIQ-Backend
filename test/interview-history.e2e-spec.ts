@@ -10,6 +10,7 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import { InterviewHistoryController } from '../src/modules/interview-history/api/interview-history.controller';
 import { IInterviewHistoryService } from '../src/modules/interview-history/application/interfaces/interview-history.service.interface';
+import { IInterviewStatsService } from '../src/modules/interview-history/application/interfaces/interview-stats.service.interface';
 import { CommonSessionStatus } from '../src/modules/interview/domain/enums/interview-enum';
 import { AppError, ErrorCode } from '../src/shared/common/errorCode';
 import { AllExceptionsFilter } from '../src/shared/common/exceptions.filter';
@@ -28,6 +29,7 @@ describe('InterviewHistoryController (e2e)', () => {
   let token: string;
   const getInterviewHistoryAsync = jest.fn();
   const getInterviewAsync = jest.fn();
+  const getInterviewStatsAsync = jest.fn();
 
   const userPublicId = '00000000-0000-4000-8000-000000000001';
   const sessionPublicId = '00000000-0000-4000-8000-000000000003';
@@ -131,6 +133,7 @@ describe('InterviewHistoryController (e2e)', () => {
   beforeEach(async () => {
     getInterviewHistoryAsync.mockReset();
     getInterviewAsync.mockReset();
+    getInterviewStatsAsync.mockReset();
 
     const module = await Test.createTestingModule({
       imports: [JwtModule.register({ secret: 'test-secret' })],
@@ -141,6 +144,10 @@ describe('InterviewHistoryController (e2e)', () => {
         {
           provide: IInterviewHistoryService,
           useValue: { getInterviewHistoryAsync, getInterviewAsync },
+        },
+        {
+          provide: IInterviewStatsService,
+          useValue: { getInterviewStatsAsync },
         },
       ],
     }).compile();

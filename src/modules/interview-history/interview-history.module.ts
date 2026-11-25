@@ -5,9 +5,13 @@ import { JwtAuthGuard } from '../../shared/common/jwt.guard';
 import { RolesGuard } from '../../shared/decorators/roles.guard';
 import { InterviewHistoryController } from './api/interview-history.controller';
 import { IInterviewHistoryService } from './application/interfaces/interview-history.service.interface';
+import { IInterviewStatsService } from './application/interfaces/interview-stats.service.interface';
 import { InterviewHistoryService } from './application/services/interview-history.service';
+import { InterviewStatsService } from './application/services/interview-stats.service';
 import { IInterviewHistoryRepository } from './domain/repositories/interview-history.repo.interface';
+import { IInterviewStatsRepository } from './domain/repositories/interview-stats.repo.interface';
 import { InterviewHistoryRepository } from './infrastructure/interview-history.repo';
+import { InterviewStatsRepository } from './infrastructure/interview-stats.repo';
 
 @Module({
   imports: [
@@ -31,6 +35,14 @@ import { InterviewHistoryRepository } from './infrastructure/interview-history.r
     {
       provide: IInterviewHistoryRepository,
       useClass: InterviewHistoryRepository,
+    },
+    {
+      provide: IInterviewStatsService,
+      useClass: InterviewStatsService,
+    },
+    {
+      provide: IInterviewStatsRepository,
+      useClass: InterviewStatsRepository,
     },
   ],
 })
