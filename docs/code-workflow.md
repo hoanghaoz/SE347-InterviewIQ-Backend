@@ -196,9 +196,9 @@ Before opening a pull request:
 
 The current CI workflow runs on pushes to `main` and pull requests targeting
 `main`. It installs locked dependencies, validates and generates Prisma, runs
-lint and actionlint, executes unit tests, builds the application, and validates
-Docker Compose. E2e tests are not invoked and the integration job is disabled;
-run those suites locally when required. Docker builds and publication are
+lint and actionlint, executes unit and e2e tests, builds the application, and
+validates Docker Compose. The integration job is disabled; run those suites
+locally when required. Docker builds, image scanning, and publication are
 described in [`github-workflows.md`](./github-workflows.md).
 
 ## Troubleshooting
