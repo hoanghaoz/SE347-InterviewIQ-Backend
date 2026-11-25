@@ -73,14 +73,16 @@ async function main() {
   const checks: CheckResult[] = [
     envFileCheck,
     await checkDocker(),
-    // change the required keys as needed for your project
+    // Các biến app bắt buộc phải có để khởi động
     checkEnvKeys([
       'DATABASE_URL',
+      'REDIS_URL',
       'JWT_SECRET',
-      'S3_BUCKET_NAME',
-      'CLOUDFLARE_ACCESS_KEY_ID',
-      'CLOUDFLARE_SECRET_ACCESS_KEY',
-      'S3_API_ENDPOINT',
+      'JWT_ACCESS_EXPIRES_IN',
+      'JWT_REFRESH_EXPIRES_IN',
+      'MAIL_HOST',
+      'MAIL_PORT',
+      'MAIL_FROM',
     ]),
   ];
 

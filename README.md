@@ -126,8 +126,7 @@ Danh sách đầy đủ ở [`.env.example`](.env.example).
 | `SCORING_*`                                                            | Tinh chỉnh worker chấm điểm                              |
 | `OTEL_*`                                                               | Telemetry                                                |
 
-`npm run doctor` hiện còn yêu cầu các biến S3/Cloudflare R2 (`S3_BUCKET_NAME`,
-`CLOUDFLARE_*`, `S3_API_ENDPOINT`), nên có thể báo thiếu dù app vẫn chạy được.
+`npm run doctor` kiểm tra file `.env`, Docker và các biến bắt buộc ở trên.
 
 ## Scripts
 
@@ -136,7 +135,8 @@ Danh sách đầy đủ ở [`.env.example`](.env.example).
 | `npm run start:dev`           | Chạy ở chế độ watch                           |
 | `npm run start:dev:otel`      | Chạy watch kèm OpenTelemetry                  |
 | `npm run build`               | Build vào `dist/`                             |
-| `npm run start:prod:otel`     | Chạy bản build (`dist/src/main.js`)           |
+| `npm run start:prod`          | Chạy bản build (`dist/src/main.js`)           |
+| `npm run start:prod:otel`     | Chạy bản build kèm OpenTelemetry              |
 | `npm run lint` / `lint:check` | ESLint, có / không tự sửa                     |
 | `npm run format`              | Prettier cho `src/` và `test/`                |
 | `npm test`                    | Unit test (`src/**/*.spec.ts`)                |

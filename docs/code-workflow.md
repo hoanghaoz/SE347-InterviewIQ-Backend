@@ -47,14 +47,19 @@ cp .env.example .env
 Populate `.env` with local or approved development credentials. The doctor
 requires these variables:
 
-| Variable                       | Purpose                                  |
-| ------------------------------ | ---------------------------------------- |
-| `DATABASE_URL`                 | Application PostgreSQL connection string |
-| `JWT_SECRET`                   | JWT signing secret                       |
-| `S3_BUCKET_NAME`               | Object storage bucket                    |
-| `CLOUDFLARE_ACCESS_KEY_ID`     | Object storage access key ID             |
-| `CLOUDFLARE_SECRET_ACCESS_KEY` | Object storage secret access key         |
-| `S3_API_ENDPOINT`              | S3-compatible API endpoint               |
+| Variable                 | Purpose                                  |
+| ------------------------ | ---------------------------------------- |
+| `DATABASE_URL`           | Application PostgreSQL connection string |
+| `REDIS_URL`              | Redis connection string                  |
+| `JWT_SECRET`             | JWT signing secret                       |
+| `JWT_ACCESS_EXPIRES_IN`  | Access token lifetime in seconds         |
+| `JWT_REFRESH_EXPIRES_IN` | Refresh token lifetime in seconds        |
+| `MAIL_HOST`              | SMTP host (Mailpit in development)       |
+| `MAIL_PORT`              | SMTP port                                |
+| `MAIL_FROM`              | Sender address                           |
+
+Cloudinary and LLM keys are needed only by the features that use them; see
+[`.env.example`](../.env.example).
 
 Set `DIRECT_URL` when migrations need a direct database connection. Do not use
 production secrets in a local environment or include secret values in logs,
