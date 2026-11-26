@@ -25,7 +25,7 @@ Bảng dùng: `cheat_logs` (đã có sẵn, **không có migration**). Enum `Che
 4. Nếu ứng viên tải lại trang giữa chừng, frontend gọi `GET` để lấy lại bộ đếm.
 5. Sau buổi phỏng vấn, ứng viên thấy cờ và nhật ký ở lịch sử của mình.
 
-**Debounce và gộp sự kiện là việc của frontend.** Backend lưu đúng những gì nhận được và không chống trùng. Ví dụ `TAB_SWITCH` và `WINDOW_BLUR` thường bắn cùng lúc khi đổi tab; `FACE_MISSING` có thể bắn liên tục. Nếu frontend gửi cả hai/gửi mỗi giây, bộ đếm sẽ tăng đúng bấy nhiêu.
+**Debounce và gộp sự kiện là việc của frontend.** Backend lưu đúng những gì nhận được, chỉ chống trùng theo `clientEventId` (mục 4.4): gửi lại cùng một sự kiện thì không ghi lần hai. Ví dụ `TAB_SWITCH` và `WINDOW_BLUR` thường bắn cùng lúc khi đổi tab; `FACE_MISSING` có thể bắn liên tục. Nếu frontend gửi cả hai/gửi mỗi giây, bộ đếm sẽ tăng đúng bấy nhiêu.
 
 ## 3. Quy ước chung
 
@@ -60,6 +60,7 @@ Bảng dùng: `cheat_logs` (đã có sẵn, **không có migration**). Enum `Che
 | `eventType` | enum | có | Một trong 4 giá trị ở mục 3 |
 | `occurredAt` | ISO 8601 date-time | có | Giờ **phía client** lúc phát hiện. Luật khoảng thời gian ở mục 4.3 |
 | `description` | string | không | Tối đa 500 ký tự |
+| `clientEventId` | string (uuid) | không, **nên luôn gửi** | Id frontend sinh cho từng sự kiện, dùng để gửi lại an toàn. Xem mục 4.4 |
 
 ```json
 {
@@ -116,7 +117,19 @@ Kiểm tra theo thứ tự:
 - **Độ lệch đồng hồ 30 giây:** `occurredAt` là giờ client còn `startedAt`/`submittedAt` là giờ server, nên hai đầu khoảng được nới 30 giây. Cả hai là hằng số trong `domain/constants/cheat-log.constants.ts`.
 - Ghi log **không bao giờ** đổi `status` của buổi phỏng vấn.
 
-### 4.4. Lỗi
+### 4.4. Gửi lại an toàn (`clientEventId`)
+
+Mạng có thể làm mất response dù server đã ghi. Để gửi lại mà không sinh bản ghi thứ hai, frontend sinh **một UUID cho mỗi sự kiện** (ví dụ `crypto.randomUUID()`) và **dùng lại đúng id đó** cho mọi lần gửi lại của sự kiện ấy.
+
+- Lần đầu: ghi log và lưu `clientEventId`.
+- Gửi lại cùng `clientEventId` trong cùng buổi: **không ghi thêm**, trả lại `log` ban đầu cùng `summary` hiện tại, response giống hệt lần đầu (`201`). `summary.totalCount` không tăng.
+- Gửi lại được trả bản ghi cũ **ngay cả khi** cửa sổ nhận log đã đóng sau lần gửi đầu (mục 4.3 chỉ áp cho sự kiện mới).
+- Hai request cùng `clientEventId` chạy song song: chỉ một bản ghi được tạo, cả hai nhận cùng `log`.
+- `clientEventId` có phạm vi theo buổi phỏng vấn. Cùng id nhưng nội dung khác (ví dụ `eventType` khác) vẫn trả bản ghi cũ, không sửa nó: **mỗi sự kiện mới phải dùng id mới**.
+- Không gửi `clientEventId` thì hoạt động như trước và **không chống trùng**.
+- Không phải UUID thì `400` với `errors: [{ field: 'clientEventId', ... }]`.
+
+### 4.5. Lỗi
 
 | HTTP | `code` | Khi nào |
 | --- | --- | --- |
@@ -195,6 +208,7 @@ const ack = await socket.emitWithAck('cheat-log:record', {
   eventType: 'TAB_SWITCH',
   occurredAt: new Date().toISOString(),
   description: 'Switched to another browser tab',
+  clientEventId: crypto.randomUUID(), // giữ nguyên id này khi gửi lại
 });
 // ack.success === true  -> ack.data.summary.totalCount
 // ack.success === false -> ack.code, ack.message, ack.errors
@@ -202,15 +216,15 @@ const ack = await socket.emitWithAck('cheat-log:record', {
 
 ### 5b.2. Sự kiện `cheat-log:record`
 
-Payload là body của mục 4.1 cộng thêm `sessionPublicId` (UUID, thay cho path param). **Client phải truyền callback ack**, nếu không sẽ không nhận được kết quả.
+Payload là body của mục 4.1 (kể cả `clientEventId`) cộng thêm `sessionPublicId` (UUID, thay cho path param). **Client phải truyền callback ack**, nếu không sẽ không nhận được kết quả.
 
 Ack thành công có đúng envelope của mục 4.2 (`statusCode: 201`, `data: { log, summary }`).
 
-Ack lỗi có envelope lỗi chuẩn (`statusCode`, `success: false`, `code`, `message`, `errors?`, `timestamp`); `path` là tên sự kiện (`cheat-log:record`). Mã lỗi và điều kiện giống mục 4.4 (400, 404, 409, 500). Lỗi không đóng kết nối, client gửi tiếp được.
+Ack lỗi có envelope lỗi chuẩn (`statusCode`, `success: false`, `code`, `message`, `errors?`, `timestamp`); `path` là tên sự kiện (`cheat-log:record`). Mã lỗi và điều kiện giống mục 4.5 (400, 404, 409, 500). Lỗi không đóng kết nối, client gửi tiếp được.
 
 ### 5b.3. Lưu ý
 
-- Mất kết nối thì socket.io tự nối lại, nhưng sự kiện đang gửi dở **không** được gửi lại tự động: frontend nên bật `socket.timeout(ms)` và gửi lại hoặc chuyển sang `POST`.
+- Mất kết nối thì socket.io tự nối lại, nhưng sự kiện đang gửi dở **không** được gửi lại tự động: frontend nên bật `socket.timeout(ms)`, rồi gửi lại **với đúng `clientEventId` cũ** (qua WebSocket hoặc `POST`). Nếu server đã ghi mà ack bị mất, lần gửi lại chỉ trả bản ghi cũ, không tạo bản ghi thứ hai (mục 4.4).
 - Token chỉ kiểm tra lúc handshake. Token hết hạn khi kết nối còn mở vẫn tiếp tục dùng được đến khi ngắt; nối lại thì phải dùng token mới.
 - CORS dùng chung danh sách origin với API (`src/shared/common/cors.config.ts`).
 
@@ -225,7 +239,7 @@ Buổi có **ít nhất 1 cheat log** thì `isFlagged = true`. Cờ được **t
 
 ## 7. Giới hạn đã biết
 
-1. **Không chống trùng ở backend** (xem mục 2). Frontend chịu trách nhiệm debounce.
+1. **Chỉ chống trùng theo `clientEventId`.** Backend không đoán sự kiện giống nhau: hai sự kiện khác `clientEventId` đều được ghi, nên frontend vẫn chịu trách nhiệm debounce (xem mục 2). Request không có `clientEventId` không được chống trùng.
 2. **Không có ngưỡng nghi vấn.** Một log duy nhất cũng đánh dấu buổi; chưa phân mức độ.
 3. **Chỉ ứng viên xem log của mình.** Chưa có API cho admin xem log của người khác.
 4. **`occurredAt` là giờ client** nên có thể bị giả mạo trong phạm vi khoảng thời gian cho phép; đây là bản ghi để tham khảo, không phải bằng chứng.

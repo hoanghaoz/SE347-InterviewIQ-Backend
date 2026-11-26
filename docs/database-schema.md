@@ -151,6 +151,7 @@ erDiagram
         int session_id FK
         enum event_type
         varchar description
+        uuid client_event_id
         timestamptz occurred_at
         timestamptz created_at
     }
@@ -297,9 +298,11 @@ Ghi nhận các sự kiện bất thường cảnh báo gian lận trong suốt 
 - **`session_id`** (`INT`, FK → `interview_sessions.id`, ON DELETE CASCADE).
 - **`event_type`** (`CheatEventType`): Loại sự kiện giám sát.
 - **`description`** (`VARCHAR(500)`, Nullable): Mô tả ngữ cảnh chi tiết khi phát hiện sự kiện.
+- **`client_event_id`** (`UUID`, Nullable): Id do client sinh cho từng sự kiện, dùng để gửi lại an toàn (idempotency). Cùng `session_id` thì mỗi `client_event_id` chỉ ghi một lần; `NULL` (client không gửi) thì không chống trùng.
 - **`occurred_at`** (`TIMESTAMPTZ`): Thời điểm phát hiện sự kiện.
 - **`created_at`** (`TIMESTAMPTZ`).
 - **Indexes**: `session_id`, `event_type`, `occurred_at`.
+- **Unique**: `(session_id, client_event_id)`.
 
 ### 3.10 `question_bank_items` (Ngân hàng câu hỏi của người dùng)
 Câu hỏi người dùng chủ động lưu lại để dùng cho các phiên sau (CR-006). Khác với `questions` (gắn với một phiên và bị xóa theo phiên), bảng này **độc lập với phiên phỏng vấn**: xóa phiên không làm mất câu trong ngân hàng.

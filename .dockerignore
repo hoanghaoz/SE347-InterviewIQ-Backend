@@ -8,3 +8,6 @@ generated
 !.env.example
 .secrets
 *.log
+# File trivy-action ghi vào workspace; không được làm đổi build context giữa bước quét và push
+.cache
+trivy_envs.txt

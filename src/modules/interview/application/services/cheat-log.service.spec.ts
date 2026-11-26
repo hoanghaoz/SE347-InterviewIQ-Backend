@@ -23,6 +23,10 @@ describe('CheatLogService', () => {
     ReturnType<ICheatLogRepository['getSessionForCheatLog']>,
     Parameters<ICheatLogRepository['getSessionForCheatLog']>
   >();
+  const findCheatLogByClientEventId = jest.fn<
+    ReturnType<ICheatLogRepository['findCheatLogByClientEventId']>,
+    Parameters<ICheatLogRepository['findCheatLogByClientEventId']>
+  >();
   const createCheatLog = jest.fn<
     ReturnType<ICheatLogRepository['createCheatLog']>,
     Parameters<ICheatLogRepository['createCheatLog']>
@@ -37,6 +41,7 @@ describe('CheatLogService', () => {
   >();
   const service = new CheatLogService({
     getSessionForCheatLog,
+    findCheatLogByClientEventId,
     createCheatLog,
     getCheatLogs,
     countCheatLogsByType,
@@ -75,7 +80,8 @@ describe('CheatLogService', () => {
     jest.resetAllMocks();
     jest.useFakeTimers().setSystemTime(now);
     getSessionForCheatLog.mockResolvedValue(ok(inProgress));
-    createCheatLog.mockResolvedValue(ok(saved));
+    findCheatLogByClientEventId.mockResolvedValue(ok(null));
+    createCheatLog.mockResolvedValue(ok({ log: saved, isDuplicate: false }));
     countCheatLogsByType.mockResolvedValue(ok(counts));
     getCheatLogs.mockResolvedValue(ok([saved]));
   });
@@ -90,6 +96,7 @@ describe('CheatLogService', () => {
         eventType: CommonCheatEventType.TAB_SWITCH,
         description: 'Switched tab',
         occurredAt: new Date(request.occurredAt),
+        clientEventId: null,
       });
       expect(result._unsafeUnwrap()).toEqual({
         log: {
@@ -100,6 +107,89 @@ describe('CheatLogService', () => {
           createdAt: '2026-11-09T10:05:01.000Z',
         },
         summary: { totalCount: 3, countsByType: counts },
+      });
+    });
+
+    describe('with a clientEventId', () => {
+      const clientEventId = '8d3f6c1e-5b7a-4e2f-9a0c-1b2d3e4f5a6b';
+      const retry = () =>
+        service.recordCheatEventAsync('user', 'session', {
+          ...request,
+          clientEventId,
+        });
+
+      it('stores the clientEventId with the first request', async () => {
+        await retry();
+
+        expect(findCheatLogByClientEventId).toHaveBeenCalledWith(
+          7,
+          clientEventId,
+        );
+        expect(createCheatLog).toHaveBeenCalledWith(
+          7,
+          expect.objectContaining({ clientEventId }),
+        );
+      });
+
+      it('returns the original log without recording again on a retry', async () => {
+        findCheatLogByClientEventId.mockResolvedValue(ok(saved));
+
+        const result = await retry();
+
+        expect(createCheatLog).not.toHaveBeenCalled();
+        expect(result._unsafeUnwrap()).toMatchObject({
+          log: { id: 'log-id' },
+          summary: { totalCount: 3 },
+        });
+        expect(recorded.named('cheat_log.recorded')).toHaveLength(0);
+        expect(recorded.named('cheat_log.deduplicated')).toHaveLength(1);
+      });
+
+      it('replays a retry even after the late window has closed', async () => {
+        findCheatLogByClientEventId.mockResolvedValue(ok(saved));
+        getSessionForCheatLog.mockResolvedValue(
+          ok({
+            ...inProgress,
+            status: CommonSessionStatus.COMPLETED,
+            submittedAt: new Date('2026-11-09T10:01:00.000Z'),
+          }),
+        );
+
+        const result = await retry();
+
+        expect(result.isOk()).toBe(true);
+      });
+
+      it('still rejects a first request that breaks the rules', async () => {
+        const result = await service.recordCheatEventAsync('user', 'session', {
+          ...request,
+          clientEventId,
+          occurredAt: '2026-11-09T09:00:00.000Z',
+        });
+
+        expect(result._unsafeUnwrapErr().code).toBe(ErrorCode.BadRequest);
+        expect(createCheatLog).not.toHaveBeenCalled();
+      });
+
+      it('returns the winner and counts a dedup when a parallel request wrote first', async () => {
+        createCheatLog.mockResolvedValue(ok({ log: saved, isDuplicate: true }));
+
+        const result = await retry();
+
+        expect(result.isOk()).toBe(true);
+        expect(recorded.named('cheat_log.recorded')).toHaveLength(0);
+        expect(recorded.named('cheat_log.deduplicated')).toHaveLength(1);
+      });
+
+      it('returns 500 when the lookup fails', async () => {
+        findCheatLogByClientEventId.mockResolvedValue(err(new Error('db')));
+
+        const result = await retry();
+
+        expect(result._unsafeUnwrapErr().code).toBe(
+          ErrorCode.InternalServerError,
+        );
+        expect(createCheatLog).not.toHaveBeenCalled();
       });
     });
 

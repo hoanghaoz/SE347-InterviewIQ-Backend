@@ -35,6 +35,24 @@ export class CheatLogService implements ICheatLogService {
     // Không tồn tại và của người khác dùng chung 404, không bao giờ 403.
     if (session.value === null) return err(notFoundError());
 
+    const clientEventId = request.clientEventId ?? null;
+    if (clientEventId !== null) {
+      // Gửi lại cùng clientEventId: trả lại bản ghi đã nhận, không chạy lại
+      // policy (cửa sổ thời gian có thể đã đóng kể từ lần gửi đầu).
+      const existing = await this.cheatLogRepo.findCheatLogByClientEventId(
+        session.value.sessionId,
+        clientEventId,
+      );
+      if (existing.isErr()) return err(internalError());
+      if (existing.value !== null) {
+        instruments().cheatLogDeduplicated.add(1);
+        return this.toCreatedResponseAsync(
+          session.value.sessionId,
+          existing.value,
+        );
+      }
+    }
+
     const accepted = checkCheatLogAcceptance({
       status: session.value.status,
       startedAt: session.value.startedAt,
@@ -61,18 +79,30 @@ export class CheatLogService implements ICheatLogService {
         eventType: request.eventType,
         description: request.description ?? null,
         occurredAt: new Date(request.occurredAt),
+        clientEventId,
       },
     );
     if (created.isErr()) return err(internalError());
 
-    const counts = await this.cheatLogRepo.countCheatLogsByType(
+    if (created.value.isDuplicate) {
+      instruments().cheatLogDeduplicated.add(1);
+    } else {
+      instruments().cheatLogRecorded.add(1, { event_type: request.eventType });
+    }
+    return this.toCreatedResponseAsync(
       session.value.sessionId,
+      created.value.log,
     );
-    if (counts.isErr()) return err(internalError());
+  }
 
-    instruments().cheatLogRecorded.add(1, { event_type: request.eventType });
+  private async toCreatedResponseAsync(
+    sessionId: number,
+    log: SavedCheatLog,
+  ): Promise<Result<CheatLogCreatedResponseDto, AppError>> {
+    const counts = await this.cheatLogRepo.countCheatLogsByType(sessionId);
+    if (counts.isErr()) return err(internalError());
     return ok({
-      log: toCheatLogDto(created.value),
+      log: toCheatLogDto(log),
       summary: toCheatSummary(counts.value),
     });
   }

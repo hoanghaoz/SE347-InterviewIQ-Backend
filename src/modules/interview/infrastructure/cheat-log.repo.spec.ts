@@ -10,11 +10,12 @@ jest.mock('../../../shared/infrastructure/database/prisma.service', () => ({
 describe('CheatLogRepository', () => {
   const findFirst = jest.fn();
   const create = jest.fn();
+  const findFirstLog = jest.fn();
   const findMany = jest.fn();
   const groupBy = jest.fn();
   const repository = new CheatLogRepository({
     interviewSession: { findFirst },
-    cheatLog: { create, findMany, groupBy },
+    cheatLog: { create, findFirst: findFirstLog, findMany, groupBy },
   } as unknown as PrismaService);
   const row = {
     publicId: 'log-id',
@@ -77,6 +78,7 @@ describe('CheatLogRepository', () => {
         eventType: CommonCheatEventType.TAB_SWITCH,
         description: 'left the tab',
         occurredAt: row.occurredAt,
+        clientEventId: null,
       });
 
       expect(create).toHaveBeenCalledWith(
@@ -86,13 +88,50 @@ describe('CheatLogRepository', () => {
             eventType: 'TAB_SWITCH',
             description: 'left the tab',
             occurredAt: row.occurredAt,
+            clientEventId: null,
           },
         }),
       );
       expect(result._unsafeUnwrap()).toEqual({
-        ...row,
-        eventType: CommonCheatEventType.TAB_SWITCH,
+        log: { ...row, eventType: CommonCheatEventType.TAB_SWITCH },
+        isDuplicate: false,
       });
+    });
+
+    it('returns the existing log when the clientEventId was already stored', async () => {
+      create.mockRejectedValue({ code: 'P2002' });
+      findFirstLog.mockResolvedValue(row);
+
+      const result = await repository.createCheatLog(7, {
+        eventType: CommonCheatEventType.TAB_SWITCH,
+        description: 'left the tab',
+        occurredAt: row.occurredAt,
+        clientEventId: 'client-event',
+      });
+
+      expect(findFirstLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { sessionId: 7, clientEventId: 'client-event' },
+        }),
+      );
+      expect(result._unsafeUnwrap()).toEqual({
+        log: { ...row, eventType: CommonCheatEventType.TAB_SWITCH },
+        isDuplicate: true,
+      });
+    });
+
+    it('does not treat a unique violation as a duplicate without a clientEventId', async () => {
+      create.mockRejectedValue({ code: 'P2002' });
+
+      const result = await repository.createCheatLog(7, {
+        eventType: CommonCheatEventType.TAB_SWITCH,
+        description: null,
+        occurredAt: row.occurredAt,
+        clientEventId: null,
+      });
+
+      expect(result.isErr()).toBe(true);
+      expect(findFirstLog).not.toHaveBeenCalled();
     });
 
     it('returns an error when the insert fails', async () => {
@@ -102,11 +141,43 @@ describe('CheatLogRepository', () => {
         eventType: CommonCheatEventType.FACE_MISSING,
         description: null,
         occurredAt: new Date(),
+        clientEventId: null,
       });
 
       expect(result._unsafeUnwrapErr().message).toBe(
         'Failed to create the cheat log.',
       );
+    });
+  });
+
+  describe('findCheatLogByClientEventId', () => {
+    it('looks the log up by session and client event id', async () => {
+      findFirstLog.mockResolvedValue(row);
+
+      const result = await repository.findCheatLogByClientEventId(7, 'evt');
+
+      expect(findFirstLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { sessionId: 7, clientEventId: 'evt' },
+        }),
+      );
+      expect(result._unsafeUnwrap()).toMatchObject({ publicId: 'log-id' });
+    });
+
+    it('returns ok(null) when nothing matches', async () => {
+      findFirstLog.mockResolvedValue(null);
+
+      const result = await repository.findCheatLogByClientEventId(7, 'evt');
+
+      expect(result._unsafeUnwrap()).toBeNull();
+    });
+
+    it('returns an error when the query fails', async () => {
+      findFirstLog.mockRejectedValue(new Error('db'));
+
+      const result = await repository.findCheatLogByClientEventId(7, 'evt');
+
+      expect(result.isErr()).toBe(true);
     });
   });
 

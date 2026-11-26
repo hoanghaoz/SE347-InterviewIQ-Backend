@@ -47,14 +47,19 @@ cp .env.example .env
 Populate `.env` with local or approved development credentials. The doctor
 requires these variables:
 
-| Variable                       | Purpose                                  |
-| ------------------------------ | ---------------------------------------- |
-| `DATABASE_URL`                 | Application PostgreSQL connection string |
-| `JWT_SECRET`                   | JWT signing secret                       |
-| `S3_BUCKET_NAME`               | Object storage bucket                    |
-| `CLOUDFLARE_ACCESS_KEY_ID`     | Object storage access key ID             |
-| `CLOUDFLARE_SECRET_ACCESS_KEY` | Object storage secret access key         |
-| `S3_API_ENDPOINT`              | S3-compatible API endpoint               |
+| Variable                 | Purpose                                  |
+| ------------------------ | ---------------------------------------- |
+| `DATABASE_URL`           | Application PostgreSQL connection string |
+| `REDIS_URL`              | Redis connection string                  |
+| `JWT_SECRET`             | JWT signing secret                       |
+| `JWT_ACCESS_EXPIRES_IN`  | Access token lifetime in seconds         |
+| `JWT_REFRESH_EXPIRES_IN` | Refresh token lifetime in seconds        |
+| `MAIL_HOST`              | SMTP host (Mailpit in development)       |
+| `MAIL_PORT`              | SMTP port                                |
+| `MAIL_FROM`              | Sender address                           |
+
+Cloudinary and LLM keys are needed only by the features that use them; see
+[`.env.example`](../.env.example).
 
 Set `DIRECT_URL` when migrations need a direct database connection. Do not use
 production secrets in a local environment or include secret values in logs,
@@ -196,9 +201,9 @@ Before opening a pull request:
 
 The current CI workflow runs on pushes to `main` and pull requests targeting
 `main`. It installs locked dependencies, validates and generates Prisma, runs
-lint and actionlint, executes unit tests, builds the application, and validates
-Docker Compose. E2e tests are not invoked and the integration job is disabled;
-run those suites locally when required. Docker builds and publication are
+lint and actionlint, executes unit and e2e tests, builds the application, and
+validates Docker Compose. The integration job is disabled; run those suites
+locally when required. Docker builds, image scanning, and publication are
 described in [`github-workflows.md`](./github-workflows.md).
 
 ## Troubleshooting
