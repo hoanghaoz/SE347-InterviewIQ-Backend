@@ -164,7 +164,11 @@ describe('ScoringQueue Stress & Resilience Test (20 Concurrent Jobs)', () => {
 
     expect(workMock).toHaveBeenCalledWith(
       SCORING_QUEUE_NAME,
-      { localConcurrency: CONCURRENCY_LIMIT },
+      {
+        localConcurrency: CONCURRENCY_LIMIT,
+        includeMetadata: true,
+        perJobResults: true,
+      },
       expect.any(Function),
     );
     expect(registeredHandler).not.toBeNull();
@@ -289,12 +293,14 @@ describe('ScoringQueue Stress & Resilience Test (20 Concurrent Jobs)', () => {
     );
 
     let registeredHandler:
-      | ((jobs: Job<ScoringJobData>[]) => Promise<void>)
+      | ((
+          jobs: Job<ScoringJobData>[],
+        ) => Promise<Array<{ id: string; status: string }>>)
       | null = null;
     workMock.mockImplementation((_name, _options, handler) => {
       registeredHandler = handler as (
         jobs: Job<ScoringJobData>[],
-      ) => Promise<void>;
+      ) => Promise<Array<{ id: string; status: string }>>;
       return Promise.resolve('work-subscription-id');
     });
 
@@ -312,19 +318,17 @@ describe('ScoringQueue Stress & Resilience Test (20 Concurrent Jobs)', () => {
             userId: `user-${idx}`,
             enqueuedAt: new Date().toISOString(),
           },
-          retrycount: 2,
+          retrycount: 3,
           retrylimit: 3,
         } as unknown as Job<ScoringJobData>;
       },
     );
 
     for (const job of jobs) {
-      try {
-        await registeredHandler!([job]);
+      const [result] = await registeredHandler!([job]);
+      if (result?.status === 'completed') {
         const id = parseInt(job.data.sessionId.split('-')[1], 10);
         succeededSessionIds.push(id);
-      } catch (err) {
-        void err;
       }
     }
 

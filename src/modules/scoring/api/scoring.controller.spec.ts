@@ -294,5 +294,25 @@ describe('ScoringController', () => {
       subscription.unsubscribe();
       eventSubject.complete();
     });
+
+    it('completes the SSE stream and stops heartbeat pings when user event stream completes', () => {
+      const eventSubject = new Subject<ScoringJobEvent>();
+      streamUserEventsMock.mockReturnValue(eventSubject.asObservable());
+
+      const received: MessageEvent[] = [];
+      let completed = false;
+      controller.streamScoringEvents(mockUser).subscribe({
+        next: (msg) => received.push(msg),
+        complete: () => {
+          completed = true;
+        },
+      });
+
+      eventSubject.complete();
+      expect(completed).toBe(true);
+
+      jest.advanceTimersByTime(60_000);
+      expect(received).toHaveLength(0);
+    });
   });
 });

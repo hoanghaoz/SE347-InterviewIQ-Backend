@@ -1,6 +1,6 @@
 # API Contract: Background Scoring & AI Evaluation Module
 
-Tài liệu đặc tả hợp đồng giao tiếp (API Contract) cho **Module Chấm điểm & Đánh giá Nền bằng AI (Scoring Module – Luồng 5)** trong hệ thống MockMate AI. Toàn bộ đặc tả được chuẩn hóa dựa trên 100% mã nguồn thực tế đã được triển khai, kiểm thử và đồng bộ trên nhánh `feat/scoring-ai-worker` (tích hợp với PR #34 `interview-history`, PR #35 `question-generation`, PR #36 `cv-parse` và Frontend PR #10 → PR #15).
+Tài liệu đặc tả hợp đồng giao tiếp (API Contract) cho **Module Chấm điểm & Đánh giá Nền bằng AI (Scoring Module – Luồng 5)** trong hệ thống MockMate AI. Toàn bộ đặc tả được chuẩn hóa dựa trên 100% mã nguồn thực tế đã triển khai và kiểm thử trên `main` (bao gồm `pg-boss` worker, Rubric `v2.0`, SSE `@Sse('stream')` và `emotionTimeline`).
 
 ---
 
@@ -15,6 +15,7 @@ sequenceDiagram
     participant InterviewCtrl as InterviewController
     participant InterviewSvc as InterviewService
     participant ScoringSvc as ScoringService
+    participant EventBus as ScoringEventBus (RxJS)
     participant PgBoss as pg-boss Queue (Postgres)
     participant Worker as ScoringWorkerService
     participant Adapter as ScoringLlmAdapter (v2.0)
@@ -32,18 +33,17 @@ sequenceDiagram
     ScoringSvc-->>InterviewSvc: { jobId, status: 'QUEUED' }
     InterviewSvc-->>Candidate: HTTP 202 Accepted { sessionPublicId, jobId, status: 'QUEUED' }
 
-    Note over Candidate,ScoringSvc: Client Polling tiến độ hoặc xem từ trang /history/:id
-    loop Polling mỗi 2 - 3 giây (Timeout 120s)
-        Candidate->>ScoringSvc: GET /api/scoring/jobs/:jobId/status
-        ScoringSvc-->>Candidate: HTTP 200 { status: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' }
-    end
+    Note over Candidate,EventBus: Trang /history/:id mở SSE stream (phòng phỏng vấn giữ polling fallback)
+    Candidate->>ScoringSvc: GET /api/scoring/stream (Accept: text/event-stream)
+    ScoringSvc->>EventBus: subscribeForUser(user.sub) + heartbeat 30s
+    ScoringSvc-->>Candidate: HTTP 200 text/event-stream (X-Accel-Buffering: no)
 
-    Note over PgBoss,Worker: Worker xử lý ngầm (concurrency = 2, pacing = 2000ms)
-    PgBoss->>Worker: Dispatch Job (state: active)
+    Note over PgBoss,Worker: Worker xử lý ngầm (concurrency = 2, pacing = 2000ms, perJobResults = true)
+    PgBoss->>Worker: Dispatch Job (state: active, includeMetadata: true)
     Worker->>ScoringRepo: findSessionForScoring(sessionId)
     ScoringRepo-->>Worker: Context (cvSnapshot.parsedData ?? cv.parsedData, title, JD, 3..10 Q&A)
-    alt Session đã COMPLETED hoặc CANCELLED
-        Worker-->>PgBoss: Return sớm (Idempotent no-op)
+    alt Session đã COMPLETED, CANCELLED hoặc FAILED
+        Worker-->>PgBoss: Return completed (Idempotent no-op)
     else Session ở trạng thái SUBMITTED hoặc SCORING
         Worker->>ScoringRepo: updateSessionStatus(id, SCORING)
         Worker->>Adapter: evaluateSession(payload)
@@ -60,11 +60,13 @@ sequenceDiagram
         end
         Worker->>ScoringRepo: saveScoringResult(sessionId, score, summary)
         ScoringRepo->>DB: $transaction [Guard status IN (SUBMITTED, SCORING) -> Upsert Score + Summary + COMPLETED]
-        Worker->>PgBoss: Complete Job
+        Worker->>EventBus: publish({ type: 'answer-scored', payload: { sessionId, overallScore } })
+        EventBus-->>Candidate: event: job-update (answer-scored)
+        Worker->>PgBoss: JobResult { id, status: 'completed' }
     end
 
     Candidate->>ScoringSvc: GET /api/scoring/sessions/:sessionId/result
-    ScoringSvc-->>Candidate: HTTP 200 { sessionId, scores, summary }
+    ScoringSvc-->>Candidate: HTTP 200 { sessionId, scores, summary, emotionTimeline }
 ```
 
 ---
@@ -317,6 +319,12 @@ Accept: text/event-stream
    data: {"timestamp":"2026-11-17T10:00:30.000Z"}
    ```
 
+#### Ghi chú vận hành & triển khai SSE:
+- **Reverse Proxy Headers**: NestJS `@Sse()` gửi kèm `X-Accel-Buffering: no` và `Cache-Control: private, no-cache, no-store, must-revalidate, max-age=0, no-transform` để tránh proxy gom buffer.
+- **Graceful Shutdown**: Luồng heartbeat `interval(30_000)` gắn `takeUntil` theo vòng đời của `events$`; khi `ScoringEventBusService.onModuleDestroy()` gọi `complete()`, mọi kết nối SSE và timer đều đóng sạch.
+- **An toàn thông điệp lỗi**: `payload.error` của `answer-failed` được lọc qua `toSafeFailureMessage()` — lỗi nội bộ/DB không bao giờ rò rỉ ra client (chỉ lưu vào log server).
+- **Giới hạn kiến trúc (Single-Instance)**: `ScoringEventBusService` dùng RxJS `Subject` trong bộ nhớ (in-memory), phù hợp với triển khai Modular Monolith 1 instance backend. Nếu mở rộng nhiều replica trong tương lai, cần chuyển lớp `IScoringEventBus` sang PostgreSQL `LISTEN/NOTIFY` hoặc Redis Pub/Sub.
+
 #### Các Mã Lỗi Thường gặp:
 | HTTP Status | Error Code | Message trong Code | Nguyên nhân & Hướng xử lý |
 | :---: | :--- | :--- | :--- |
@@ -348,7 +356,7 @@ Prompt hệ thống (`SCORING_PROMPT_VERSION = 'v2.0'`) định nghĩa rõ 3 ng�
 
 ### 5.4. Cơ chế Retry Schema & Phân loại Lỗi trong Worker
 1. **Retry Schema tại `ScoringLlmAdapter` (`MAX_RUBRIC_ATTEMPTS = 2`)**: Gọi `ILlmProvider.generateJson` với `temperature: 0.2`, `maxOutputTokens: 4096`. Nếu JSON trả về không vượt qua `validateScoringRubric` (ví dụ điểm `NaN`, thiếu trường bắt buộc), adapter tự động thử lại tối đa `1` lần nữa trước khi trả `AppError(ErrorCode.InternalServerError)`.
-2. **Phân loại lỗi tại `ScoringWorkerService`**:
-   - **Non-Retryable (`AppError(BadRequest)` / `ScoringDomainErrorValidation`)**: Gọi `markSessionFailed` chuyển phiên sang `FAILED` ngay ở lần thử đầu (`retryCount = 0`) để giao diện `/history/:id` thoát trạng thái chờ ngay lập tức.
-   - **Retryable (`AppError(TooManyRequests)` / `AppError(InternalServerError)` / lỗi mạng)**: Để `pg-boss` thực hiện retry theo cấu hình hàng đợi; chỉ đánh dấu `FAILED` khi lần thử cuối cùng (`retryCount + 1 >= retryLimit`) vẫn thất bại.
-   - **Transaction Status Guard**: `ScoringRepository.saveScoringResult` kiểm tra `status IN (SUBMITTED, SCORING)` bằng `updateMany` ngay trong `$transaction` trước khi commit `COMPLETED`.
+2. **Phân loại lỗi & Settlement trong `ScoringWorkerService` (`pg-boss` v12 `includeMetadata: true`, `perJobResults: true`)**:
+   - **Non-Retryable (`AppError(BadRequest)` / `ScoringDomainErrorValidation`)**: Gọi `markSessionFailed` chuyển phiên sang `FAILED`, bắn SSE `answer-failed` ngay ở lần thử đầu (`retryCount = 0`), và trả `JobResult` với `status: 'deadletter'` để `pg-boss` kết thúc job ngay (`state = 'failed'`), không retry thừa.
+   - **Retryable (`AppError(TooManyRequests)` / `AppError(InternalServerError)` / lỗi mạng)**: Trả `JobResult` với `status: 'failed'` để `pg-boss` retry theo backoff (`retry_count < retry_limit`); chỉ đánh dấu phiên `FAILED` và bắn SSE `answer-failed` (với thông điệp an toàn) khi chạm lượt cuối cùng thực tế (`retryCount >= retryLimit`, ví dụ lượt `3/3`).
+   - **Terminal Status & Transaction Guard**: Worker bỏ qua an toàn các phiên đã ở trạng thái `COMPLETED`, `CANCELLED` hoặc `FAILED`; `ScoringRepository.saveScoringResult` kiểm tra `status IN (SUBMITTED, SCORING)` bằng `updateMany` ngay trong `$transaction` trước khi commit `COMPLETED`.

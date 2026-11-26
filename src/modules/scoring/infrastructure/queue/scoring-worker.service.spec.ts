@@ -7,7 +7,7 @@ jest.mock('pg-boss', () => ({
 import { ConfigService } from '@nestjs/config';
 import { ok, err } from 'neverthrow';
 import { SessionStatus } from '../../../../../generated/prisma/enums';
-import type { Job, PgBoss } from 'pg-boss';
+import type { Job, JobResult, PgBoss } from 'pg-boss';
 import { AppError, ErrorCode } from '../../../../shared/common/errorCode';
 import { recordMetrics } from '../../../../shared/telemetry/metric-recorder.testing';
 import { ScoringJobData } from '../../application/dtos/scoring.request.dto';
@@ -37,8 +37,12 @@ describe('ScoringWorkerService', () => {
     Promise<string>,
     [
       string,
-      { localConcurrency: number },
-      (jobs: Job<ScoringJobData>[]) => Promise<void>,
+      {
+        localConcurrency: number;
+        includeMetadata: boolean;
+        perJobResults: boolean;
+      },
+      (jobs: Job<ScoringJobData>[]) => Promise<JobResult[]>,
     ]
   >();
   const mockBoss = {
@@ -159,7 +163,11 @@ describe('ScoringWorkerService', () => {
       expect(createQueueMock).toHaveBeenCalledWith('scoring-jobs');
       expect(workMock).toHaveBeenCalledWith(
         'scoring-jobs',
-        { localConcurrency: 2 },
+        {
+          localConcurrency: 2,
+          includeMetadata: true,
+          perJobResults: true,
+        },
         expect.any(Function),
       );
     });
@@ -189,15 +197,88 @@ describe('ScoringWorkerService', () => {
 
       expect(workMock).toHaveBeenCalledWith(
         'scoring-jobs',
-        { localConcurrency: 4 },
+        {
+          localConcurrency: 4,
+          includeMetadata: true,
+          perJobResults: true,
+        },
         expect.any(Function),
       );
+    });
+
+    it('should settle batch jobs with perJobResults (completed, deadletter for non-retryable, failed for retryable)', async () => {
+      createQueueMock.mockResolvedValue(undefined);
+      let capturedHandler:
+        | ((jobs: Job<ScoringJobData>[]) => Promise<JobResult[]>)
+        | undefined;
+      workMock.mockImplementation((_queue, _options, handler) => {
+        capturedHandler = handler;
+        return Promise.resolve('handler-id');
+      });
+
+      await workerService.onModuleInit();
+      expect(capturedHandler).toBeDefined();
+
+      const context = {
+        id: 10,
+        publicId: mockSessionId,
+        userId: 1,
+        status: SessionStatus.SUBMITTED,
+        title: 'Interview',
+        jobDescription: null,
+        cvParsedData: null,
+        questions: [],
+      };
+      findSessionForScoringMock.mockResolvedValue(ok(context));
+      updateSessionStatusMock.mockResolvedValue(ok(undefined));
+      saveScoringResultMock.mockResolvedValue(ok(undefined));
+      markSessionFailedMock.mockResolvedValue(ok(undefined));
+
+      evaluateSessionMock
+        .mockResolvedValueOnce(ok(defaultEvaluation))
+        .mockResolvedValueOnce(
+          err(new AppError(ErrorCode.BadRequest, 'Rejected by safety filter')),
+        )
+        .mockResolvedValueOnce(err(new Error('Raw pg connection error')));
+
+      const results = await capturedHandler!([
+        { ...mockJob, id: 'job-ok', retrycount: 0, retrylimit: 3 } as never,
+        {
+          ...mockJob,
+          id: 'job-non-retryable',
+          retrycount: 0,
+          retrylimit: 3,
+        } as never,
+        {
+          ...mockJob,
+          id: 'job-retryable',
+          retrycount: 0,
+          retrylimit: 3,
+        } as never,
+      ]);
+
+      expect(results).toEqual([
+        { id: 'job-ok', status: 'completed' },
+        {
+          id: 'job-non-retryable',
+          status: 'deadletter',
+          output: { message: 'Rejected by safety filter' },
+        },
+        {
+          id: 'job-retryable',
+          status: 'failed',
+          output: {
+            message:
+              'Scoring failed due to an internal error. Please try again later.',
+          },
+        },
+      ]);
     });
 
     it('should apply pacing delay when processing consecutive jobs with pacingMs configured', async () => {
       createQueueMock.mockResolvedValue(undefined);
       let capturedHandler:
-        | ((jobs: Job<ScoringJobData>[]) => Promise<void>)
+        | ((jobs: Job<ScoringJobData>[]) => Promise<JobResult[]>)
         | undefined;
       workMock.mockImplementation((_queue, _options, handler) => {
         capturedHandler = handler;
@@ -333,7 +414,11 @@ describe('ScoringWorkerService', () => {
       expect(saveScoringResultMock).not.toHaveBeenCalled();
     });
 
-    it.each([SessionStatus.COMPLETED, SessionStatus.CANCELLED])(
+    it.each([
+      SessionStatus.COMPLETED,
+      SessionStatus.CANCELLED,
+      SessionStatus.FAILED,
+    ])(
       'should safely skip job (idempotent no-op) when session is already in %s status',
       async (terminalStatus) => {
         findSessionForScoringMock.mockResolvedValue(
@@ -419,10 +504,10 @@ describe('ScoringWorkerService', () => {
       expect(saveScoringResultMock).not.toHaveBeenCalled();
     });
 
-    it('should call markSessionFailed on the final retry attempt (retrycount + 1 >= retrylimit)', async () => {
+    it('should call markSessionFailed on the final retry attempt (retrycount >= retrylimit)', async () => {
       const finalAttemptJob = {
         ...mockJob,
-        retrycount: 2,
+        retrycount: 3,
         retrylimit: 3,
       } as unknown as Job<ScoringJobData>;
 
@@ -441,6 +526,26 @@ describe('ScoringWorkerService', () => {
         mockContext.id,
         'Fatal DB write error',
       );
+    });
+
+    it('should NOT call markSessionFailed when retrycount is still below retrylimit (e.g. 2/3 in pg-boss)', async () => {
+      const preFinalAttemptJob = {
+        ...mockJob,
+        retrycount: 2,
+        retrylimit: 3,
+      } as unknown as Job<ScoringJobData>;
+
+      findSessionForScoringMock.mockResolvedValue(ok(mockContext));
+      updateSessionStatusMock.mockResolvedValue(ok(undefined));
+      saveScoringResultMock.mockResolvedValue(
+        err(new Error('Transient DB timeout')),
+      );
+
+      await expect(workerService.handleJob(preFinalAttemptJob)).rejects.toThrow(
+        'Transient DB timeout',
+      );
+
+      expect(markSessionFailedMock).not.toHaveBeenCalled();
     });
 
     it('should not call markSessionFailed on transient retryable failure before final attempt', async () => {
@@ -528,7 +633,7 @@ describe('ScoringWorkerService', () => {
     it('should still rethrow the original error when markSessionFailed returns error', async () => {
       const finalAttemptJob = {
         ...mockJob,
-        retrycount: 2,
+        retrycount: 3,
         retrylimit: 3,
       } as unknown as Job<ScoringJobData>;
 
@@ -622,10 +727,10 @@ describe('ScoringWorkerService', () => {
         });
       });
 
-      it('publishes answer-failed event on final retry attempt', async () => {
+      it('publishes answer-failed event with a sanitized message on final retry attempt for raw internal errors', async () => {
         const finalAttemptJob = {
           ...mockJob,
-          retrycount: 2,
+          retrycount: 3,
           retrylimit: 3,
         } as unknown as Job<ScoringJobData>;
 
@@ -647,7 +752,45 @@ describe('ScoringWorkerService', () => {
           type: 'answer-failed',
           payload: {
             sessionId: mockSessionId,
-            error: 'Fatal DB write error',
+            error:
+              'Scoring failed due to an internal error. Please try again later.',
+          },
+        });
+      });
+
+      it('preserves user-safe AppError message in answer-failed event on final retry attempt', async () => {
+        const finalAttemptJob = {
+          ...mockJob,
+          retrycount: 3,
+          retrylimit: 3,
+        } as unknown as Job<ScoringJobData>;
+
+        findSessionForScoringMock.mockResolvedValue(ok(mockContext));
+        updateSessionStatusMock.mockResolvedValue(ok(undefined));
+        evaluateSessionMock.mockResolvedValue(
+          err(
+            new AppError(
+              ErrorCode.TooManyRequests,
+              'AI service is temporarily busy. Please try again later.',
+            ),
+          ),
+        );
+        markSessionFailedMock.mockResolvedValue(ok(undefined));
+
+        await expect(
+          workerWithEventBus.handleJob(finalAttemptJob),
+        ).rejects.toThrow(
+          'AI service is temporarily busy. Please try again later.',
+        );
+
+        expect(publishMock).toHaveBeenCalledTimes(1);
+        expect(publishMock).toHaveBeenCalledWith({
+          userId: mockUserId,
+          jobId: finalAttemptJob.id,
+          type: 'answer-failed',
+          payload: {
+            sessionId: mockSessionId,
+            error: 'AI service is temporarily busy. Please try again later.',
           },
         });
       });
@@ -753,7 +896,7 @@ describe('ScoringWorkerService', () => {
       it('marks the last attempt as final and counts the failed session', async () => {
         const finalAttemptJob = {
           ...mockJob,
-          retrycount: 2,
+          retrycount: 3,
           retrylimit: 3,
         } as unknown as Job<ScoringJobData>;
         findSessionForScoringMock.mockResolvedValue(ok(mockContext));

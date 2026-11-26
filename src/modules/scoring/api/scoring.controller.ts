@@ -15,7 +15,16 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
-import { interval, map, merge, Observable } from 'rxjs';
+import {
+  endWith,
+  ignoreElements,
+  interval,
+  map,
+  merge,
+  Observable,
+  share,
+  takeUntil,
+} from 'rxjs';
 import { toHttpException } from '../../../shared/common/app-error.mapper';
 import { CommonUserRole } from '../../../shared/common/commonEnum';
 import type { JwtPayload } from '../../../shared/common/jwt.payload.interface';
@@ -57,9 +66,13 @@ export class ScoringController {
           data: event,
         }),
       ),
+      share(),
     );
 
+    const shutdown$ = events$.pipe(ignoreElements(), endWith(null));
+
     const heartbeat$ = interval(30_000).pipe(
+      takeUntil(shutdown$),
       map(
         (): MessageEvent => ({
           type: 'ping',

@@ -571,6 +571,8 @@ describe('ScoringController (e2e)', () => {
           (res) => {
             expect(res.statusCode).toBe(200);
             expect(res.headers['content-type']).toContain('text/event-stream');
+            expect(res.headers['x-accel-buffering']).toBe('no');
+            expect(res.headers['cache-control']).toContain('no-transform');
 
             let buffer = '';
             res.on('data', (chunk: Buffer) => {
@@ -1189,7 +1191,7 @@ describe('ScoringWorkerService -> ScoringLlmAdapter -> ScoringService -> Scoring
       .mockResolvedValueOnce(ok(brokenRubric));
 
     await expect(
-      workerService.handleJob(createJob({ retrycount: 2, retrylimit: 3 })),
+      workerService.handleJob(createJob({ retrycount: 3, retrylimit: 3 })),
     ).rejects.toThrow('AI provider returned an invalid scoring rubric');
 
     expect(generateJsonMock).toHaveBeenCalledTimes(2);
@@ -1224,5 +1226,130 @@ describe('ScoringWorkerService -> ScoringLlmAdapter -> ScoringService -> Scoring
       code: ErrorCode.BadRequest,
     });
     expect(errorBody.message).toContain('current status: FAILED');
+  });
+
+  it('Golden Case 5: delivers real-time answer-scored SSE event from worker through ScoringEventBus to GET /api/scoring/stream', async () => {
+    generateJsonMock.mockResolvedValueOnce(
+      ok({
+        provider: 'gemini',
+        model: 'gemini-3.8-flash',
+        latencyMs: 920,
+        data: {
+          contentScore: 8.0,
+          relevanceScore: 8.5,
+          confidenceScore: 7.5,
+          overallFeedback: 'Trả lời mạch lạc, rõ ràng.',
+          strengths: [
+            {
+              category: 'TECHNICAL_KNOWLEDGE',
+              title: 'Vững kiến thức',
+              description: 'Giải thích rõ DI và index.',
+            },
+          ],
+          improvements: [],
+        },
+      }),
+    );
+
+    await app.listen(0);
+    const server = app.getHttpServer() as unknown as http.Server;
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Unexpected HTTP server address');
+    }
+
+    const rawSse = await new Promise<string>((resolve, reject) => {
+      const req = http.get(
+        {
+          hostname: '127.0.0.1',
+          port: address.port,
+          path: '/api/scoring/stream',
+          headers: {
+            Authorization: `Bearer ${userToken}`,
+            Accept: 'text/event-stream',
+          },
+        },
+        (res) => {
+          expect(res.statusCode).toBe(200);
+          expect(res.headers['content-type']).toContain('text/event-stream');
+          expect(res.headers['x-accel-buffering']).toBe('no');
+
+          let buffer = '';
+          res.on('data', (chunk: Buffer) => {
+            buffer += chunk.toString('utf8');
+            if (buffer.includes('answer-scored')) {
+              req.destroy();
+              resolve(buffer);
+            }
+          });
+          res.on('error', reject);
+
+          void workerService.handleJob(createJob()).catch(reject);
+        },
+      );
+      req.on('error', reject);
+    });
+
+    expect(rawSse).toContain('event: job-update');
+    expect(rawSse).toContain('"type":"answer-scored"');
+    expect(rawSse).toContain(`"sessionId":"${sessionPublicId}"`);
+    expect(rawSse).toContain('"overallScore":8.1');
+  });
+
+  it('Golden Case 6: delivers sanitized answer-failed SSE event when worker exhausts final retry with internal error', async () => {
+    generateJsonMock.mockResolvedValue(
+      err(
+        new AppError(
+          ErrorCode.InternalServerError,
+          'Internal upstream stack trace secret',
+        ),
+      ),
+    );
+
+    await app.listen(0);
+    const server = app.getHttpServer() as unknown as http.Server;
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Unexpected HTTP server address');
+    }
+
+    const rawSse = await new Promise<string>((resolve, reject) => {
+      const req = http.get(
+        {
+          hostname: '127.0.0.1',
+          port: address.port,
+          path: '/api/scoring/stream',
+          headers: {
+            Authorization: `Bearer ${userToken}`,
+            Accept: 'text/event-stream',
+          },
+        },
+        (res) => {
+          expect(res.statusCode).toBe(200);
+
+          let buffer = '';
+          res.on('data', (chunk: Buffer) => {
+            buffer += chunk.toString('utf8');
+            if (buffer.includes('answer-failed')) {
+              req.destroy();
+              resolve(buffer);
+            }
+          });
+          res.on('error', reject);
+
+          void workerService
+            .handleJob(createJob({ retrycount: 3, retrylimit: 3 }))
+            .catch(() => undefined);
+        },
+      );
+      req.on('error', reject);
+    });
+
+    expect(rawSse).toContain('event: job-update');
+    expect(rawSse).toContain('"type":"answer-failed"');
+    expect(rawSse).toContain(
+      'Scoring failed due to an internal error. Please try again later.',
+    );
+    expect(rawSse).not.toContain('Internal upstream stack trace secret');
   });
 });
