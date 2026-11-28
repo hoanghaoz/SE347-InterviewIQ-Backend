@@ -1,0 +1,26 @@
+/// Nhận xét AI tổng hợp toàn bộ lịch sử luyện tập của một người dùng (1:1 với users).
+/// Mỗi lần tạo lại thì ghi đè bản cũ. basedOnSessionCount + lastSessionCompletedAt là
+/// "dấu vân tay" của lịch sử lúc tạo: khác với hiện tại nghĩa là nhận xét đã cũ.
+model UserInsight {
+  id                     Int       @id @default(autoincrement())
+  publicId               String    @unique @default(uuid()) @map("public_id") @db.Uuid
+  userId                 Int       @unique @map("user_id")
+  overallFeedback        String    @map("overall_feedback") @db.Text
+  /// Mảng { category, title, description }
+  strengths              Json
+  /// Mảng { category, title, description }
+  weaknesses             Json
+  /// Mảng { title, description }
+  recommendations        Json
+  basedOnSessionCount    Int       @map("based_on_session_count")
+  lastSessionCompletedAt DateTime? @map("last_session_completed_at") @db.Timestamptz
+  llmModel               String    @map("llm_model") @db.VarChar(100)
+  promptVersion          String    @map("prompt_version") @db.VarChar(50)
+  generatedAt            DateTime  @map("generated_at") @db.Timestamptz
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_insights")
+}

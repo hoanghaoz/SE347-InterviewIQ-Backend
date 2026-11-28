@@ -11,6 +11,7 @@ import type {
   ImprovementItem,
   StrengthItem,
 } from '../../domain/entities/scoring-job.entity';
+import { RULE_BASED_SCORING_MODEL } from '../../domain/constants/scoring.constants';
 import { FeedbackCategory } from '../../domain/enums/scoring-enum';
 import { validateScoringRubric } from '../../domain/scoring-rubric.validator';
 import {
@@ -67,9 +68,9 @@ function buildRuleBasedEmptyEvaluation(): ScoringLlmEvaluationResult {
           'Hãy kiểm tra thiết bị thu âm (microphone) và trả lời đầy đủ từng câu hỏi theo cấu trúc Situation - Task - Action - Result (STAR).',
       },
     ],
-    scoringModel: 'rule-based',
+    scoringModel: RULE_BASED_SCORING_MODEL,
     promptVersion: SCORING_PROMPT_VERSION,
-    provider: 'rule-based',
+    provider: RULE_BASED_SCORING_MODEL,
     latencyMs: 0,
   };
 }

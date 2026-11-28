@@ -33,6 +33,7 @@ erDiagram
     users ||--o{ cvs : "owns"
     users ||--o{ interview_sessions : "conducts"
     users ||--o{ question_bank_items : "saves"
+    users ||--o| user_insights : "summarized_by"
     cvs ||--o{ interview_sessions : "used_in"
     interview_sessions ||--o{ questions : "contains"
     interview_sessions ||--o| scores : "graded_by"
@@ -166,11 +167,28 @@ erDiagram
         timestamptz created_at
         timestamptz updated_at
     }
+
+    user_insights {
+        int id PK
+        uuid public_id UK
+        int user_id FK,UK
+        text overall_feedback
+        jsonb strengths
+        jsonb weaknesses
+        jsonb recommendations
+        int based_on_session_count
+        timestamptz last_session_completed_at
+        varchar llm_model
+        varchar prompt_version
+        timestamptz generated_at
+        timestamptz created_at
+        timestamptz updated_at
+    }
 ```
 
 ---
 
-## 3. Danh Sách 10 Bảng & Cấu Trúc Chi Tiết
+## 3. Danh Sách 11 Bảng & Cấu Trúc Chi Tiết
 
 ### 3.1 `users` (Tài khoản người dùng)
 Lưu trữ thông tin nhận diện tài khoản, authentication và phân quyền.
@@ -297,6 +315,18 @@ Câu hỏi người dùng chủ động lưu lại để dùng cho các phiên s
 - **`created_at`**, **`updated_at`** (`TIMESTAMPTZ`).
 - **Constraints / Indexes**: unique `(user_id, content_hash)`, composite `(user_id, domain, difficulty)` (lọc theo lĩnh vực và độ khó), composite `(user_id, created_at DESC)` (danh sách mới nhất trước).
 
+### 3.11 `user_insights` (Nhận xét AI tổng hợp toàn bộ lịch sử)
+Nhận xét điểm mạnh, điểm yếu và gợi ý cải thiện do AI tổng hợp từ **mọi** buổi phỏng vấn đã chấm của một người dùng (tối đa 1:1 với `users`). Mỗi lần tạo lại thì ghi đè bản cũ. Module Interview History sở hữu bảng này; xem `docs/api-contract-interview-history.md` mục 6.
+- **`id`** (`INT`, PK): Auto-increment.
+- **`public_id`** (`UUID`, UNIQUE).
+- **`user_id`** (`INT`, UNIQUE, FK → `users.id`, ON DELETE CASCADE).
+- **`overall_feedback`** (`TEXT`): Nhận xét tổng quan.
+- **`strengths`**, **`weaknesses`** (`JSONB`): Mảng `{ category, title, description }`, `category` thuộc danh mục feedback của Scoring module.
+- **`recommendations`** (`JSONB`): Mảng `{ title, description }`.
+- **`based_on_session_count`** (`INT`, CHECK `>= 0`) và **`last_session_completed_at`** (`TIMESTAMPTZ`, Nullable): "dấu vân tay" của lịch sử lúc tạo, gồm số buổi `COMPLETED` và mốc `completed_at` mới nhất. Khác với hiện tại nghĩa là nhận xét đã cũ.
+- **`llm_model`** (`VARCHAR(100)`), **`prompt_version`** (`VARCHAR(50)`): Model và phiên bản prompt đã sinh ra nhận xét; không trả ra API.
+- **`generated_at`**, **`created_at`**, **`updated_at`** (`TIMESTAMPTZ`).
+
 ---
 
 ## 4. Danh Sách Enums & Giá Trị Hợp Lệ
@@ -337,6 +367,9 @@ ALTER TABLE scores ADD CONSTRAINT scores_range_check CHECK (
 
 -- Nội dung câu hỏi trong ngân hàng dài 1 đến 500 ký tự
 ALTER TABLE question_bank_items ADD CONSTRAINT question_bank_items_content_length CHECK (char_length(content) BETWEEN 1 AND 500);
+
+-- Số buổi làm căn cứ cho nhận xét tổng hợp không âm
+ALTER TABLE user_insights ADD CONSTRAINT user_insights_based_on_session_count_non_negative CHECK (based_on_session_count >= 0);
 ```
 
 ---

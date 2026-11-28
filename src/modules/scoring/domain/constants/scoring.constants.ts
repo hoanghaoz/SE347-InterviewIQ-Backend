@@ -4,6 +4,10 @@ export const SCORING_WEIGHTS = {
   confidence: 0.2,
 } as const;
 
+// Giá trị scoringModel khi buổi không có transcript nào và được chấm 0 theo luật
+// cố định, không gọi LLM. Module khác dựa vào nó để nhận ra buổi bỏ trống.
+export const RULE_BASED_SCORING_MODEL = 'rule-based';
+
 export const SCORING_LIMITS = {
   minScore: 0,
   maxScore: 10,

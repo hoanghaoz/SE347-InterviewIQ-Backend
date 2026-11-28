@@ -9,16 +9,13 @@ import {
   mapDifficultyToDomain,
   mapDomainToDomain,
 } from '../../question-generation/infrastructure/question-mapper';
-import type {
-  ImprovementItem,
-  StrengthItem,
-} from '../../scoring/domain/entities/scoring-job.entity';
 import {
   IInterviewHistoryRepository,
   InterviewHistoryDetailData,
   InterviewHistoryFilter,
   InterviewHistoryPage,
 } from '../domain/repositories/interview-history.repo.interface';
+import { toFeedbackItems, toImprovements } from './feedback-json.mapper';
 
 // Màn danh sách: không select jobDescription (cột Text) và cvSnapshot (cột Json),
 // chỉ kéo overallScore từ quan hệ score trong cùng một query nên không có N+1.
@@ -95,46 +92,6 @@ const DETAIL_SELECT = {
     select: { overallFeedback: true, strengths: true, improvements: true },
   },
 } as const;
-
-// strengths/improvements là cột Json nên Prisma trả về kiểu không xác định.
-// Chỉ giữ phần tử đúng shape và copy tường minh từng field, để một bản ghi hỏng
-// không làm vỡ response và key lạ trong Json không lọt ra ngoài.
-type FeedbackRecord = Record<string, unknown> & {
-  category: string;
-  title: string;
-  description: string;
-};
-
-function isFeedbackRecord(value: unknown): value is FeedbackRecord {
-  if (typeof value !== 'object' || value === null) return false;
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.category === 'string' &&
-    typeof record.title === 'string' &&
-    typeof record.description === 'string'
-  );
-}
-
-function toStrengths(value: unknown): StrengthItem[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter(isFeedbackRecord).map((item) => ({
-    category: item.category,
-    title: item.title,
-    description: item.description,
-  }));
-}
-
-function toImprovements(value: unknown): ImprovementItem[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter(isFeedbackRecord).map((item) => ({
-    category: item.category,
-    title: item.title,
-    description: item.description,
-    ...(typeof item.suggestion === 'string'
-      ? { suggestion: item.suggestion }
-      : {}),
-  }));
-}
 
 @Injectable()
 export class InterviewHistoryRepository implements IInterviewHistoryRepository {
@@ -267,7 +224,7 @@ export class InterviewHistoryRepository implements IInterviewHistoryRepository {
         summary: session.interviewSummary
           ? {
               overallFeedback: session.interviewSummary.overallFeedback,
-              strengths: toStrengths(session.interviewSummary.strengths),
+              strengths: toFeedbackItems(session.interviewSummary.strengths),
               improvements: toImprovements(
                 session.interviewSummary.improvements,
               ),
